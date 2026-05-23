@@ -86,6 +86,11 @@ export default function DisplayBoard() {
       setCalls([]);
     });
 
+    socket.on('shift:ended', ({ units: u }) => {
+      setCalls([]);
+      if (u) setUnits(u);
+    });
+
     return () => socket.disconnect();
   }, [navigate]);
 

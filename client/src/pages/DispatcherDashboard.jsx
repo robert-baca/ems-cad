@@ -82,7 +82,7 @@ export default function DispatcherDashboard() {
     'call:status_change':  handleCallStatusChange,
     'call:assigned':       handleCallAssigned,
     'shift:started':       ({ shift, units: u }) => { setCurrentShift(shift); if (setUnits) setUnits(u); },
-    'shift:ended':         (summary) => { setShiftSummary(summary); setCurrentShift(null); },
+    'shift:ended':         ({ units: u, ...summary }) => { setShiftSummary(summary); setCurrentShift(null); setCalls([]); if (u) setUnits(u); },
     'gps:unknown_device':  ({ device_id }) => setUnknownGpsDevice(device_id)
   });
 
