@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Six Flags EMS CAD</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚑</text></svg>" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script>
+      window.onerror = function(msg, src, line, col, err) {
+        document.body.innerHTML = '<pre style="color:#ef4444;background:#1f2937;padding:24px;font-size:13px;font-family:monospace;white-space:pre-wrap;margin:0;min-height:100vh">JS ERROR:\n' + msg + '\nFile: ' + src + '\nLine: ' + line + '\n\n' + (err ? err.stack : '') + '</pre>';
+        return false;
+      };
+      window.addEventListener('unhandledrejection', function(e) {
+        document.body.innerHTML = '<pre style="color:#f97316;background:#1f2937;padding:24px;font-size:13px;font-family:monospace;white-space:pre-wrap;margin:0;min-height:100vh">PROMISE ERROR:\n' + (e.reason?.message || e.reason) + '\n\n' + (e.reason?.stack || '') + '</pre>';
+      });
+    </script>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

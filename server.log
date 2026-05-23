@@ -1,0 +1,24 @@
+
+🚑 EMS CAD Server running on port 3001
+   Health: http://localhost:3001/api/health
+   Default login — dispatchers: "dispatch" / "ems2024"
+   Default login — crews: "EMS-1" through "EMS-5" / "ems2024"
+
+[socket] connect 0yfIqiABV5c51pauAAAC dispatcher dispatch
+[socket] disconnect 0yfIqiABV5c51pauAAAC
+[socket] connect qMl1sSTRAFq7VU3fAAAE undefined undefined
+[socket] disconnect qMl1sSTRAFq7VU3fAAAE
+[socket] connect bBdEGXMpHakrngNtAAAH undefined undefined
+[socket] disconnect bBdEGXMpHakrngNtAAAH
+[socket] connect h8rMnwxvm4jDcpWXAAAJ undefined undefined
+[socket] disconnect h8rMnwxvm4jDcpWXAAAJ
+[socket] connect zcksZ8wov4MMGg6nAAAL undefined undefined
+[socket] disconnect zcksZ8wov4MMGg6nAAAL
+[socket] connect wtk5MwxYuGJRGTi4AAAN undefined undefined
+[socket] disconnect wtk5MwxYuGJRGTi4AAAN
+[socket] connect oMXfcM4Bl8dcFg1vAAAP undefined undefined
+[socket] disconnect oMXfcM4Bl8dcFg1vAAAP
+[socket] connect ykymRd2FtIr-gqv4AAAR undefined undefined
+[socket] disconnect ykymRd2FtIr-gqv4AAAR
+[socket] connect jc9TXYbr21R6FkVaAAAT undefined undefined
+[socket] disconnect jc9TXYbr21R6FkVaAAAT

@@ -1,0 +1,144 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Mapbox overrides */
+.mapboxgl-ctrl-logo { display: none !important; }
+.mapboxgl-ctrl-attrib { display: none !important; }
+
+/* Call pin pulse animation */
+.call-pin-wrapper {
+  position: relative;
+  width: 24px;
+  height: 24px;
+  cursor: pointer;
+}
+
+.call-pin-dot {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 14px;
+  height: 14px;
+  background: #ef4444;
+  border: 2px solid #ffffff;
+  border-radius: 50%;
+  z-index: 2;
+}
+
+.call-pulse-ring {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 14px;
+  height: 14px;
+  border: 2px solid #ef4444;
+  border-radius: 50%;
+  animation: pulse-expand 1.8s ease-out infinite;
+  z-index: 1;
+}
+
+.call-pulse-ring.ring2 {
+  animation-delay: 0.6s;
+}
+
+.call-pulse-ring.ring3 {
+  animation-delay: 1.2s;
+}
+
+@keyframes pulse-expand {
+  0%   { transform: translate(-50%, -50%) scale(1); opacity: 0.8; }
+  100% { transform: translate(-50%, -50%) scale(3.5); opacity: 0; }
+}
+
+/* New call drop pin */
+.new-call-pin-marker {
+  width: 0;
+  height: 0;
+  border-left: 10px solid transparent;
+  border-right: 10px solid transparent;
+  border-top: 20px solid #f59e0b;
+  position: relative;
+  cursor: pointer;
+  filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5));
+}
+
+/* Custom map location markers */
+.loc-marker-wrapper {
+  position: relative;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.loc-marker-diamond {
+  width: 14px;
+  height: 14px;
+  transform: rotate(45deg);
+  border: 2.5px solid rgba(255,255,255,0.9);
+  border-radius: 2px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.6);
+  flex-shrink: 0;
+}
+
+.loc-marker-label {
+  margin-top: 6px;
+  white-space: nowrap;
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff;
+  text-shadow: 0 1px 3px rgba(0,0,0,1), 0 0 6px rgba(0,0,0,0.8);
+  letter-spacing: 0.02em;
+  pointer-events: none;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.loc-delete-btn {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 16px;
+  height: 16px;
+  background: #374151;
+  border: 1px solid #6b7280;
+  border-radius: 50%;
+  color: #9ca3af;
+  font-size: 10px;
+  line-height: 14px;
+  text-align: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.loc-marker-wrapper:hover .loc-delete-btn {
+  opacity: 1;
+}
+
+.loc-delete-btn:hover {
+  background: #ef4444;
+  border-color: #ef4444;
+  color: #fff;
+}
+
+/* Priority badge colors */
+.priority-1 { background: #ef4444; }
+.priority-2 { background: #f97316; }
+.priority-3 { background: #3b82f6; }
+
+/* Custom scrollbar */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: #1f2937; }
+::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: #6b7280; }
+
+/* Status strip scroll */
+.unit-strip-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #4b5563 #1f2937;
+}

@@ -1,0 +1,163 @@
+
+  [32m[1mVITE[22m v5.4.21[39m  [2mready in [0m[1m222[22m[2m[0m ms[22m
+
+  [32m➜[39m  [1mLocal[22m:   [36mhttp://localhost:[1m5173[22m/[39m
+[2m  [32m➜[39m  [1mNetwork[22m[2m: use [22m[1m--host[22m[2m to expose[22m
+[2m6:53:05 PM[22m [36m[1m[vite][22m[39m [32mpage reload [39m[2mindex.html[22m
+[2m7:04:55 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/components/map/ParkMap.jsx, /src/index.css[22m
+[2m7:05:05 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/index.css, /src/pages/CrewMobile.jsx, /src/pages/DispatcherDashboard.jsx[22m
+[2m7:05:20 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/index.css, /src/pages/CrewMobile.jsx, /src/pages/DispatcherDashboard.jsx[22m
+[2m7:05:40 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/components/calls/CallTimeline.jsx, /src/index.css[22m
+[2m7:06:09 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/components/calls/CallDetail.jsx, /src/index.css[22m
+[2m7:06:18 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/context/AuthContext.jsx, /src/index.css[22m
+[2m7:06:18 PM[22m [36m[1m[vite][22m[39m [33mhmr invalidate [39m[2m/src/context/AuthContext.jsx[22m Could not Fast Refresh ("useAuth" export is incompatible). Learn more at https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#consistent-components-exports
+[2m7:06:18 PM[22m [36m[1m[vite][22m[39m [32mpage reload [39m[2msrc/context/AuthContext.jsx[22m
+[2m7:06:42 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/Login.jsx, /src/index.css[22m
+[2m7:07:09 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/CrewMobile.jsx, /src/index.css[22m
+[2m7:07:40 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/DispatcherDashboard.jsx, /src/index.css[22m
+[2m7:11:01 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/components/map/MapContextMenu.jsx, /src/index.css[22m
+[2m7:11:27 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/components/map/ParkMap.jsx, /src/index.css[22m
+[2m7:12:15 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/DispatcherDashboard.jsx, /src/index.css[22m
+[2m7:16:09 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/index.css, /src/pages/CrewMobile.jsx, /src/pages/DispatcherDashboard.jsx, /src/components/crew/StatusButtons.jsx, /src/components/units/UnitStrip.jsx, /src/components/calls/CallCard.jsx, /src/components/calls/CallDetail.jsx, /src/components/calls/NewCallModal.jsx, /src/components/map/ParkMap.jsx, /src/components/units/UnitBadge.jsx, /src/components/units/UnitPanel.jsx[22m
+[2m7:16:25 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/index.css, /src/pages/CrewMobile.jsx, /src/pages/DispatcherDashboard.jsx[22m
+[2m7:18:11 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/components/calls/CallDetail.jsx, /src/index.css[22m
+[2m7:18:29 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/components/units/UnitPanel.jsx, /src/index.css[22m
+[2m7:19:05 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/DispatcherDashboard.jsx, /src/index.css[22m
+[2m7:22:45 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/index.css, /src/pages/CrewMobile.jsx, /src/pages/DispatcherDashboard.jsx, /src/components/crew/StatusButtons.jsx, /src/components/units/UnitStrip.jsx, /src/components/calls/CallCard.jsx, /src/components/calls/CallDetail.jsx, /src/components/calls/NewCallModal.jsx, /src/components/map/ParkMap.jsx, /src/components/units/UnitBadge.jsx, /src/components/units/UnitPanel.jsx, /src/components/calls/CallHistory.jsx, /src/components/units/UnitHistoryModal.jsx[22m
+[2m7:23:11 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/index.css, /src/pages/CrewMobile.jsx, /src/pages/DispatcherDashboard.jsx[22m
+[2m7:23:31 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/components/map/MapContextMenu.jsx, /src/index.css[22m
+[2m7:23:44 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/index.css[22m
+[2m7:24:16 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/components/map/ParkMap.jsx, /src/index.css[22m
+[2m7:24:58 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/components/calls/CallDetail.jsx, /src/index.css[22m
+[2m7:25:39 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/DispatcherDashboard.jsx, /src/index.css[22m
+[2m7:34:40 PM[22m [36m[1m[vite][22m[39m [32mvite.config.js changed, restarting server...[39m
+[2m7:34:40 PM[22m [36m[1m[vite][22m[39m server restarted.
+
+  [32m➜[39m  [1mLocal[22m:   [36mhttp://localhost:[1m5173[22m/[39m
+  [32m➜[39m  [1mNetwork[22m: [36mhttp://192.168.1.99:[1m5173[22m/[39m
+[2m7:34:49 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/index.css, /src/pages/DispatcherDashboard.jsx, /src/pages/CrewMobile.jsx[22m
+[2m7:34:50 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /socket.io/?EIO=4&transport=polling&t=bxzrlgf5[39m
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1142:49)
+    at afterConnectMultiple (node:net:1723:7)
+[2m7:34:52 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /socket.io/?EIO=4&transport=polling&t=by1adg9l[39m
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1142:49)
+    at afterConnectMultiple (node:net:1723:7)
+[2m7:34:54 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /socket.io/?EIO=4&transport=polling&t=by2ucvp3[39m
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1142:49)
+    at afterConnectMultiple (node:net:1723:7)
+[2m7:34:58 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /socket.io/?EIO=4&transport=polling&t=by5x0uw3[39m
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1142:49)
+    at afterConnectMultiple (node:net:1723:7)
+[2m7:35:04 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /socket.io/?EIO=4&transport=polling&t=byajxfq3[39m
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1142:49)
+    at afterConnectMultiple (node:net:1723:7)
+[2m7:35:08 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/Login.jsx, /src/index.css[22m
+[2m7:35:10 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /socket.io/?EIO=4&transport=polling&t=byf6j489[39m
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1142:49)
+    at afterConnectMultiple (node:net:1723:7)
+[2m7:35:16 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /socket.io/?EIO=4&transport=polling&t=byjt285f[39m
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1142:49)
+    at afterConnectMultiple (node:net:1723:7)
+[2m7:35:22 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /socket.io/?EIO=4&transport=polling&t=byofnla2[39m
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1142:49)
+    at afterConnectMultiple (node:net:1723:7)
+[2m7:35:28 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /socket.io/?EIO=4&transport=polling&t=byt2fw0i[39m
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1142:49)
+    at afterConnectMultiple (node:net:1723:7)
+[2m7:35:34 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /socket.io/?EIO=4&transport=polling&t=byxpb7nc[39m
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1142:49)
+    at afterConnectMultiple (node:net:1723:7)
+[2m7:35:36 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/context/AuthContext.jsx, /src/index.css[22m
+[2m7:35:36 PM[22m [36m[1m[vite][22m[39m [33mhmr invalidate [39m[2m/src/context/AuthContext.jsx[22m Could not Fast Refresh ("useAuth" export is incompatible). Learn more at https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#consistent-components-exports
+[2m7:35:36 PM[22m [36m[1m[vite][22m[39m [32mpage reload [39m[2msrc/context/AuthContext.jsx[22m
+[2m7:35:36 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /socket.io/?EIO=4&transport=polling&t=byzg7ml9[39m
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1142:49)
+    at afterConnectMultiple (node:net:1723:7)
+[2m7:35:38 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /socket.io/?EIO=4&transport=polling&t=bz0s442q[39m
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1142:49)
+    at afterConnectMultiple (node:net:1723:7)
+[2m7:35:41 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /socket.io/?EIO=4&transport=polling&t=bz33eqtr[39m
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1142:49)
+    at afterConnectMultiple (node:net:1723:7)
+[2m7:35:47 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /socket.io/?EIO=4&transport=polling&t=bz7pywzl[39m
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1142:49)
+    at afterConnectMultiple (node:net:1723:7)
+[2m7:35:52 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /socket.io/?EIO=4&transport=polling&t=bzbl6rfo[39m
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1142:49)
+    at afterConnectMultiple (node:net:1723:7)
+[2m7:35:58 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /socket.io/?EIO=4&transport=polling&t=bzg7mjd1[39m
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1142:49)
+    at afterConnectMultiple (node:net:1723:7)
+[2m7:36:04 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /socket.io/?EIO=4&transport=polling&t=bzkufr73[39m
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1142:49)
+    at afterConnectMultiple (node:net:1723:7)
+[2m7:36:05 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/CrewMobile.jsx, /src/index.css[22m
+[2m7:36:10 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /socket.io/?EIO=4&transport=polling&t=bzpgzf0u[39m
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1142:49)
+    at afterConnectMultiple (node:net:1723:7)
+[2m7:36:16 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /socket.io/?EIO=4&transport=polling&t=bzu3s0g9[39m
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1142:49)
+    at afterConnectMultiple (node:net:1723:7)
+[2m7:36:22 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /socket.io/?EIO=4&transport=polling&t=bzyq3swq[39m
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1142:49)
+    at afterConnectMultiple (node:net:1723:7)
+[2m7:36:26 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/components/units/UnitPanel.jsx, /src/index.css[22m
+[2m7:36:28 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /socket.io/?EIO=4&transport=polling&t=c03d7c3n[39m
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1142:49)
+    at afterConnectMultiple (node:net:1723:7)
+[2m7:36:34 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/index.css, /src/pages/DispatcherDashboard.jsx, /src/pages/CrewMobile.jsx[22m
+[2m7:36:34 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /socket.io/?EIO=4&transport=polling&t=c07zk7dv[39m
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1142:49)
+    at afterConnectMultiple (node:net:1723:7)
+[2m7:36:38 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/DispatcherDashboard.jsx, /src/index.css[22m
+[2m7:36:39 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /socket.io/?EIO=4&transport=polling&t=c0bvu7be[39m
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1142:49)
+    at afterConnectMultiple (node:net:1723:7)
+[2m7:36:41 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /socket.io/?EIO=4&transport=polling&t=c0de0bcf[39m
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1142:49)
+    at afterConnectMultiple (node:net:1723:7)
+[2m7:36:44 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /socket.io/?EIO=4&transport=polling&t=c0fp4rmf[39m
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1142:49)
+    at afterConnectMultiple (node:net:1723:7)
+[2m7:36:47 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/DispatcherDashboard.jsx, /src/index.css[22m
+[2m7:36:48 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /socket.io/?EIO=4&transport=polling&t=c0isny81[39m
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1142:49)
+    at afterConnectMultiple (node:net:1723:7)
+[2m7:36:49 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /socket.io/?EIO=4&transport=polling&t=c0jk25pk[39m
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1142:49)
+    at afterConnectMultiple (node:net:1723:7)
+[2m7:36:52 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /socket.io/?EIO=4&transport=polling&t=c0lvbxt1[39m
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1142:49)
+    at afterConnectMultiple (node:net:1723:7)
+[2m7:36:55 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /socket.io/?EIO=4&transport=polling&t=c0o6me03[39m
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1142:49)
+    at afterConnectMultiple (node:net:1723:7)

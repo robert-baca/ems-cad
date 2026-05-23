@@ -1,0 +1,181 @@
+import { useState, useEffect } from 'react';
+import { useAuth } from '../context/AuthContext';
+import { useNavigate } from 'react-router-dom';
+import { useUnits } from '../hooks/useUnits';
+import { useCalls } from '../hooks/useCalls';
+import { useSocket } from '../hooks/useSocket';
+import ActiveCall from '../components/crew/ActiveCall';
+import StatusButtons from '../components/crew/StatusButtons';
+import CrewProfile from '../components/crew/CrewProfile';
+import { STATUS_COLORS, STATUS_LABELS, MOCK_UNITS } from '../data/mockData';
+
+const CERT_LEVEL_COLORS = {
+  'Paramedic': 'text-red-400',
+  'AEMT': 'text-orange-400',
+  'EMT-B': 'text-blue-400',
+  'First Responder': 'text-green-400'
+};
+
+export default function CrewMobile() {
+  const { user, logout, updateProfile } = useAuth();
+  const navigate = useNavigate();
+
+  const { units, handleGpsUpdate, handleStatusChange, changeStatus } = useUnits();
+  const { calls, handleCallCreated, handleCallUpdated, handleCallStatusChange, advanceStatus } = useCalls();
+
+  const [statusLoading, setStatusLoading] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
+
+  const myUnit = units.find(u =>
+    u.id === user?.unit_id || u.unit_number === user?.unit_number
+  ) || MOCK_UNITS[2];
+
+  const myCall = calls.find(c =>
+    c.assigned_unit_id === myUnit?.id && c.status !== 'closed'
+  ) || null;
+
+  const profile = user?.profile || null;
+
+  // Auto-open profile on first login if not set
+  useEffect(() => {
+    if (user && !profile) {
+      setShowProfile(true);
+    }
+  }, []);
+
+  useSocket({
+    'unit:gps_update':     handleGpsUpdate,
+    'unit:status_change':  handleStatusChange,
+    'call:created':        handleCallCreated,
+    'call:updated':        handleCallUpdated,
+    'call:status_change':  handleCallStatusChange,
+    'call:assigned_to_me': handleCallCreated
+  });
+
+  const handleStatusTap = async (status) => {
+    setStatusLoading(true);
+    try {
+      await changeStatus(myUnit.id, status);
+      if (myCall) await advanceStatus(myCall.id, status);
+    } finally {
+      setStatusLoading(false);
+    }
+  };
+
+  const handleProfileSave = (savedProfile) => {
+    updateProfile(savedProfile);
+    setShowProfile(false);
+  };
+
+  const unitColor = STATUS_COLORS[myUnit?.status] || '#9ca3af';
+  const displayName = profile?.name || user?.name || user?.unit_number || 'Crew';
+
+  return (
+    <div className="min-h-screen bg-gray-900 text-white flex flex-col max-w-md mx-auto">
+      {/* Header */}
+      <div className="bg-gray-800 border-b border-gray-700 px-4 py-3 flex-shrink-0">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2.5">
+            <span className="text-xl">🚑</span>
+            <div>
+              <div className="font-bold text-white">{myUnit?.unit_number || user?.unit_number}</div>
+              <div className="text-gray-400 text-xs">{myUnit?.unit_name}</div>
+            </div>
+          </div>
+          <button onClick={() => { logout(); navigate('/login'); }}
+            className="text-gray-500 hover:text-white text-xs px-2 py-1 rounded hover:bg-gray-700 transition-colors">
+            Sign out
+          </button>
+        </div>
+
+        {/* Crew name + cert + profile button */}
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <span className="text-gray-200 text-sm">👤 {displayName}</span>
+            {profile?.cert_level && (
+              <span className={`text-xs font-bold ${CERT_LEVEL_COLORS[profile.cert_level] || 'text-gray-400'}`}>
+                · {profile.cert_level}
+              </span>
+            )}
+          </div>
+          <button
+            onClick={() => setShowProfile(true)}
+            className="text-xs px-2.5 py-1 rounded-lg bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white transition-colors flex items-center gap-1"
+          >
+            ✏️ {profile ? 'Edit Profile' : 'Set Profile'}
+          </button>
+        </div>
+
+        {/* Status banner */}
+        <div className="rounded-xl px-4 py-2.5 flex items-center gap-3"
+          style={{ backgroundColor: unitColor + '22', borderColor: unitColor, borderWidth: 1 }}>
+          <div className="w-3 h-3 rounded-full flex-shrink-0 animate-pulse"
+            style={{ backgroundColor: unitColor }} />
+          <div>
+            <div className="text-xs text-gray-400 uppercase tracking-wider">Current Status</div>
+            <div className="font-bold text-sm" style={{ color: unitColor }}>
+              {STATUS_LABELS[myUnit?.status] || 'Unknown'}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Body */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {/* Profile summary card — shown if profile is set */}
+        {profile && (
+          <div className="bg-gray-800 rounded-xl border border-gray-700 p-3">
+            <div className="flex items-start justify-between">
+              <div>
+                <div className="text-white font-semibold text-sm">{profile.name}</div>
+                {profile.employee_id && (
+                  <div className="text-gray-500 text-xs">ID: {profile.employee_id}</div>
+                )}
+                <div className={`text-xs font-bold mt-1 ${CERT_LEVEL_COLORS[profile.cert_level] || 'text-gray-400'}`}>
+                  {profile.cert_level}
+                </div>
+              </div>
+              {profile.certifications?.length > 0 && (
+                <div className="flex flex-wrap gap-1 max-w-[120px] justify-end">
+                  {profile.certifications.map(c => (
+                    <span key={c} className="text-xs bg-gray-700 text-gray-300 px-1.5 py-0.5 rounded-full font-bold">
+                      {c}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        <ActiveCall call={myCall} />
+        {myUnit && (
+          <StatusButtons
+            currentStatus={myUnit.status}
+            onStatusChange={handleStatusTap}
+            loading={statusLoading}
+          />
+        )}
+        <div className="bg-gray-800 rounded-xl p-3 border border-gray-700">
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse" />
+            <span className="text-gray-400 text-xs">
+              GPS tracking active when hardware is connected
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Profile modal */}
+      {showProfile && (
+        <CrewProfile
+          unit={user}
+          currentProfile={profile}
+          token={user?.token}
+          onSave={handleProfileSave}
+          onClose={profile ? () => setShowProfile(false) : null}
+        />
+      )}
+    </div>
+  );
+}
