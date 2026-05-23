@@ -96,7 +96,7 @@ function TimeRow({ step, ts, isLast, onUpdate }) {
             </span>
             <button
               onClick={startEdit}
-              className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-blue-400 text-xs transition-opacity"
+              className="text-gray-600 hover:text-blue-400 text-xs transition-colors"
               title="Edit time"
             >
               ✏️

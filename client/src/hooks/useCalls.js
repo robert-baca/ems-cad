@@ -20,7 +20,7 @@ const TS_STEPS = [
 export function useCalls() {
   const [calls, setCalls] = useState([]);
 
-  const handleCallCreated      = useCallback((call) => setCalls(prev => [call, ...prev]), []);
+  const handleCallCreated      = useCallback((call) => setCalls(prev => prev.some(c => c.id === call.id) ? prev : [call, ...prev]), []);
   const handleCallUpdated      = useCallback(({ call_id, changes }) =>
     setCalls(prev => prev.map(c => c.id === call_id ? { ...c, ...changes } : c)), []);
   const handleCallStatusChange = useCallback(({ call_id, status }) =>
@@ -29,21 +29,12 @@ export function useCalls() {
     setCalls(prev => prev.map(c => c.id === call_id ? { ...c, assigned_unit_id: unit_id } : c)), []);
 
   const dispatchCall = useCallback(async (data) => {
-    const hasUnit = !!data.assigned_unit_id;
-    const optimistic = {
-      id: `call-${Date.now()}`,
-      call_number: 44 + Math.floor(Math.random() * 50),
-      status: hasUnit ? 'dispatched' : 'pending',
-      received_at: new Date().toISOString(),
-      dispatched_at: hasUnit ? new Date().toISOString() : null,
-      acknowledged_at: null, en_route_at: null, on_scene_at: null,
-      patient_contact_at: null, cleared_at: null, available_at: null,
-      comments: [],
-      ...data
-    };
-    setCalls(prev => [optimistic, ...prev]);
-    try { await createCall(data); } catch {}
-    return optimistic;
+    try {
+      const res = await createCall(data);
+      return res.data; // socket will add it via handleCallCreated
+    } catch {
+      return null;
+    }
   }, []);
 
   // Assign a unit to a pending (or active) call

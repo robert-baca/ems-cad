@@ -11,7 +11,7 @@ const PARK_ZOOM   = 16;
 export default function ParkMap({
   units = [], calls = [], locations = [],
   onMapClick, onMapRightClick, onRemoveLocation,
-  newCallPin
+  newCallPin, flyToTarget
 }) {
   const containerRef      = useRef(null);
   const mapRef            = useRef(null);
@@ -202,6 +202,13 @@ export default function ParkMap({
         .addTo(map);
     }
   }, [newCallPin]);
+
+  // Fly to unit location
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReadyRef.current || !flyToTarget) return;
+    map.flyTo({ center: [flyToTarget.lng, flyToTarget.lat], zoom: 19, speed: 1.4 });
+  }, [flyToTarget]);
 
   return <div ref={containerRef} className="w-full h-full" />;
 }

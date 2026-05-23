@@ -14,7 +14,7 @@ const CERT_COLORS = {
 
 const ON_CALL_STATUSES = new Set(['dispatched', 'en_route', 'on_scene', 'patient_contact']);
 
-function UnitCard({ unit, isSelected, onClick, onHistory, onEdit, onToggleOos }) {
+function UnitCard({ unit, isSelected, onClick, onHistory, onEdit, onToggleOos, onFlyTo }) {
   const color = STATUS_COLORS[unit.status] || '#9ca3af';
   const profile = unit.profile;
 
@@ -86,6 +86,31 @@ function UnitCard({ unit, isSelected, onClick, onHistory, onEdit, onToggleOos })
         </div>
       </div>
 
+      {/* Expanded action row when selected */}
+      {isSelected && (
+        <div className="px-2 pb-2 flex gap-1.5 flex-wrap">
+          {!ON_CALL_STATUSES.has(unit.status) && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onToggleOos(unit); }}
+              className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-colors
+                ${unit.status === 'out_of_service'
+                  ? 'bg-green-800 hover:bg-green-700 text-green-300'
+                  : 'bg-gray-700 hover:bg-yellow-900 text-gray-400 hover:text-yellow-300'}`}
+            >
+              {unit.status === 'out_of_service' ? '✓ Back In Service' : 'Mark OOS'}
+            </button>
+          )}
+          {unit.last_lat && unit.last_lng && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onFlyTo(unit); }}
+              className="flex-1 py-1.5 rounded-lg text-xs font-bold bg-gray-700 hover:bg-blue-900 text-gray-400 hover:text-blue-300 transition-colors"
+            >
+              📍 Go to unit
+            </button>
+          )}
+        </div>
+      )}
+
       <button
         onClick={(e) => { e.stopPropagation(); onHistory(unit); }}
         className="w-full text-left px-3 pb-2 text-gray-500 hover:text-blue-400 text-xs flex items-center gap-1 transition-colors"
@@ -98,7 +123,7 @@ function UnitCard({ unit, isSelected, onClick, onHistory, onEdit, onToggleOos })
   );
 }
 
-export default function UnitPanel({ units, selectedUnitId, onSelectUnit, onUnitHistory, onEditUnit, onRemoveUnit, onAddUnit, onStatusChange }) {
+export default function UnitPanel({ units, selectedUnitId, onSelectUnit, onUnitHistory, onEditUnit, onRemoveUnit, onAddUnit, onStatusChange, onFlyTo }) {
   const [editingUnit,  setEditingUnit]  = useState(null);
   const [showAddUnit,  setShowAddUnit]  = useState(false);
 
@@ -158,6 +183,7 @@ export default function UnitPanel({ units, selectedUnitId, onSelectUnit, onUnitH
               onHistory={onUnitHistory}
               onEdit={setEditingUnit}
               onToggleOos={(u) => onStatusChange?.(u.id, u.status === 'out_of_service' ? 'available' : 'out_of_service')}
+              onFlyTo={(u) => onFlyTo?.(u)}
             />
           ))}
         </div>

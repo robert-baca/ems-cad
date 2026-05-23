@@ -1,19 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { CALL_TYPES } from '../../data/mockData';
-
-const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN;
-
-async function reverseGeocode(lat, lng) {
-  try {
-    const res = await fetch(
-      `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?access_token=${MAPBOX_TOKEN}&types=poi,address&limit=1`
-    );
-    const json = await res.json();
-    return json.features?.[0]?.place_name || '';
-  } catch {
-    return '';
-  }
-}
 
 export default function NewCallModal({ pin, units, onDispatch, onClose }) {
   const [form, setForm] = useState({
@@ -21,18 +7,9 @@ export default function NewCallModal({ pin, units, onDispatch, onClose }) {
     chief_complaint: '',
     priority: 2,
     location_name: '',
-    park_zone: '',
     assigned_unit_id: ''
   });
   const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (pin) {
-      reverseGeocode(pin.lat, pin.lng).then(name => {
-        setForm(f => ({ ...f, location_name: name }));
-      });
-    }
-  }, [pin]);
 
   const set = (field, val) => setForm(f => ({ ...f, [field]: val }));
 
@@ -42,9 +19,9 @@ export default function NewCallModal({ pin, units, onDispatch, onClose }) {
     setLoading(true);
     await onDispatch({
       ...form,
-      location_lat: pin?.lat,
-      location_lng: pin?.lng,
-      priority: Number(form.priority)
+      location_lat:  pin?.lat,
+      location_lng:  pin?.lng,
+      priority:      Number(form.priority)
     });
     setLoading(false);
     onClose();
@@ -89,31 +66,17 @@ export default function NewCallModal({ pin, units, onDispatch, onClose }) {
             </div>
           )}
 
-          {/* Location note + Zone */}
-          <div className="flex gap-2">
-            <div className="flex-1">
-              <label className="block text-gray-400 text-xs mb-1">Location Note</label>
-              <input
-                type="text"
-                value={form.location_name}
-                onChange={e => set('location_name', e.target.value)}
-                placeholder="Near Titan ride entrance"
-                className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500"
-              />
-            </div>
-            <div className="w-28">
-              <label className="block text-gray-400 text-xs mb-1">Zone</label>
-              <select
-                value={form.park_zone}
-                onChange={e => set('park_zone', e.target.value)}
-                className="w-full bg-gray-700 text-white rounded-lg px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="">—</option>
-                {['Zone A', 'Zone B', 'Zone C', 'Zone D', 'Zone E'].map(z => (
-                  <option key={z} value={z}>{z}</option>
-                ))}
-              </select>
-            </div>
+          {/* Location */}
+          <div>
+            <label className="block text-gray-400 text-xs mb-1">Location</label>
+            <input
+              type="text"
+              value={form.location_name}
+              onChange={e => set('location_name', e.target.value)}
+              placeholder="e.g. Near Titan ride entrance, Main Gate…"
+              autoFocus
+              className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500"
+            />
           </div>
 
           {/* Call type */}

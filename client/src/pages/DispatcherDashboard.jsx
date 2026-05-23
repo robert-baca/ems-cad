@@ -55,6 +55,7 @@ export default function DispatcherDashboard() {
   const [contextMenu,       setContextMenu]         = useState(null);
   const [showHistory,       setShowHistory]         = useState(false);
   const [historyUnit,       setHistoryUnit]         = useState(null);
+  const [flyToTarget,       setFlyToTarget]         = useState(null);
 
   // Load current shift on mount
   useEffect(() => {
@@ -230,6 +231,7 @@ export default function DispatcherDashboard() {
           onEditUnit={editUnit}
           onRemoveUnit={removeUnit}
           onStatusChange={changeStatus}
+          onFlyTo={(unit) => setFlyToTarget({ lat: unit.last_lat, lng: unit.last_lng, _t: Date.now() })}
         />
 
         {/* Center: Map */}
@@ -242,6 +244,7 @@ export default function DispatcherDashboard() {
             onMapRightClick={handleMapRightClick}
             onRemoveLocation={removeLocation}
             newCallPin={newCallPin}
+            flyToTarget={flyToTarget}
           />
           <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-black/60 backdrop-blur-sm text-white text-xs px-3 py-1.5 rounded-full pointer-events-none select-none">
             Drag to pan · Right-click → new call or add location
