@@ -5,6 +5,7 @@ const http       = require('http');
 const { Server } = require('socket.io');
 const jwt        = require('jsonwebtoken');
 const bcrypt     = require('bcryptjs');
+const { Pool }   = require('pg');
 require('dotenv').config();
 
 const app    = express();
@@ -18,17 +19,149 @@ app.use(express.json());
 
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-in-production';
 
-// ── In-memory store ───────────────────────────────────────────────
-const PW = 'ems2024'; // default password for all accounts
+// ── Database ──────────────────────────────────────────────────────
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false
+});
 
+// ── In-memory store (seeded from DB on startup) ───────────────────
+const PW = 'ems2024';
 const dispatchers = [
   { id: 'd1', username: 'dispatch',  full_name: 'Command Dispatch', password_hash: bcrypt.hashSync(PW, 8) },
   { id: 'd2', username: 'dispatch2', full_name: 'Dispatch 2',       password_hash: bcrypt.hashSync(PW, 8) }
 ];
 
-let units = [];
+let units        = [];
+let calls        = [];
+let currentShift = null;
+let nextCallNum  = 100;
 
-let calls = []; // starts empty — dispatchers create calls live
+// ── DB setup & seed ───────────────────────────────────────────────
+async function initDb() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS units (
+      id TEXT PRIMARY KEY,
+      unit_number TEXT NOT NULL,
+      unit_name TEXT,
+      unit_type TEXT DEFAULT 'ALS',
+      status TEXT DEFAULT 'available',
+      crew TEXT,
+      station TEXT,
+      trak4_device_id TEXT,
+      last_lat DOUBLE PRECISION,
+      last_lng DOUBLE PRECISION,
+      last_gps_at TEXT,
+      password_hash TEXT,
+      profile JSONB
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS calls (
+      id TEXT PRIMARY KEY,
+      call_number INTEGER,
+      status TEXT DEFAULT 'pending',
+      call_type TEXT,
+      priority INTEGER DEFAULT 2,
+      location_name TEXT,
+      location_lat DOUBLE PRECISION,
+      location_lng DOUBLE PRECISION,
+      assigned_unit_id TEXT,
+      received_at TEXT,
+      dispatched_at TEXT,
+      acknowledged_at TEXT,
+      en_route_at TEXT,
+      on_scene_at TEXT,
+      patient_contact_at TEXT,
+      cleared_at TEXT,
+      available_at TEXT,
+      closed_at TEXT,
+      disposition TEXT,
+      close_notes TEXT,
+      comments JSONB DEFAULT '[]'
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS shifts (
+      id TEXT PRIMARY KEY,
+      shift_label TEXT,
+      date TEXT,
+      started_at TEXT,
+      ended_at TEXT,
+      started_by TEXT,
+      unit_staffing JSONB DEFAULT '[]'
+    )
+  `);
+
+  const unitsRes = await pool.query('SELECT * FROM units ORDER BY unit_number');
+  units = unitsRes.rows;
+
+  const callsRes = await pool.query('SELECT * FROM calls ORDER BY received_at DESC');
+  calls = callsRes.rows.map(r => ({ ...r, comments: r.comments || [] }));
+  nextCallNum = calls.length > 0 ? Math.max(...calls.map(c => c.call_number)) + 1 : 100;
+
+  const shiftRes = await pool.query("SELECT * FROM shifts WHERE ended_at IS NULL ORDER BY started_at DESC LIMIT 1");
+  currentShift = shiftRes.rows[0] || null;
+  if (currentShift) currentShift.unit_staffing = currentShift.unit_staffing || [];
+
+  console.log(`[db] loaded ${units.length} units, ${calls.length} calls, shift: ${currentShift?.shift_label || 'none'}`);
+}
+
+async function saveUnit(unit) {
+  await pool.query(`
+    INSERT INTO units (id, unit_number, unit_name, unit_type, status, crew, station,
+      trak4_device_id, last_lat, last_lng, last_gps_at, password_hash, profile)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+    ON CONFLICT (id) DO UPDATE SET
+      unit_number=EXCLUDED.unit_number, unit_name=EXCLUDED.unit_name, unit_type=EXCLUDED.unit_type,
+      status=EXCLUDED.status, crew=EXCLUDED.crew, station=EXCLUDED.station,
+      trak4_device_id=EXCLUDED.trak4_device_id, last_lat=EXCLUDED.last_lat, last_lng=EXCLUDED.last_lng,
+      last_gps_at=EXCLUDED.last_gps_at, password_hash=EXCLUDED.password_hash, profile=EXCLUDED.profile
+  `, [unit.id, unit.unit_number, unit.unit_name, unit.unit_type, unit.status,
+      unit.crew, unit.station, unit.trak4_device_id, unit.last_lat, unit.last_lng,
+      unit.last_gps_at, unit.password_hash, unit.profile ? JSON.stringify(unit.profile) : null]);
+}
+
+async function deleteUnitFromDb(id) {
+  await pool.query('DELETE FROM units WHERE id=$1', [id]);
+}
+
+async function saveCall(call) {
+  await pool.query(`
+    INSERT INTO calls (id, call_number, status, call_type, priority, location_name,
+      location_lat, location_lng, assigned_unit_id, received_at, dispatched_at, acknowledged_at,
+      en_route_at, on_scene_at, patient_contact_at, cleared_at, available_at, closed_at,
+      disposition, close_notes, comments)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+    ON CONFLICT (id) DO UPDATE SET
+      status=EXCLUDED.status, call_type=EXCLUDED.call_type, priority=EXCLUDED.priority,
+      location_name=EXCLUDED.location_name, location_lat=EXCLUDED.location_lat,
+      location_lng=EXCLUDED.location_lng, assigned_unit_id=EXCLUDED.assigned_unit_id,
+      dispatched_at=EXCLUDED.dispatched_at, acknowledged_at=EXCLUDED.acknowledged_at,
+      en_route_at=EXCLUDED.en_route_at, on_scene_at=EXCLUDED.on_scene_at,
+      patient_contact_at=EXCLUDED.patient_contact_at, cleared_at=EXCLUDED.cleared_at,
+      available_at=EXCLUDED.available_at, closed_at=EXCLUDED.closed_at,
+      disposition=EXCLUDED.disposition, close_notes=EXCLUDED.close_notes, comments=EXCLUDED.comments
+  `, [call.id, call.call_number, call.status, call.call_type, call.priority,
+      call.location_name, call.location_lat, call.location_lng, call.assigned_unit_id,
+      call.received_at, call.dispatched_at, call.acknowledged_at, call.en_route_at,
+      call.on_scene_at, call.patient_contact_at, call.cleared_at, call.available_at,
+      call.closed_at, call.disposition, call.close_notes, JSON.stringify(call.comments || [])]);
+}
+
+async function saveShift(shift) {
+  if (!shift) return;
+  await pool.query(`
+    INSERT INTO shifts (id, shift_label, date, started_at, ended_at, started_by, unit_staffing)
+    VALUES ($1,$2,$3,$4,$5,$6,$7)
+    ON CONFLICT (id) DO UPDATE SET
+      shift_label=EXCLUDED.shift_label, ended_at=EXCLUDED.ended_at,
+      unit_staffing=EXCLUDED.unit_staffing
+  `, [shift.id, shift.shift_label, shift.date, shift.started_at, shift.ended_at,
+      shift.started_by, JSON.stringify(shift.unit_staffing || [])]);
+}
 
 // ── JWT helpers ───────────────────────────────────────────────────
 function signToken(payload) {
@@ -78,138 +211,32 @@ app.get('/api/units', (req, res) => {
   res.json(units.map(u => ({ ...u, password_hash: undefined })));
 });
 
-app.patch('/api/units/:id/status', verifyToken, (req, res) => {
+app.patch('/api/units/:id/status', verifyToken, async (req, res) => {
   const unit = units.find(u => u.id === req.params.id);
   if (!unit) return res.status(404).json({ error: 'Not found' });
 
-  // Crew can only update their own unit
   if (req.user.role === 'crew' && req.user.unit_id !== unit.id)
     return res.status(403).json({ error: 'Forbidden' });
 
   unit.status = req.body.status;
+  saveUnit(unit).catch(console.error);
   io.to('dispatchers').emit('unit:status_change', { unit_id: unit.id, status: unit.status });
   res.json({ ok: true, unit });
 });
 
-app.put('/api/units/:id/profile', verifyToken, (req, res) => {
+app.put('/api/units/:id/profile', verifyToken, async (req, res) => {
   const unit = units.find(u => u.id === req.params.id);
   if (!unit) return res.status(404).json({ error: 'Not found' });
   if (req.user.role === 'crew' && req.user.unit_id !== unit.id)
     return res.status(403).json({ error: 'Forbidden' });
 
   unit.profile = { ...req.body };
-  // Notify dispatchers of profile update
+  saveUnit(unit).catch(console.error);
   io.to('dispatchers').emit('unit:profile_update', { unit_id: unit.id, profile: unit.profile });
   res.json({ ok: true, profile: unit.profile });
 });
 
-// ── Calls ─────────────────────────────────────────────────────────
-app.get('/api/calls', verifyToken, (req, res) => {
-  if (req.user.role === 'crew') {
-    const mine = calls.filter(c => c.assigned_unit_id === req.user.unit_id && c.status !== 'closed');
-    return res.json(mine);
-  }
-  res.json(calls);
-});
-
-app.post('/api/calls', verifyToken, (req, res) => {
-  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
-  const hasUnit = !!req.body.assigned_unit_id;
-  const call = {
-    id: `call-${Date.now()}`,
-    call_number: 100 + calls.length,
-    status: hasUnit ? 'dispatched' : 'pending',
-    received_at: new Date().toISOString(),
-    dispatched_at: hasUnit ? new Date().toISOString() : null,
-    acknowledged_at: null, en_route_at: null, on_scene_at: null,
-    patient_contact_at: null, cleared_at: null, available_at: null,
-    comments: [],
-    ...req.body
-  };
-  calls.push(call);
-
-  io.to('dispatchers').emit('call:created', call);
-  if (hasUnit) {
-    io.to(`crew:${call.assigned_unit_id}`).emit('call:assigned_to_me', call);
-    const unit = units.find(u => u.id === call.assigned_unit_id);
-    if (unit) {
-      unit.status = 'dispatched';
-      io.to('dispatchers').emit('unit:status_change', { unit_id: unit.id, status: 'dispatched' });
-    }
-  }
-
-  res.status(201).json(call);
-});
-
-app.patch('/api/calls/:id/assign', verifyToken, (req, res) => {
-  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
-  const call = calls.find(c => c.id === req.params.id);
-  if (!call) return res.status(404).json({ error: 'Not found' });
-
-  call.assigned_unit_id = req.body.unit_id;
-  call.status           = 'dispatched';
-  call.dispatched_at    = call.dispatched_at || new Date().toISOString();
-
-  const unit = units.find(u => u.id === req.body.unit_id);
-  if (unit) {
-    unit.status = 'dispatched';
-    io.to('dispatchers').emit('unit:status_change', { unit_id: unit.id, status: 'dispatched' });
-  }
-
-  io.to('dispatchers').emit('call:assigned', { call_id: call.id, unit_id: req.body.unit_id });
-  io.to(`crew:${req.body.unit_id}`).emit('call:assigned_to_me', call);
-  res.json(call);
-});
-
-app.patch('/api/calls/:id/status', verifyToken, (req, res) => {
-  const call = calls.find(c => c.id === req.params.id);
-  if (!call) return res.status(404).json({ error: 'Not found' });
-
-  const TS_MAP = {
-    en_route: 'en_route_at', on_scene: 'on_scene_at',
-    patient_contact: 'patient_contact_at', cleared: 'cleared_at', available: 'available_at'
-  };
-  call.status = req.body.status;
-  if (req.body.disposition) call.disposition = req.body.disposition;
-  if (req.body.close_notes)  call.close_notes  = req.body.close_notes;
-  if (TS_MAP[req.body.status] && !call[TS_MAP[req.body.status]]) {
-    call[TS_MAP[req.body.status]] = new Date().toISOString();
-  }
-  if (req.body.status === 'closed') call.closed_at = new Date().toISOString();
-
-  const payload = { call_id: call.id, status: call.status, timestamp: new Date().toISOString() };
-  io.to('dispatchers').emit('call:status_change', payload);
-  io.to(`crew:${call.assigned_unit_id}`).emit('call:updated', { call_id: call.id, changes: { status: call.status } });
-
-  // Sync unit status
-  if (call.assigned_unit_id) {
-    const unit = units.find(u => u.id === call.assigned_unit_id);
-    if (unit) {
-      unit.status = req.body.status === 'closed' ? 'available' : req.body.status;
-      io.to('dispatchers').emit('unit:status_change', { unit_id: unit.id, status: unit.status });
-    }
-  }
-  res.json(call);
-});
-
-app.post('/api/calls/:id/comments', verifyToken, (req, res) => {
-  const call = calls.find(c => c.id === req.params.id);
-  if (!call) return res.status(404).json({ error: 'Not found' });
-  const comment = {
-    id: `cmt-${Date.now()}`,
-    text: req.body.text,
-    author: req.body.author || (req.user.role === 'crew' ? req.user.unit_number : 'Dispatcher'),
-    created_at: new Date().toISOString()
-  };
-  call.comments.push(comment);
-  io.to('dispatchers').emit('call:comment_added', { call_id: call.id, comment });
-  if (call.assigned_unit_id) {
-    io.to(`crew:${call.assigned_unit_id}`).emit('call:comment_added', { call_id: call.id, comment });
-  }
-  res.json(comment);
-});
-
-app.post('/api/units', verifyToken, (req, res) => {
+app.post('/api/units', verifyToken, async (req, res) => {
   if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
   const { unit_number, unit_name, unit_type = 'ALS', trak4_device_id } = req.body;
   if (!unit_number?.trim() || !unit_name?.trim())
@@ -229,45 +256,160 @@ app.post('/api/units', verifyToken, (req, res) => {
     station:         null
   };
   units.push(newUnit);
+  await saveUnit(newUnit).catch(console.error);
   const sanitized = { ...newUnit, password_hash: undefined };
   io.to('dispatchers').emit('unit:updated', sanitized);
   res.status(201).json(sanitized);
 });
 
-app.put('/api/units/:id', verifyToken, (req, res) => {
+app.put('/api/units/:id', verifyToken, async (req, res) => {
   if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
   const unit = units.find(u => u.id === req.params.id);
   if (!unit) return res.status(404).json({ error: 'Not found' });
 
   const { unit_number, unit_name, unit_type, password, trak4_device_id } = req.body;
-  if (unit_number !== undefined)    unit.unit_number      = unit_number;
-  if (unit_name   !== undefined)    unit.unit_name        = unit_name;
-  if (unit_type   !== undefined)    unit.unit_type        = unit_type;
-  if ('trak4_device_id' in req.body) unit.trak4_device_id = trak4_device_id;
-  if (password)                     unit.password_hash    = bcrypt.hashSync(password, 8);
+  if (unit_number !== undefined)     unit.unit_number      = unit_number;
+  if (unit_name   !== undefined)     unit.unit_name        = unit_name;
+  if (unit_type   !== undefined)     unit.unit_type        = unit_type;
+  if ('trak4_device_id' in req.body) unit.trak4_device_id  = trak4_device_id;
+  if (password)                      unit.password_hash    = bcrypt.hashSync(password, 8);
 
+  await saveUnit(unit).catch(console.error);
   const sanitized = { ...unit, password_hash: undefined };
   io.to('dispatchers').emit('unit:updated', sanitized);
   res.json(sanitized);
 });
 
-app.delete('/api/units/:id', verifyToken, (req, res) => {
+app.delete('/api/units/:id', verifyToken, async (req, res) => {
   if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
   const idx = units.findIndex(u => u.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'Not found' });
   units.splice(idx, 1);
+  deleteUnitFromDb(req.params.id).catch(console.error);
   io.to('dispatchers').emit('unit:removed', { unit_id: req.params.id });
   res.json({ ok: true });
 });
 
-// ── Shift ─────────────────────────────────────────────────────────
-let currentShift = null;
+// ── Calls ─────────────────────────────────────────────────────────
+app.get('/api/calls', verifyToken, (req, res) => {
+  if (req.user.role === 'crew') {
+    const mine = calls.filter(c => c.assigned_unit_id === req.user.unit_id && c.status !== 'closed');
+    return res.json(mine);
+  }
+  res.json(calls);
+});
 
+app.post('/api/calls', verifyToken, async (req, res) => {
+  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
+  const hasUnit = !!req.body.assigned_unit_id;
+  const call = {
+    id: `call-${Date.now()}`,
+    call_number: nextCallNum++,
+    status: hasUnit ? 'dispatched' : 'pending',
+    received_at: new Date().toISOString(),
+    dispatched_at: hasUnit ? new Date().toISOString() : null,
+    acknowledged_at: null, en_route_at: null, on_scene_at: null,
+    patient_contact_at: null, cleared_at: null, available_at: null,
+    closed_at: null, disposition: null, close_notes: null,
+    comments: [],
+    ...req.body
+  };
+  calls.unshift(call);
+  await saveCall(call).catch(console.error);
+
+  io.to('dispatchers').emit('call:created', call);
+  if (hasUnit) {
+    io.to(`crew:${call.assigned_unit_id}`).emit('call:assigned_to_me', call);
+    const unit = units.find(u => u.id === call.assigned_unit_id);
+    if (unit) {
+      unit.status = 'dispatched';
+      saveUnit(unit).catch(console.error);
+      io.to('dispatchers').emit('unit:status_change', { unit_id: unit.id, status: 'dispatched' });
+    }
+  }
+
+  res.status(201).json(call);
+});
+
+app.patch('/api/calls/:id/assign', verifyToken, async (req, res) => {
+  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
+  const call = calls.find(c => c.id === req.params.id);
+  if (!call) return res.status(404).json({ error: 'Not found' });
+
+  call.assigned_unit_id = req.body.unit_id;
+  call.status           = 'dispatched';
+  call.dispatched_at    = call.dispatched_at || new Date().toISOString();
+
+  const unit = units.find(u => u.id === req.body.unit_id);
+  if (unit) {
+    unit.status = 'dispatched';
+    saveUnit(unit).catch(console.error);
+    io.to('dispatchers').emit('unit:status_change', { unit_id: unit.id, status: 'dispatched' });
+  }
+
+  saveCall(call).catch(console.error);
+  io.to('dispatchers').emit('call:assigned', { call_id: call.id, unit_id: req.body.unit_id });
+  io.to(`crew:${req.body.unit_id}`).emit('call:assigned_to_me', call);
+  res.json(call);
+});
+
+app.patch('/api/calls/:id/status', verifyToken, async (req, res) => {
+  const call = calls.find(c => c.id === req.params.id);
+  if (!call) return res.status(404).json({ error: 'Not found' });
+
+  const TS_MAP = {
+    en_route: 'en_route_at', on_scene: 'on_scene_at',
+    patient_contact: 'patient_contact_at', cleared: 'cleared_at', available: 'available_at'
+  };
+  call.status = req.body.status;
+  if (req.body.disposition) call.disposition = req.body.disposition;
+  if (req.body.close_notes)  call.close_notes  = req.body.close_notes;
+  if (TS_MAP[req.body.status] && !call[TS_MAP[req.body.status]]) {
+    call[TS_MAP[req.body.status]] = new Date().toISOString();
+  }
+  if (req.body.status === 'closed') call.closed_at = new Date().toISOString();
+
+  saveCall(call).catch(console.error);
+
+  const payload = { call_id: call.id, status: call.status, timestamp: new Date().toISOString() };
+  io.to('dispatchers').emit('call:status_change', payload);
+  io.to(`crew:${call.assigned_unit_id}`).emit('call:updated', { call_id: call.id, changes: { status: call.status } });
+
+  if (call.assigned_unit_id) {
+    const unit = units.find(u => u.id === call.assigned_unit_id);
+    if (unit) {
+      unit.status = req.body.status === 'closed' ? 'available' : req.body.status;
+      saveUnit(unit).catch(console.error);
+      io.to('dispatchers').emit('unit:status_change', { unit_id: unit.id, status: unit.status });
+    }
+  }
+  res.json(call);
+});
+
+app.post('/api/calls/:id/comments', verifyToken, async (req, res) => {
+  const call = calls.find(c => c.id === req.params.id);
+  if (!call) return res.status(404).json({ error: 'Not found' });
+  const comment = {
+    id: `cmt-${Date.now()}`,
+    text: req.body.text,
+    author: req.body.author || (req.user.role === 'crew' ? req.user.unit_number : 'Dispatcher'),
+    created_at: new Date().toISOString()
+  };
+  call.comments.push(comment);
+  saveCall(call).catch(console.error);
+  io.to('dispatchers').emit('call:comment_added', { call_id: call.id, comment });
+  if (call.assigned_unit_id) {
+    io.to(`crew:${call.assigned_unit_id}`).emit('call:comment_added', { call_id: call.id, comment });
+  }
+  res.json(comment);
+});
+
+// ── Shift ─────────────────────────────────────────────────────────
 app.get('/api/shift/current', verifyToken, (req, res) => {
   res.json(currentShift);
 });
 
-app.post('/api/shift/start', verifyToken, (req, res) => {
+app.post('/api/shift/start', verifyToken, async (req, res) => {
   if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
   if (currentShift && !currentShift.ended_at)
     return res.status(409).json({ error: 'A shift is already active' });
@@ -290,19 +432,24 @@ app.post('/api/shift/start', verifyToken, (req, res) => {
     unit.station = station || null;
     if (unit_type) unit.unit_type = unit_type;
     unit.status = in_service ? 'available' : 'out_of_service';
+    saveUnit(unit).catch(console.error);
   });
+
+  await saveShift(currentShift).catch(console.error);
 
   const sanitizedUnits = units.map(u => ({ ...u, password_hash: undefined }));
   io.to('dispatchers').emit('shift:started', { shift: currentShift, units: sanitizedUnits });
   res.json({ shift: currentShift, units: sanitizedUnits });
 });
 
-app.post('/api/shift/end', verifyToken, (req, res) => {
+app.post('/api/shift/end', verifyToken, async (req, res) => {
   if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
   if (!currentShift || currentShift.ended_at)
     return res.status(404).json({ error: 'No active shift' });
 
   currentShift.ended_at = new Date().toISOString();
+  await saveShift(currentShift).catch(console.error);
+
   const shiftStart  = new Date(currentShift.started_at);
   const shiftCalls  = calls.filter(c => new Date(c.received_at) >= shiftStart);
   const durationMin = Math.round((Date.now() - shiftStart) / 60000);
@@ -347,7 +494,7 @@ app.post('/api/shift/end', verifyToken, (req, res) => {
   res.json(summary);
 });
 
-app.patch('/api/shift/units/:unit_id', verifyToken, (req, res) => {
+app.patch('/api/shift/units/:unit_id', verifyToken, async (req, res) => {
   if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
   const unit = units.find(u => u.id === req.params.unit_id);
   if (!unit) return res.status(404).json({ error: 'Not found' });
@@ -359,7 +506,9 @@ app.patch('/api/shift/units/:unit_id', verifyToken, (req, res) => {
   if (currentShift) {
     const s = currentShift.unit_staffing.find(s => s.unit_id === req.params.unit_id);
     if (s) { Object.assign(s, { crew, unit_type, in_service, station }); }
+    saveShift(currentShift).catch(console.error);
   }
+  saveUnit(unit).catch(console.error);
   const sanitized = { ...unit, password_hash: undefined };
   io.to('dispatchers').emit('unit:updated', sanitized);
   res.json(sanitized);
@@ -368,8 +517,6 @@ app.patch('/api/shift/units/:unit_id', verifyToken, (req, res) => {
 // ── GPS webhook ───────────────────────────────────────────────────
 app.post('/api/gps/webhook', (req, res) => {
   const body = req.body;
-
-  // Log every incoming ping so we can verify the format on first use
   console.log('[gps] incoming ping:', JSON.stringify(body));
 
   // Trak-4 wraps GPS data inside GPS_Report; fall back to flat fields for other trackers
@@ -384,6 +531,7 @@ app.post('/api/gps/webhook', (req, res) => {
     unit.last_lat    = lat;
     unit.last_lng    = lng;
     unit.last_gps_at = timestamp;
+    saveUnit(unit).catch(console.error);
     io.to('dispatchers').emit('unit:gps_update', {
       unit_id: unit.id, unit_number: unit.unit_number, lat, lng, timestamp
     });
@@ -400,7 +548,6 @@ app.get('/api/health', (req, res) => res.json({ status: 'ok', ts: new Date().toI
 
 // ── Socket.io ─────────────────────────────────────────────────────
 io.use((socket, next) => {
-  // Optionally verify JWT on connect (crew/dispatcher token in auth)
   const token = socket.handshake.auth?.token;
   if (token) {
     try { socket.jwtUser = jwt.verify(token, JWT_SECRET); } catch {}
@@ -414,7 +561,6 @@ io.on('connection', (socket) => {
 
   socket.on('join:dispatcher', () => {
     socket.join('dispatchers');
-    // Send current state to this dispatcher
     socket.emit('init:state', {
       units: units.map(u => ({ ...u, password_hash: undefined })),
       calls
@@ -423,33 +569,32 @@ io.on('connection', (socket) => {
 
   socket.on('join:crew', ({ unit_id }) => {
     socket.join(`crew:${unit_id}`);
-    // Send crew their active call
     const myCall = calls.find(c => c.assigned_unit_id === unit_id && c.status !== 'closed');
     if (myCall) socket.emit('call:assigned_to_me', myCall);
   });
 
-  // Crew taps a status button
   socket.on('crew:status_update', ({ unit_id, status }) => {
     const unit = units.find(u => u.id === unit_id);
     if (unit) {
       unit.status = status;
+      saveUnit(unit).catch(console.error);
       io.to('dispatchers').emit('unit:status_change', { unit_id, status });
-      // Also advance the active call
       const activeCall = calls.find(c => c.assigned_unit_id === unit_id && c.status !== 'closed');
       if (activeCall) {
         const TS_MAP = { en_route: 'en_route_at', on_scene: 'on_scene_at', patient_contact: 'patient_contact_at', cleared: 'cleared_at' };
         activeCall.status = status;
         if (TS_MAP[status] && !activeCall[TS_MAP[status]]) activeCall[TS_MAP[status]] = new Date().toISOString();
+        saveCall(activeCall).catch(console.error);
         io.to('dispatchers').emit('call:status_change', { call_id: activeCall.id, status, timestamp: new Date().toISOString() });
       }
     }
   });
 
-  // Crew updates profile
   socket.on('crew:profile_update', ({ unit_id, profile }) => {
     const unit = units.find(u => u.id === unit_id);
     if (unit) {
       unit.profile = profile;
+      saveUnit(unit).catch(console.error);
       io.to('dispatchers').emit('unit:profile_update', { unit_id, profile });
     }
   });
@@ -467,9 +612,17 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 const PORT = process.env.PORT || 3001;
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n🚑 EMS CAD Server running on port ${PORT}`);
-  console.log(`   Health: http://localhost:${PORT}/api/health`);
-  console.log(`   Default login — dispatchers: "dispatch" / "ems2024"`);
-  console.log(`   Default login — crews: "EMS-1" through "EMS-5" / "ems2024"\n`);
-});
+
+initDb()
+  .then(() => {
+    server.listen(PORT, '0.0.0.0', () => {
+      console.log(`\n🚑 EMS CAD Server running on port ${PORT}`);
+      console.log(`   Health: http://localhost:${PORT}/api/health`);
+      console.log(`   Default login — dispatchers: "dispatch" / "ems2024"`);
+      console.log(`   Default login — crews: "EMS-1" through "EMS-5" / "ems2024"\n`);
+    });
+  })
+  .catch(err => {
+    console.error('[db] Failed to connect to database:', err.message);
+    process.exit(1);
+  });
