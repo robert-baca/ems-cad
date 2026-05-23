@@ -91,6 +91,7 @@ async function initDb() {
   await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS response_mode TEXT`);
   await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS parent_call_id TEXT`);
   await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS mutual_aid_agencies JSONB DEFAULT '[]'`);
+  await pool.query(`ALTER TABLE locations ADD COLUMN IF NOT EXISTS location_type TEXT DEFAULT 'permanent'`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS locations (
