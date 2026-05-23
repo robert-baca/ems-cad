@@ -62,28 +62,14 @@ function UnitCard({ unit, isSelected, onClick, onHistory, onEdit, onToggleOos, o
           )}
         </button>
 
-        {/* Hover buttons */}
-        <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-          {!ON_CALL_STATUSES.has(unit.status) && (
-            <button
-              onClick={(e) => { e.stopPropagation(); onToggleOos(unit); }}
-              className={`px-1.5 py-0.5 rounded text-xs font-bold transition-colors
-                ${unit.status === 'out_of_service'
-                  ? 'text-green-400 hover:bg-gray-600'
-                  : 'text-gray-500 hover:text-yellow-400 hover:bg-gray-600'}`}
-              title={unit.status === 'out_of_service' ? 'Mark available' : 'Mark out of service'}
-            >
-              {unit.status === 'out_of_service' ? '✓ OOS' : 'OOS'}
-            </button>
-          )}
-          <button
-            onClick={(e) => { e.stopPropagation(); onEdit(unit); }}
-            className="w-6 h-6 flex items-center justify-center rounded text-gray-600 hover:text-blue-400 hover:bg-gray-600 text-xs"
-            title="Edit unit"
-          >
-            ✏️
-          </button>
-        </div>
+        {/* Edit button on hover */}
+        <button
+          onClick={(e) => { e.stopPropagation(); onEdit(unit); }}
+          className="absolute top-2 right-2 w-6 h-6 flex items-center justify-center rounded text-gray-600 hover:text-blue-400 hover:bg-gray-600 text-xs opacity-0 group-hover:opacity-100 transition-opacity"
+          title="Edit unit"
+        >
+          ✏️
+        </button>
       </div>
 
       {/* Expanded action row when selected */}
@@ -100,13 +86,17 @@ function UnitCard({ unit, isSelected, onClick, onHistory, onEdit, onToggleOos, o
               {unit.status === 'out_of_service' ? '✓ Back In Service' : 'Mark OOS'}
             </button>
           )}
-          {unit.last_lat && unit.last_lng && (
+          {unit.last_lat && unit.last_lng ? (
             <button
               onClick={(e) => { e.stopPropagation(); onFlyTo(unit); }}
               className="flex-1 py-1.5 rounded-lg text-xs font-bold bg-gray-700 hover:bg-blue-900 text-gray-400 hover:text-blue-300 transition-colors"
             >
               📍 Go to unit
             </button>
+          ) : (
+            <div className="flex-1 py-1.5 rounded-lg text-xs text-center text-gray-600 bg-gray-800 border border-gray-700">
+              📍 No GPS yet
+            </div>
           )}
         </div>
       )}

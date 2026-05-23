@@ -1,15 +1,14 @@
 import { useState, useEffect } from 'react';
 
-const TYPE_ICONS   = { ALS: '🚑', BLS: '🚐', Bike: '🚲', Cart: '🛺' };
-const UNIT_TYPES   = ['ALS', 'BLS', 'Cart'];
-const SHIFT_LABELS = ['Day Shift', 'Evening Shift', 'Night Shift'];
-const STATIONS     = ['Station 7', 'Station 14', 'Roaming'];
+const TYPE_ICONS = { ALS: '🚑', BLS: '🚐', Cart: '🛺' };
+const UNIT_TYPES = ['ALS', 'BLS', 'Cart'];
+const STATIONS   = ['Station 7', 'Station 14', 'Roaming'];
 
 export default function ShiftSetup({ token, onShiftStarted }) {
-  const [units,       setUnits]      = useState([]);
-  const [shiftLabel,  setShiftLabel] = useState('Day Shift');
-  const [customLabel, setCustomLabel] = useState('');
-  const [staffing,    setStaffing]   = useState({});
+  const [units,      setUnits]     = useState([]);
+  const [startTime,  setStartTime] = useState('07:00');
+  const [endTime,    setEndTime]   = useState('15:00');
+  const [staffing,   setStaffing]  = useState({});
   const [saving,      setSaving]     = useState(false);
   const [error,       setError]      = useState('');
 
@@ -69,8 +68,8 @@ export default function ShiftSetup({ token, onShiftStarted }) {
   };
 
   const handleStart = async () => {
-    const label = shiftLabel === 'Custom' ? customLabel.trim() : shiftLabel;
-    if (!label) { setError('Enter a shift name.'); return; }
+    if (!startTime) { setError('Enter a start time.'); return; }
+    const label = `${startTime} – ${endTime || '?'}`;
     setSaving(true);
     setError('');
     try {
@@ -109,29 +108,30 @@ export default function ShiftSetup({ token, onShiftStarted }) {
         </div>
 
         <div className="bg-gray-800 rounded-2xl border border-gray-700 overflow-hidden">
-          {/* Shift label */}
+          {/* Shift times */}
           <div className="px-6 py-5 border-b border-gray-700">
-            <div className="text-gray-400 text-xs uppercase tracking-wider mb-3">Shift</div>
-            <div className="flex flex-wrap gap-2">
-              {SHIFT_LABELS.map(l => (
-                <button key={l} onClick={() => setShiftLabel(l)}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors
-                    ${shiftLabel === l ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}>
-                  {l}
-                </button>
-              ))}
-              <button onClick={() => setShiftLabel('Custom')}
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors
-                  ${shiftLabel === 'Custom' ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}>
-                Custom…
-              </button>
+            <div className="text-gray-400 text-xs uppercase tracking-wider mb-3">Shift Hours</div>
+            <div className="flex items-center gap-3">
+              <div className="flex-1">
+                <label className="block text-gray-500 text-xs mb-1">Start Time</label>
+                <input
+                  type="time"
+                  value={startTime}
+                  onChange={e => setStartTime(e.target.value)}
+                  className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div className="text-gray-500 text-sm mt-4">–</div>
+              <div className="flex-1">
+                <label className="block text-gray-500 text-xs mb-1">End Time</label>
+                <input
+                  type="time"
+                  value={endTime}
+                  onChange={e => setEndTime(e.target.value)}
+                  className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
             </div>
-            {shiftLabel === 'Custom' && (
-              <input type="text" value={customLabel} onChange={e => setCustomLabel(e.target.value)}
-                placeholder="e.g. Holiday Shift, Overtime…"
-                autoFocus
-                className="mt-3 w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500" />
-            )}
           </div>
 
           {/* Unit roster */}
