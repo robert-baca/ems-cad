@@ -38,7 +38,7 @@ export default function MapContextMenu({ position, onStartCall, onAddLocation, o
   };
 
   return (
-    <div ref={ref} style={style}
+    <div ref={ref} style={style} onClick={e => e.stopPropagation()}
       className="bg-gray-800 border border-gray-600 rounded-xl shadow-2xl overflow-hidden w-60">
 
       {mode === 'menu' ? (
