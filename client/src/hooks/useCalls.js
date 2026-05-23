@@ -90,7 +90,7 @@ export function useCalls() {
         ? { ...c, status: 'closed', disposition, close_notes, closed_at: new Date().toISOString() }
         : c
     ));
-    await apiCloseCall(callId, disposition, close_notes);
+    try { await apiCloseCall(callId, disposition, close_notes); } catch {}
   }, []);
 
   const addComment = useCallback((callId, text, author = 'Dispatcher') => {

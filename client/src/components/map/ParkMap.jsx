@@ -167,9 +167,10 @@ export default function ParkMap({
     locations.forEach(loc => {
       const el = document.createElement('div');
       el.className = 'loc-marker-wrapper';
+      const labelPrefix = loc.locationType === 'permanent' ? '📌 ' : '';
       el.innerHTML = `
         <div class="loc-marker-diamond" style="background:${loc.color}"></div>
-        <div class="loc-marker-label">${loc.name}</div>
+        <div class="loc-marker-label">${labelPrefix}${loc.name}</div>
         <button class="loc-delete-btn" title="Remove location">×</button>
       `;
 

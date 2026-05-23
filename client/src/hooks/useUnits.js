@@ -40,12 +40,12 @@ export function useUnits() {
 
   const editUnit = useCallback(async (unitId, data) => {
     setUnits(prev => prev.map(u => u.id === unitId ? { ...u, ...data } : u));
-    await apiEditUnit(unitId, data);
+    try { await apiEditUnit(unitId, data); } catch {}
   }, []);
 
   const removeUnit = useCallback(async (unitId) => {
     setUnits(prev => prev.filter(u => u.id !== unitId));
-    await apiDeleteUnit(unitId);
+    try { await apiDeleteUnit(unitId); } catch {}
   }, []);
 
   const moveUnit = useCallback((unitId, lat, lng) => {

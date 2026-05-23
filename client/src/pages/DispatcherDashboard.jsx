@@ -43,7 +43,7 @@ export default function DispatcherDashboard() {
     calls, handleCallCreated, handleCallUpdated, handleCallStatusChange, handleCallAssigned,
     dispatchCall, assignUnit, closeCall, updateTimestamp, logTimeNow, addComment
   } = useCalls();
-  const { locations, addLocation, removeLocation } = useLocations();
+  const { locations, addLocation, removeLocation, clearShiftLocations } = useLocations();
 
   const [currentShift,      setCurrentShift]      = useState(undefined); // undefined = loading
   const [shiftSummary,      setShiftSummary]       = useState(null);
@@ -96,6 +96,7 @@ export default function DispatcherDashboard() {
       if (!res.ok) throw new Error(data.error);
       setShiftSummary(data);
       setCurrentShift(null);
+      clearShiftLocations();
     } catch (err) {
       alert('Failed to end shift: ' + err.message);
     } finally {
@@ -126,8 +127,8 @@ export default function DispatcherDashboard() {
     setShowNewCallModal(true);
   };
 
-  const handleContextAddLocation = (name, lat, lng, color) => {
-    addLocation(name, lat, lng, color);
+  const handleContextAddLocation = (name, lat, lng, color, locationType) => {
+    addLocation(name, lat, lng, color, locationType);
   };
 
   const handleDispatch = async (data) => {
