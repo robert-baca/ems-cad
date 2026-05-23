@@ -372,13 +372,14 @@ app.post('/api/gps/webhook', (req, res) => {
   // Log every incoming ping so we can verify the format on first use
   console.log('[gps] incoming ping:', JSON.stringify(body));
 
-  // Normalise field names across common GPS tracker formats
-  const device_id = body.device_id ?? body.serial_number ?? body.serial ?? body.imei ?? body.id ?? null;
-  const lat       = parseFloat(body.lat ?? body.latitude  ?? body.Latitude  ?? 0);
-  const lng       = parseFloat(body.lng ?? body.longitude ?? body.Longitude ?? body.lon ?? 0);
-  const timestamp = body.timestamp ?? body.gps_time ?? body.time ?? new Date().toISOString();
+  // Trak-4 wraps GPS data inside GPS_Report; fall back to flat fields for other trackers
+  const report    = body.GPS_Report || body;
+  const device_id = report.DeviceID ?? report.device_id ?? body.device_id ?? body.serial_number ?? body.serial ?? body.imei ?? body.id ?? null;
+  const lat       = parseFloat(report.Latitude  ?? report.lat ?? report.latitude  ?? 0);
+  const lng       = parseFloat(report.Longitude ?? report.lng ?? report.longitude ?? body.lon ?? 0);
+  const timestamp = report.ReceivedTime ?? report.timestamp ?? body.timestamp ?? body.gps_time ?? new Date().toISOString();
 
-  const unit = units.find(u => u.trak4_device_id && u.trak4_device_id === String(device_id));
+  const unit = units.find(u => u.trak4_device_id && String(u.trak4_device_id) === String(device_id));
   if (unit && lat && lng) {
     unit.last_lat    = lat;
     unit.last_lng    = lng;
