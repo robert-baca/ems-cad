@@ -37,7 +37,7 @@ export default function DispatcherDashboard() {
     units, setUnits,
     handleGpsUpdate, handleStatusChange, handleProfileUpdate,
     handleUnitUpdated, handleUnitRemoved,
-    editUnit, removeUnit
+    addUnit, editUnit, removeUnit
   } = useUnits();
   const {
     calls, handleCallCreated, handleCallUpdated, handleCallStatusChange, handleCallAssigned,
@@ -226,6 +226,7 @@ export default function DispatcherDashboard() {
           selectedUnitId={selectedUnitId}
           onSelectUnit={setSelectedUnitId}
           onUnitHistory={(unit) => setHistoryUnit(unit)}
+          onAddUnit={addUnit}
           onEditUnit={editUnit}
           onRemoveUnit={removeUnit}
         />
@@ -244,12 +245,6 @@ export default function DispatcherDashboard() {
           <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-black/60 backdrop-blur-sm text-white text-xs px-3 py-1.5 rounded-full pointer-events-none select-none">
             Drag to pan · Right-click → new call or add location
           </div>
-          <button
-            onClick={() => { setNewCallPin(null); setShowNewCallModal(true); }}
-            className="absolute bottom-6 left-4 flex items-center gap-2 bg-red-600 hover:bg-red-500 text-white font-bold px-4 py-2.5 rounded-xl shadow-lg transition-colors text-sm"
-          >
-            🚨 New Call
-          </button>
         </div>
 
         {/* Right: Active calls OR History */}

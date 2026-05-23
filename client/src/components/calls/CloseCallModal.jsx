@@ -19,7 +19,6 @@ export default function CloseCallModal({ call, onConfirm, onClose }) {
 
   const handleClose = async () => {
     if (!disposition)       { setError('Select a closing disposition.'); return; }
-    if (!comment.trim())    { setError('A closing comment is required.'); return; }
     setClosing(true);
     setError('');
     try {
@@ -51,7 +50,7 @@ export default function CloseCallModal({ call, onConfirm, onClose }) {
           {/* Closing comment — required, shown first */}
           <div>
             <label className="block text-gray-300 text-xs uppercase tracking-wider mb-1.5 font-semibold">
-              Closing Comment <span className="text-red-400">*</span>
+              Closing Comment <span className="text-gray-500 normal-case font-normal">(optional)</span>
             </label>
             <textarea
               value={comment}

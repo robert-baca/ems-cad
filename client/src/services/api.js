@@ -17,6 +17,7 @@ api.interceptors.request.use((config) => {
 
 // ── Units ──────────────────────────────────────────────────────────
 export const getUnits = () => api.get('/units');
+export const createUnit = (data) => api.post('/units', data);
 export const updateUnitStatus = (unitId, status) =>
   api.patch(`/units/${unitId}/status`, { status });
 export const editUnit = (unitId, data) => api.put(`/units/${unitId}`, data);

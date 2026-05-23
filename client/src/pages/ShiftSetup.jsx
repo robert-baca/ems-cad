@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 
-const TYPE_ICONS  = { ALS: '🚑', BLS: '🚐', Bike: '🚲', Cart: '🛺' };
-const UNIT_TYPES  = ['ALS', 'BLS', 'Bike', 'Cart'];
+const TYPE_ICONS   = { ALS: '🚑', BLS: '🚐', Bike: '🚲', Cart: '🛺' };
+const UNIT_TYPES   = ['ALS', 'BLS', 'Bike', 'Cart'];
 const SHIFT_LABELS = ['Day Shift', 'Evening Shift', 'Night Shift'];
+const STATIONS     = ['Station 7', 'Station 14', 'Roaming', 'Lead Medic'];
 
 export default function ShiftSetup({ token, onShiftStarted }) {
   const [units,        setUnits]       = useState([]);
@@ -20,7 +21,7 @@ export default function ShiftSetup({ token, onShiftStarted }) {
         setUnits(data);
         const initial = {};
         data.forEach(u => {
-          initial[u.id] = { crew: u.crew || '', unit_type: u.unit_type, in_service: u.status !== 'out_of_service' };
+          initial[u.id] = { crew: u.crew || '', unit_type: u.unit_type, in_service: u.status !== 'out_of_service', station: u.station || '' };
         });
         setStaffing(initial);
       })
@@ -41,7 +42,8 @@ export default function ShiftSetup({ token, onShiftStarted }) {
         unit_id:    u.id,
         crew:       staffing[u.id]?.crew || '',
         unit_type:  staffing[u.id]?.unit_type || u.unit_type,
-        in_service: staffing[u.id]?.in_service ?? true
+        in_service: staffing[u.id]?.in_service ?? true,
+        station:    staffing[u.id]?.station || ''
       }));
       const res  = await fetch('/api/shift/start', {
         method:  'POST',
@@ -123,29 +125,46 @@ export default function ShiftSetup({ token, onShiftStarted }) {
                     </div>
 
                     {inService && (
-                      <div className="flex gap-3 items-start">
-                        {/* Crew name */}
-                        <div className="flex-1">
-                          <label className="block text-gray-500 text-xs mb-1">Crew / Medic</label>
-                          <input
-                            type="text"
-                            value={s.crew || ''}
-                            onChange={e => updateStaffing(u.id, 'crew', e.target.value)}
-                            placeholder="Name or names…"
-                            className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500"
-                          />
+                      <div className="space-y-2">
+                        <div className="flex gap-3 items-start">
+                          {/* Crew name */}
+                          <div className="flex-1">
+                            <label className="block text-gray-500 text-xs mb-1">Crew / Medic</label>
+                            <input
+                              type="text"
+                              value={s.crew || ''}
+                              onChange={e => updateStaffing(u.id, 'crew', e.target.value)}
+                              placeholder="Name or names…"
+                              className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500"
+                            />
+                          </div>
+                          {/* Unit type */}
+                          <div>
+                            <label className="block text-gray-500 text-xs mb-1">Level</label>
+                            <div className="flex gap-1">
+                              {UNIT_TYPES.map(t => (
+                                <button key={t} onClick={() => updateStaffing(u.id, 'unit_type', t)}
+                                  className={`px-2.5 py-2 rounded-lg text-xs font-bold transition-colors
+                                    ${activeType === t
+                                      ? (t === 'ALS' ? 'bg-red-600 text-white' : t === 'BLS' ? 'bg-blue-600 text-white' : 'bg-green-700 text-white')
+                                      : 'bg-gray-700 text-gray-400 hover:bg-gray-600'}`}>
+                                  {t}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
                         </div>
-                        {/* Unit type */}
+                        {/* Based out of */}
                         <div>
-                          <label className="block text-gray-500 text-xs mb-1">Level</label>
-                          <div className="flex gap-1">
-                            {UNIT_TYPES.map(t => (
-                              <button key={t} onClick={() => updateStaffing(u.id, 'unit_type', t)}
-                                className={`px-2.5 py-2 rounded-lg text-xs font-bold transition-colors
-                                  ${activeType === t
-                                    ? (t === 'ALS' ? 'bg-red-600 text-white' : t === 'BLS' ? 'bg-blue-600 text-white' : 'bg-green-700 text-white')
+                          <label className="block text-gray-500 text-xs mb-1">Based out of</label>
+                          <div className="flex gap-1 flex-wrap">
+                            {STATIONS.map(st => (
+                              <button key={st} onClick={() => updateStaffing(u.id, 'station', s.station === st ? '' : st)}
+                                className={`px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors
+                                  ${s.station === st
+                                    ? 'bg-indigo-600 text-white'
                                     : 'bg-gray-700 text-gray-400 hover:bg-gray-600'}`}>
-                                {t}
+                                {st}
                               </button>
                             ))}
                           </div>

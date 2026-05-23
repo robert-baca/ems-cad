@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { STATUS_COLORS, STATUS_LABELS } from '../../data/mockData';
 import EditUnitModal from './EditUnitModal';
+import AddUnitModal from './AddUnitModal';
 
 const TYPE_ICONS = { ALS: '🚑', BLS: '🚐', Bike: '🚲', Cart: '🛺' };
 
@@ -45,6 +46,9 @@ function UnitCard({ unit, isSelected, onClick, onHistory, onEdit }) {
               <div className="text-gray-500 text-xs mt-0.5 truncate">{unit.unit_name}</div>
             )
           )}
+          {unit.station && (
+            <div className="text-gray-500 text-xs truncate">{unit.station}</div>
+          )}
           {profile?.certifications?.length > 0 && (
             <div className="flex flex-wrap gap-0.5 mt-1">
               {profile.certifications.map(c => (
@@ -78,8 +82,9 @@ function UnitCard({ unit, isSelected, onClick, onHistory, onEdit }) {
   );
 }
 
-export default function UnitPanel({ units, selectedUnitId, onSelectUnit, onUnitHistory, onEditUnit, onRemoveUnit }) {
-  const [editingUnit, setEditingUnit] = useState(null);
+export default function UnitPanel({ units, selectedUnitId, onSelectUnit, onUnitHistory, onEditUnit, onRemoveUnit, onAddUnit }) {
+  const [editingUnit,  setEditingUnit]  = useState(null);
+  const [showAddUnit,  setShowAddUnit]  = useState(false);
 
   const available = units.filter(u => u.status === 'available').length;
   const active    = units.filter(u =>
@@ -99,7 +104,16 @@ export default function UnitPanel({ units, selectedUnitId, onSelectUnit, onUnitH
     <>
       <div className="flex flex-col w-48 bg-gray-800 border-r border-gray-700 flex-shrink-0 overflow-hidden">
         <div className="px-3 py-3 border-b border-gray-700 flex-shrink-0">
-          <div className="text-white font-semibold text-sm mb-2">Units</div>
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-white font-semibold text-sm">Units</div>
+            <button
+              onClick={() => setShowAddUnit(true)}
+              className="text-xs px-2 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white rounded-lg transition-colors"
+              title="Add unit"
+            >
+              + Add
+            </button>
+          </div>
           <div className="flex flex-col gap-0.5">
             <div className="flex justify-between text-xs">
               <span className="text-green-400">Available</span>
@@ -138,6 +152,13 @@ export default function UnitPanel({ units, selectedUnitId, onSelectUnit, onUnitH
           onSave={handleSave}
           onDelete={handleDelete}
           onClose={() => setEditingUnit(null)}
+        />
+      )}
+
+      {showAddUnit && (
+        <AddUnitModal
+          onAdd={onAddUnit}
+          onClose={() => setShowAddUnit(false)}
         />
       )}
     </>

@@ -215,6 +215,31 @@ app.post('/api/calls/:id/comments', verifyToken, (req, res) => {
   res.json(comment);
 });
 
+app.post('/api/units', verifyToken, (req, res) => {
+  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
+  const { unit_number, unit_name, unit_type = 'ALS', trak4_device_id } = req.body;
+  if (!unit_number?.trim() || !unit_name?.trim())
+    return res.status(400).json({ error: 'unit_number and unit_name are required' });
+  const newUnit = {
+    id:              `u-${Date.now()}`,
+    unit_number:     unit_number.trim(),
+    unit_name:       unit_name.trim(),
+    unit_type,
+    status:          'available',
+    last_lat:        null,
+    last_lng:        null,
+    trak4_device_id: trak4_device_id || null,
+    password_hash:   bcrypt.hashSync('ems2024', 8),
+    profile:         null,
+    crew:            null,
+    station:         null
+  };
+  units.push(newUnit);
+  const sanitized = { ...newUnit, password_hash: undefined };
+  io.to('dispatchers').emit('unit:updated', sanitized);
+  res.status(201).json(sanitized);
+});
+
 app.put('/api/units/:id', verifyToken, (req, res) => {
   if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
   const unit = units.find(u => u.id === req.params.id);
@@ -264,10 +289,11 @@ app.post('/api/shift/start', verifyToken, (req, res) => {
     unit_staffing
   };
 
-  unit_staffing.forEach(({ unit_id, crew, unit_type, in_service }) => {
+  unit_staffing.forEach(({ unit_id, crew, unit_type, in_service, station }) => {
     const unit = units.find(u => u.id === unit_id);
     if (!unit) return;
-    unit.crew = crew || null;
+    unit.crew    = crew    || null;
+    unit.station = station || null;
     if (unit_type) unit.unit_type = unit_type;
     unit.status = in_service ? 'available' : 'out_of_service';
   });
@@ -331,13 +357,14 @@ app.patch('/api/shift/units/:unit_id', verifyToken, (req, res) => {
   if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
   const unit = units.find(u => u.id === req.params.unit_id);
   if (!unit) return res.status(404).json({ error: 'Not found' });
-  const { crew, unit_type, in_service } = req.body;
-  if (crew      !== undefined) unit.crew      = crew;
-  if (unit_type !== undefined) unit.unit_type = unit_type;
-  if (in_service !== undefined) unit.status   = in_service ? 'available' : 'out_of_service';
+  const { crew, unit_type, in_service, station } = req.body;
+  if (crew       !== undefined) unit.crew      = crew;
+  if (unit_type  !== undefined) unit.unit_type = unit_type;
+  if (station    !== undefined) unit.station   = station;
+  if (in_service !== undefined) unit.status    = in_service ? 'available' : 'out_of_service';
   if (currentShift) {
     const s = currentShift.unit_staffing.find(s => s.unit_id === req.params.unit_id);
-    if (s) { Object.assign(s, { crew, unit_type, in_service }); }
+    if (s) { Object.assign(s, { crew, unit_type, in_service, station }); }
   }
   const sanitized = { ...unit, password_hash: undefined };
   io.to('dispatchers').emit('unit:updated', sanitized);

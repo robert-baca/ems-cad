@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { MOCK_UNITS } from '../data/mockData';
-import { updateUnitStatus, editUnit as apiEditUnit, deleteUnit as apiDeleteUnit } from '../services/api';
+import { updateUnitStatus, createUnit as apiCreateUnit, editUnit as apiEditUnit, deleteUnit as apiDeleteUnit } from '../services/api';
 
 export function useUnits() {
   const [units, setUnits] = useState(MOCK_UNITS);
@@ -38,6 +38,13 @@ export function useUnits() {
     try { await updateUnitStatus(unitId, status); } catch {}
   }, []);
 
+  const addUnit = useCallback(async (data) => {
+    try {
+      const res = await apiCreateUnit(data);
+      setUnits(prev => [...prev, res.data]);
+    } catch {}
+  }, []);
+
   const editUnit = useCallback(async (unitId, data) => {
     setUnits(prev => prev.map(u => u.id === unitId ? { ...u, ...data } : u));
     try { await apiEditUnit(unitId, data); } catch {}
@@ -58,6 +65,6 @@ export function useUnits() {
     units, setUnits,
     handleGpsUpdate, handleStatusChange, handleProfileUpdate,
     handleUnitUpdated, handleUnitRemoved,
-    changeStatus, editUnit, removeUnit, moveUnit
+    changeStatus, addUnit, editUnit, removeUnit, moveUnit
   };
 }
