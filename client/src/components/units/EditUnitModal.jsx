@@ -7,7 +7,6 @@ export default function EditUnitModal({ unit, onSave, onDelete, onClose }) {
   const [unitName,    setUnitName]    = useState(unit.unit_name);
   const [unitType,    setUnitType]    = useState(unit.unit_type);
   const [deviceId,    setDeviceId]    = useState(unit.trak4_device_id || '');
-  const [ntfyTopic,   setNtfyTopic]   = useState(unit.ntfy_topic || '');
   const [password,    setPassword]    = useState('');
   const [saving,     setSaving]     = useState(false);
   const [confirming, setConfirming] = useState(false);
@@ -23,8 +22,7 @@ export default function EditUnitModal({ unit, onSave, onDelete, onClose }) {
         unit_number:      unitNumber.trim(),
         unit_name:        unitName.trim(),
         unit_type:        unitType,
-        trak4_device_id:  deviceId.trim() || null,
-        ntfy_topic:       ntfyTopic.trim() || null
+        trak4_device_id:  deviceId.trim() || null
       };
       if (password) data.password = password;
       await onSave(unit.id, data);
@@ -110,22 +108,6 @@ export default function EditUnitModal({ unit, onSave, onDelete, onClose }) {
                 />
                 {deviceId && (
                   <p className="text-green-400 text-xs mt-1">✓ GPS tracking enabled for this unit</p>
-                )}
-              </div>
-
-              <div>
-                <label className="block text-gray-400 text-xs uppercase tracking-wider mb-1.5">
-                  ntfy Topic <span className="text-gray-600 normal-case">(push notifications — install ntfy app, enter topic here)</span>
-                </label>
-                <input
-                  type="text"
-                  value={ntfyTopic}
-                  onChange={e => setNtfyTopic(e.target.value)}
-                  placeholder="e.g. sfems-ems6"
-                  className="w-full bg-gray-700 text-white rounded-lg px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500 font-mono"
-                />
-                {ntfyTopic && (
-                  <p className="text-green-400 text-xs mt-1">✓ Push notifications enabled for this unit</p>
                 )}
               </div>
 

@@ -2,7 +2,6 @@ const express    = require('express');
 const cors       = require('cors');
 const path       = require('path');
 const http       = require('http');
-const https      = require('https');
 const { Server } = require('socket.io');
 const jwt        = require('jsonwebtoken');
 const bcrypt     = require('bcryptjs');
@@ -91,7 +90,6 @@ async function initDb() {
   await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS additional_unit_ids JSONB DEFAULT '[]'`);
   await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS response_mode TEXT`);
   await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS parent_call_id TEXT`);
-  await pool.query(`ALTER TABLE units ADD COLUMN IF NOT EXISTS ntfy_topic TEXT`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS locations (
@@ -140,18 +138,16 @@ async function initDb() {
 async function saveUnit(unit) {
   await pool.query(`
     INSERT INTO units (id, unit_number, unit_name, unit_type, status, crew, station,
-      trak4_device_id, last_lat, last_lng, last_gps_at, password_hash, profile, ntfy_topic)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+      trak4_device_id, last_lat, last_lng, last_gps_at, password_hash, profile)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
     ON CONFLICT (id) DO UPDATE SET
       unit_number=EXCLUDED.unit_number, unit_name=EXCLUDED.unit_name, unit_type=EXCLUDED.unit_type,
       status=EXCLUDED.status, crew=EXCLUDED.crew, station=EXCLUDED.station,
       trak4_device_id=EXCLUDED.trak4_device_id, last_lat=EXCLUDED.last_lat, last_lng=EXCLUDED.last_lng,
-      last_gps_at=EXCLUDED.last_gps_at, password_hash=EXCLUDED.password_hash, profile=EXCLUDED.profile,
-      ntfy_topic=EXCLUDED.ntfy_topic
+      last_gps_at=EXCLUDED.last_gps_at, password_hash=EXCLUDED.password_hash, profile=EXCLUDED.profile
   `, [unit.id, unit.unit_number, unit.unit_name, unit.unit_type, unit.status,
       unit.crew, unit.station, unit.trak4_device_id, unit.last_lat, unit.last_lng,
-      unit.last_gps_at, unit.password_hash, unit.profile ? JSON.stringify(unit.profile) : null,
-      unit.ntfy_topic || null]);
+      unit.last_gps_at, unit.password_hash, unit.profile ? JSON.stringify(unit.profile) : null]);
 }
 
 async function deleteUnitFromDb(id) {
@@ -209,29 +205,6 @@ async function saveShift(shift) {
       unit_staffing=EXCLUDED.unit_staffing
   `, [shift.id, shift.shift_label, shift.date, shift.started_at, shift.ended_at,
       shift.started_by, JSON.stringify(shift.unit_staffing || [])]);
-}
-
-function notifyUnit(unit, title, body, callPriority) {
-  if (!unit?.ntfy_topic) return;
-  const priorityMap = { 1: 'urgent', 2: 'high', 3: 'default' };
-  const ntfyPriority = priorityMap[callPriority] || 'default';
-  const payload = Buffer.from(body);
-  const req = https.request({
-    hostname: 'ntfy.sh',
-    port: 443,
-    path: `/${encodeURIComponent(unit.ntfy_topic)}`,
-    method: 'POST',
-    headers: {
-      'Content-Type': 'text/plain',
-      'Content-Length': payload.length,
-      'Title': title,
-      'Priority': ntfyPriority,
-      'Tags': 'rotating_light'
-    }
-  }, () => {});
-  req.on('error', () => {});
-  req.write(payload);
-  req.end();
 }
 
 // ── JWT helpers ───────────────────────────────────────────────────
@@ -338,12 +311,11 @@ app.put('/api/units/:id', verifyToken, async (req, res) => {
   const unit = units.find(u => u.id === req.params.id);
   if (!unit) return res.status(404).json({ error: 'Not found' });
 
-  const { unit_number, unit_name, unit_type, password, trak4_device_id, ntfy_topic } = req.body;
+  const { unit_number, unit_name, unit_type, password, trak4_device_id } = req.body;
   if (unit_number !== undefined)     unit.unit_number      = unit_number;
   if (unit_name   !== undefined)     unit.unit_name        = unit_name;
   if (unit_type   !== undefined)     unit.unit_type        = unit_type;
   if ('trak4_device_id' in req.body) unit.trak4_device_id  = trak4_device_id;
-  if ('ntfy_topic'      in req.body) unit.ntfy_topic       = ntfy_topic || null;
   if (password)                      unit.password_hash    = bcrypt.hashSync(password, 8);
 
   await saveUnit(unit).catch(console.error);
@@ -392,8 +364,6 @@ app.post('/api/calls', verifyToken, async (req, res) => {
   await saveCall(call).catch(console.error);
 
   io.to('dispatchers').emit('call:created', call);
-  const notifyTitle = `Case #${call.call_number} — ${call.call_type}`;
-  const notifyBody  = `${call.location_name || 'Location TBD'} · P${call.priority}`;
   if (hasUnit) {
     io.to(`crew:${call.assigned_unit_id}`).emit('call:assigned_to_me', call);
     const unit = units.find(u => u.id === call.assigned_unit_id);
@@ -401,7 +371,6 @@ app.post('/api/calls', verifyToken, async (req, res) => {
       unit.status = 'dispatched';
       saveUnit(unit).catch(console.error);
       io.to('dispatchers').emit('unit:status_change', { unit_id: unit.id, status: 'dispatched' });
-      notifyUnit(unit, notifyTitle, notifyBody, call.priority);
     }
   }
   additionalIds.forEach(uid => {
@@ -411,7 +380,6 @@ app.post('/api/calls', verifyToken, async (req, res) => {
       saveUnit(u).catch(console.error);
       io.to('dispatchers').emit('unit:status_change', { unit_id: u.id, status: 'dispatched' });
       io.to(`crew:${uid}`).emit('call:assigned_to_me', call);
-      notifyUnit(u, notifyTitle, notifyBody, call.priority);
     }
   });
 
@@ -437,7 +405,6 @@ app.patch('/api/calls/:id/assign', verifyToken, async (req, res) => {
   saveCall(call).catch(console.error);
   io.to('dispatchers').emit('call:assigned', { call_id: call.id, unit_id: req.body.unit_id });
   io.to(`crew:${req.body.unit_id}`).emit('call:assigned_to_me', call);
-  if (unit) notifyUnit(unit, `Case #${call.call_number} — ${call.call_type}`, `${call.location_name || 'Location TBD'} · P${call.priority}`, call.priority);
   res.json(call);
 });
 
@@ -457,7 +424,6 @@ app.post('/api/calls/:id/add-unit', verifyToken, async (req, res) => {
     saveUnit(unit).catch(console.error);
     io.to('dispatchers').emit('unit:status_change', { unit_id: unit.id, status: 'dispatched' });
     io.to(`crew:${unit_id}`).emit('call:assigned_to_me', call);
-    notifyUnit(unit, `Case #${call.call_number} — ${call.call_type}`, `${call.location_name || 'Location TBD'} · P${call.priority}`, call.priority);
   }
   saveCall(call).catch(console.error);
   io.to('dispatchers').emit('call:updated', { call_id: call.id, changes: { additional_unit_ids: call.additional_unit_ids } });
