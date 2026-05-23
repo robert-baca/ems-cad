@@ -391,7 +391,7 @@ export default function DispatcherDashboard() {
       {shiftSummary && (
         <ShiftSummaryModal
           summary={shiftSummary}
-          onClose={() => setShiftSummary(null)}
+          onClose={() => { setShiftSummary(null); logout(); navigate('/login'); }}
         />
       )}
     </div>
