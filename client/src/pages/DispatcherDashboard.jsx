@@ -40,7 +40,8 @@ export default function DispatcherDashboard() {
     addUnit, editUnit, removeUnit, changeStatus
   } = useUnits();
   const {
-    calls, handleCallCreated, handleCallUpdated, handleCallStatusChange, handleCallAssigned,
+    calls, setCalls,
+    handleCallCreated, handleCallUpdated, handleCallStatusChange, handleCallAssigned,
     dispatchCall, assignUnit, closeCall, updateTimestamp, logTimeNow, addComment
   } = useCalls();
   const { locations, addLocation, removeLocation, clearShiftLocations } = useLocations();
@@ -67,6 +68,7 @@ export default function DispatcherDashboard() {
   }, [user?.token]);
 
   useSocket({
+    'init:state':          ({ units: u, calls: c }) => { setUnits(u); setCalls(c); },
     'unit:gps_update':     handleGpsUpdate,
     'unit:status_change':  handleStatusChange,
     'unit:profile_update': handleProfileUpdate,

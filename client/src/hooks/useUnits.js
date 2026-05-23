@@ -1,9 +1,15 @@
-import { useState, useCallback } from 'react';
-import { MOCK_UNITS } from '../data/mockData';
+import { useState, useCallback, useEffect } from 'react';
 import { updateUnitStatus, createUnit as apiCreateUnit, editUnit as apiEditUnit, deleteUnit as apiDeleteUnit } from '../services/api';
 
 export function useUnits() {
   const [units, setUnits] = useState([]);
+
+  useEffect(() => {
+    fetch('/api/units')
+      .then(r => r.json())
+      .then(data => { if (Array.isArray(data)) setUnits(data); })
+      .catch(() => {});
+  }, []);
 
   const handleGpsUpdate = useCallback(({ unit_id, lat, lng }) => {
     setUnits(prev =>
@@ -25,7 +31,9 @@ export function useUnits() {
 
   const handleUnitUpdated = useCallback((updated) => {
     setUnits(prev =>
-      prev.map(u => u.id === updated.id ? { ...u, ...updated } : u)
+      prev.some(u => u.id === updated.id)
+        ? prev.map(u => u.id === updated.id ? { ...u, ...updated } : u)
+        : [...prev, updated]
     );
   }, []);
 

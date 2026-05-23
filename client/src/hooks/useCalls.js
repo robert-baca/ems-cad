@@ -92,7 +92,7 @@ export function useCalls() {
   }, []);
 
   return {
-    calls,
+    calls, setCalls,
     handleCallCreated, handleCallUpdated, handleCallStatusChange, handleCallAssigned,
     dispatchCall, assignUnit, advanceStatus, closeCall, updateTimestamp, logTimeNow, addComment
   };
