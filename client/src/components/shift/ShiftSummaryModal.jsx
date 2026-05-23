@@ -30,6 +30,39 @@ function Stat({ label, value, sub, color }) {
   );
 }
 
+function printReport(summary, startDate, endDate, unitEntries, typeEntries, dispEntries) {
+  const win = window.open('', '_blank');
+  win.document.write(`<!DOCTYPE html><html><head><title>Shift Report — ${summary.shift_label}</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 32px; color: #111; max-width: 700px; margin: 0 auto; }
+    h1 { font-size: 22px; margin-bottom: 4px; }
+    .sub { color: #555; font-size: 13px; margin-bottom: 24px; }
+    .stats { display: grid; grid-template-columns: repeat(4,1fr); gap: 12px; margin-bottom: 24px; }
+    .stat { border: 1px solid #ddd; border-radius: 8px; padding: 12px; text-align: center; }
+    .stat .val { font-size: 24px; font-weight: bold; }
+    .stat .lbl { font-size: 11px; color: #666; margin-top: 2px; }
+    .section { margin-bottom: 20px; }
+    .section h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: #888; border-bottom: 1px solid #eee; padding-bottom: 4px; margin-bottom: 10px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    td, th { padding: 6px 8px; text-align: left; border-bottom: 1px solid #eee; }
+    th { font-weight: 600; color: #555; font-size: 11px; text-transform: uppercase; }
+    @media print { body { padding: 16px; } }
+  </style></head><body>
+  <h1>Shift Report</h1>
+  <div class="sub">${summary.shift_label} &nbsp;·&nbsp; ${startDate} → ${endDate} &nbsp;·&nbsp; Duration: ${fmtDuration(summary.duration_minutes)} &nbsp;·&nbsp; Started by: ${summary.started_by}</div>
+  <div class="stats">
+    <div class="stat"><div class="val">${summary.total_calls}</div><div class="lbl">Total Calls</div></div>
+    <div class="stat"><div class="val">${summary.by_priority?.[1] ?? 0}</div><div class="lbl">Priority 1</div></div>
+    <div class="stat"><div class="val">${fmt(summary.avg_response_minutes)}</div><div class="lbl">Avg Response</div></div>
+    <div class="stat"><div class="val">${fmt(summary.avg_scene_minutes)}</div><div class="lbl">Avg Scene Time</div></div>
+  </div>
+  ${unitEntries.length ? `<div class="section"><h3>Calls by Unit</h3><table><tr><th>Unit</th><th>Calls</th></tr>${unitEntries.map(([u,c]) => `<tr><td>${u}</td><td>${c}</td></tr>`).join('')}</table></div>` : ''}
+  ${typeEntries.length ? `<div class="section"><h3>Call Types</h3><table><tr><th>Type</th><th>Count</th></tr>${typeEntries.map(([t,c]) => `<tr><td>${t}</td><td>${c}</td></tr>`).join('')}</table></div>` : ''}
+  ${dispEntries.length ? `<div class="section"><h3>Dispositions</h3><table><tr><th>Disposition</th><th>Count</th></tr>${dispEntries.map(([d,c]) => `<tr><td>${DISPOSITION_LABELS[d] || d}</td><td>${c}</td></tr>`).join('')}</table></div>` : ''}
+  <script>window.onload = () => { window.print(); }</script></body></html>`);
+  win.document.close();
+}
+
 export default function ShiftSummaryModal({ summary, onClose }) {
   if (!summary) return null;
 
@@ -137,9 +170,9 @@ export default function ShiftSummaryModal({ summary, onClose }) {
 
         {/* Footer */}
         <div className="px-6 py-4 border-t border-gray-700 flex gap-3">
-          <button onClick={() => window.print()}
+          <button onClick={() => printReport(summary, startDate, endDate, unitEntries, typeEntries, dispEntries)}
             className="flex-1 py-2.5 bg-gray-700 hover:bg-gray-600 text-gray-200 text-sm rounded-lg transition-colors font-medium">
-            🖨️ Print
+            🖨️ Print Report
           </button>
           <button onClick={onClose}
             className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded-lg transition-colors font-semibold">

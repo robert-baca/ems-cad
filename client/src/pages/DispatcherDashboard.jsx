@@ -44,7 +44,7 @@ export default function DispatcherDashboard() {
     handleCallCreated, handleCallUpdated, handleCallStatusChange, handleCallAssigned,
     dispatchCall, assignUnit, closeCall, updateTimestamp, logTimeNow, addComment
   } = useCalls();
-  const { locations, addLocation, removeLocation, clearShiftLocations } = useLocations();
+  const { locations, addLocation, removeLocation, clearShiftLocations, setPermLocations } = useLocations();
 
   const [currentShift,      setCurrentShift]      = useState(undefined); // undefined = loading
   const [shiftSummary,      setShiftSummary]       = useState(null);
@@ -57,6 +57,7 @@ export default function DispatcherDashboard() {
   const [showHistory,       setShowHistory]         = useState(false);
   const [historyUnit,       setHistoryUnit]         = useState(null);
   const [flyToTarget,       setFlyToTarget]         = useState(null);
+  const [unknownGpsDevice,  setUnknownGpsDevice]   = useState(null);
 
   // Load current shift on mount
   useEffect(() => {
@@ -68,7 +69,7 @@ export default function DispatcherDashboard() {
   }, [user?.token]);
 
   useSocket({
-    'init:state':          ({ units: u, calls: c }) => { setUnits(u); setCalls(c); },
+    'init:state':          ({ units: u, calls: c, locations: l }) => { setUnits(u); setCalls(c); if (l) setPermLocations(l); },
     'unit:gps_update':     handleGpsUpdate,
     'unit:status_change':  handleStatusChange,
     'unit:profile_update': handleProfileUpdate,
@@ -79,7 +80,8 @@ export default function DispatcherDashboard() {
     'call:status_change':  handleCallStatusChange,
     'call:assigned':       handleCallAssigned,
     'shift:started':       ({ shift, units: u }) => { setCurrentShift(shift); if (setUnits) setUnits(u); },
-    'shift:ended':         (summary) => { setShiftSummary(summary); setCurrentShift(null); }
+    'shift:ended':         (summary) => { setShiftSummary(summary); setCurrentShift(null); },
+    'gps:unknown_device':  ({ device_id }) => setUnknownGpsDevice(device_id)
   });
 
   const handleShiftStarted = (shift, updatedUnits) => {
@@ -219,6 +221,14 @@ export default function DispatcherDashboard() {
           </button>
         </div>
       </header>
+
+      {/* ── GPS unknown device banner ─────────────────────────── */}
+      {unknownGpsDevice && (
+        <div className="flex items-center justify-between px-4 py-2 bg-yellow-900/60 border-b border-yellow-700 text-yellow-200 text-xs flex-shrink-0">
+          <span>📡 Unknown GPS device ID: <span className="font-mono font-bold">{unknownGpsDevice}</span> — paste this into Edit Unit → Trak-4 Device ID</span>
+          <button onClick={() => setUnknownGpsDevice(null)} className="ml-4 text-yellow-400 hover:text-white">✕</button>
+        </div>
+      )}
 
       {/* ── Body ─────────────────────────────────────────────── */}
       <div className="flex flex-1 overflow-hidden">

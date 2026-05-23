@@ -35,19 +35,30 @@ function StatBox({ label, value, sub }) {
 }
 
 export default function CallHistory({ calls, units, onClose, onSelectCall }) {
+  const [search,       setSearch]       = useState('');
+  const [filterDate,   setFilterDate]   = useState('today');
   const [filterType,   setFilterType]   = useState('');
   const [filterPri,    setFilterPri]    = useState('');
   const [filterUnit,   setFilterUnit]   = useState('');
   const [filterStatus, setFilterStatus] = useState('');
 
   const filtered = useMemo(() => {
+    const now   = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const week  = new Date(today); week.setDate(today.getDate() - 7);
     return [...calls]
+      .filter(c => {
+        if (filterDate === 'today') return new Date(c.received_at) >= today;
+        if (filterDate === 'week')  return new Date(c.received_at) >= week;
+        return true;
+      })
+      .filter(c => !search      || c.call_type?.toLowerCase().includes(search.toLowerCase()) || c.location_name?.toLowerCase().includes(search.toLowerCase()))
       .filter(c => !filterType   || c.call_type === filterType)
       .filter(c => !filterPri    || c.priority === Number(filterPri))
       .filter(c => !filterUnit   || c.assigned_unit_id === filterUnit)
       .filter(c => !filterStatus || c.status === filterStatus)
       .sort((a, b) => new Date(b.received_at) - new Date(a.received_at));
-  }, [calls, filterType, filterPri, filterUnit, filterStatus]);
+  }, [calls, search, filterDate, filterType, filterPri, filterUnit, filterStatus]);
 
   // Stats
   const closed  = calls.filter(c => c.status === 'closed');
@@ -71,7 +82,7 @@ export default function CallHistory({ calls, units, onClose, onSelectCall }) {
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700 flex-shrink-0">
         <div>
           <span className="text-white font-bold text-base">Call History</span>
-          <span className="text-gray-400 text-xs ml-2">Today · {calls.length} calls</span>
+          <span className="text-gray-400 text-xs ml-2">{filtered.length} of {calls.length} calls</span>
         </div>
         <button onClick={onClose}
           className="text-gray-400 hover:text-white w-8 h-8 flex items-center justify-center rounded hover:bg-gray-700 text-xl">
@@ -87,8 +98,25 @@ export default function CallHistory({ calls, units, onClose, onSelectCall }) {
         <StatBox label="Avg Duration" value={avgDuration !== null ? `${avgDuration}m` : '—'} sub="received → cleared" />
       </div>
 
+      {/* Search + date filter */}
+      <div className="flex gap-2 px-3 pt-2.5 flex-shrink-0">
+        <input
+          type="text"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Search call type or location…"
+          className="flex-1 bg-gray-700 text-white rounded-lg px-3 py-1.5 text-xs outline-none focus:ring-1 focus:ring-blue-500 placeholder-gray-500"
+        />
+        <select value={filterDate} onChange={e => setFilterDate(e.target.value)}
+          className="bg-gray-700 text-white rounded-lg px-2 py-1.5 text-xs outline-none focus:ring-1 focus:ring-blue-500">
+          <option value="today">Today</option>
+          <option value="week">Last 7 days</option>
+          <option value="all">All time</option>
+        </select>
+      </div>
+
       {/* Filter bar */}
-      <div className="flex gap-2 px-3 py-2.5 border-b border-gray-700 flex-shrink-0 flex-wrap">
+      <div className="flex gap-2 px-3 py-2 border-b border-gray-700 flex-shrink-0 flex-wrap">
         <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
           className="bg-gray-700 text-white rounded-lg px-2 py-1.5 text-xs outline-none focus:ring-1 focus:ring-blue-500">
           <option value="">All Status</option>
@@ -113,8 +141,8 @@ export default function CallHistory({ calls, units, onClose, onSelectCall }) {
           <option value="">All Types</option>
           {CALL_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
         </select>
-        {(filterType || filterPri || filterUnit || filterStatus) && (
-          <button onClick={() => { setFilterType(''); setFilterPri(''); setFilterUnit(''); setFilterStatus(''); }}
+        {(search || filterType || filterPri || filterUnit || filterStatus || filterDate !== 'today') && (
+          <button onClick={() => { setSearch(''); setFilterDate('today'); setFilterType(''); setFilterPri(''); setFilterUnit(''); setFilterStatus(''); }}
             className="text-xs text-blue-400 hover:text-blue-300 px-2">
             Clear filters
           </button>

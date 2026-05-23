@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import CallTimeline from './CallTimeline';
 import CallComments from './CallComments';
 import CloseCallModal from './CloseCallModal';
 import { STATUS_COLORS, STATUS_LABELS } from '../../data/mockData';
+import { updateCallNarrative } from '../../services/api';
 
 const PRIORITY_COLORS = { 1: 'text-red-400', 2: 'text-orange-400', 3: 'text-blue-400' };
 
@@ -33,7 +34,12 @@ export default function CallDetail({
   const [assigningUnit, setAssigningUnit] = useState(false);
   const [selectedUnitId, setSelectedUnitId] = useState('');
   const [showCloseModal, setShowCloseModal] = useState(false);
+  const [narrative, setNarrative]     = useState(call.narrative || '');
   const clock = LiveClock();
+
+  const handleNarrativeBlur = useCallback(() => {
+    updateCallNarrative(call.id, narrative).catch(() => {});
+  }, [call.id, narrative]);
 
   if (!call) return null;
 
@@ -187,6 +193,20 @@ export default function CallDetail({
                 </div>
               </div>
             )}
+
+            {/* Narrative */}
+            <div className="bg-gray-700 rounded-xl p-3 space-y-1.5">
+              <div className="text-gray-400 text-xs uppercase tracking-wider">Narrative</div>
+              <textarea
+                value={narrative}
+                onChange={e => setNarrative(e.target.value)}
+                onBlur={handleNarrativeBlur}
+                placeholder="Incident narrative…"
+                rows={4}
+                className="w-full bg-gray-600 text-gray-100 text-sm rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500 resize-none"
+              />
+              <p className="text-gray-600 text-xs">Auto-saves when you click away</p>
+            </div>
 
             {/* Log Time */}
             <div className="bg-gray-700 rounded-xl p-3 space-y-2">

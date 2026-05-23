@@ -1,40 +1,59 @@
-import { useState, useEffect } from 'react';
-
-const PERM_KEY  = 'cad_locations_permanent';
-
-function loadPermanent() {
-  try { return JSON.parse(localStorage.getItem(PERM_KEY) || '[]'); }
-  catch { return []; }
-}
+import { useState, useEffect, useCallback } from 'react';
+import { useAuth } from '../context/AuthContext';
 
 export function useLocations() {
-  const [permanent, setPermanent] = useState(loadPermanent);
+  const { user } = useAuth();
+  const [permanent, setPermanent] = useState([]);
   const [shift,     setShift]     = useState([]);
 
+  // Load permanent locations from DB on mount
   useEffect(() => {
-    localStorage.setItem(PERM_KEY, JSON.stringify(permanent));
-  }, [permanent]);
+    fetch('/api/locations')
+      .then(r => r.json())
+      .then(data => { if (Array.isArray(data)) setPermanent(data); })
+      .catch(() => {});
+  }, []);
 
   const locations = [
     ...permanent.map(l => ({ ...l, locationType: 'permanent' })),
     ...shift.map(l =>     ({ ...l, locationType: 'shift'     }))
   ];
 
-  const addLocation = (name, lat, lng, color = '#f59e0b', locationType = 'shift') => {
-    const loc = { id: `loc-${Date.now()}`, name: name.trim(), lat, lng, color };
+  const addLocation = useCallback(async (name, lat, lng, color = '#f59e0b', locationType = 'shift') => {
     if (locationType === 'permanent') {
-      setPermanent(prev => [...prev, loc]);
+      try {
+        const res = await fetch('/api/locations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user?.token}` },
+          body: JSON.stringify({ name, lat, lng, color, location_type: 'permanent' })
+        });
+        const loc = await res.json();
+        if (res.ok) setPermanent(prev => [...prev, loc]);
+      } catch {}
     } else {
+      const loc = { id: `loc-${Date.now()}`, name: name.trim(), lat, lng, color, location_type: 'shift' };
       setShift(prev => [...prev, loc]);
     }
-  };
+  }, [user?.token]);
 
-  const removeLocation = (id) => {
+  const removeLocation = useCallback(async (id) => {
+    const isPermanent = permanent.some(l => l.id === id);
     setPermanent(prev => prev.filter(l => l.id !== id));
     setShift(prev =>     prev.filter(l => l.id !== id));
-  };
+    if (isPermanent) {
+      fetch(`/api/locations/${id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${user?.token}` }
+      }).catch(() => {});
+    }
+  }, [permanent, user?.token]);
 
-  const clearShiftLocations = () => setShift([]);
+  const clearShiftLocations = useCallback(() => setShift([]), []);
 
-  return { locations, addLocation, removeLocation, clearShiftLocations };
+  // Called from init:state to seed permanent locations from server
+  const setPermLocations = useCallback((locs) => {
+    if (Array.isArray(locs)) setPermanent(locs);
+  }, []);
+
+  return { locations, addLocation, removeLocation, clearShiftLocations, setPermLocations };
 }

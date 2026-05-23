@@ -34,8 +34,10 @@ const dispatchers = [
 
 let units        = [];
 let calls        = [];
+let locations    = [];
 let currentShift = null;
 let nextCallNum  = 100;
+const unknownGpsDevices = new Set();
 
 // ── DB setup & seed ───────────────────────────────────────────────
 async function initDb() {
@@ -79,7 +81,21 @@ async function initDb() {
       closed_at TEXT,
       disposition TEXT,
       close_notes TEXT,
-      comments JSONB DEFAULT '[]'
+      comments JSONB DEFAULT '[]',
+      narrative TEXT
+    )
+  `);
+
+  await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS narrative TEXT`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS locations (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      lat DOUBLE PRECISION,
+      lng DOUBLE PRECISION,
+      color TEXT DEFAULT '#6366f1',
+      location_type TEXT DEFAULT 'permanent'
     )
   `);
 
@@ -106,7 +122,10 @@ async function initDb() {
   currentShift = shiftRes.rows[0] || null;
   if (currentShift) currentShift.unit_staffing = currentShift.unit_staffing || [];
 
-  console.log(`[db] loaded ${units.length} units, ${calls.length} calls, shift: ${currentShift?.shift_label || 'none'}`);
+  const locsRes = await pool.query("SELECT * FROM locations ORDER BY name");
+  locations = locsRes.rows;
+
+  console.log(`[db] loaded ${units.length} units, ${calls.length} calls, ${locations.length} locations, shift: ${currentShift?.shift_label || 'none'}`);
 }
 
 async function saveUnit(unit) {
@@ -133,8 +152,8 @@ async function saveCall(call) {
     INSERT INTO calls (id, call_number, status, call_type, priority, location_name,
       location_lat, location_lng, assigned_unit_id, received_at, dispatched_at, acknowledged_at,
       en_route_at, on_scene_at, patient_contact_at, cleared_at, available_at, closed_at,
-      disposition, close_notes, comments)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+      disposition, close_notes, comments, narrative)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
     ON CONFLICT (id) DO UPDATE SET
       status=EXCLUDED.status, call_type=EXCLUDED.call_type, priority=EXCLUDED.priority,
       location_name=EXCLUDED.location_name, location_lat=EXCLUDED.location_lat,
@@ -143,12 +162,27 @@ async function saveCall(call) {
       en_route_at=EXCLUDED.en_route_at, on_scene_at=EXCLUDED.on_scene_at,
       patient_contact_at=EXCLUDED.patient_contact_at, cleared_at=EXCLUDED.cleared_at,
       available_at=EXCLUDED.available_at, closed_at=EXCLUDED.closed_at,
-      disposition=EXCLUDED.disposition, close_notes=EXCLUDED.close_notes, comments=EXCLUDED.comments
+      disposition=EXCLUDED.disposition, close_notes=EXCLUDED.close_notes,
+      comments=EXCLUDED.comments, narrative=EXCLUDED.narrative
   `, [call.id, call.call_number, call.status, call.call_type, call.priority,
       call.location_name, call.location_lat, call.location_lng, call.assigned_unit_id,
       call.received_at, call.dispatched_at, call.acknowledged_at, call.en_route_at,
       call.on_scene_at, call.patient_contact_at, call.cleared_at, call.available_at,
-      call.closed_at, call.disposition, call.close_notes, JSON.stringify(call.comments || [])]);
+      call.closed_at, call.disposition, call.close_notes, JSON.stringify(call.comments || []),
+      call.narrative || null]);
+}
+
+async function saveLocation(loc) {
+  await pool.query(`
+    INSERT INTO locations (id, name, lat, lng, color, location_type)
+    VALUES ($1,$2,$3,$4,$5,$6)
+    ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name, lat=EXCLUDED.lat, lng=EXCLUDED.lng,
+      color=EXCLUDED.color, location_type=EXCLUDED.location_type
+  `, [loc.id, loc.name, loc.lat, loc.lng, loc.color, loc.location_type]);
+}
+
+async function deleteLocationFromDb(id) {
+  await pool.query('DELETE FROM locations WHERE id=$1', [id]);
 }
 
 async function saveShift(shift) {
@@ -536,10 +570,59 @@ app.post('/api/gps/webhook', (req, res) => {
       unit_id: unit.id, unit_number: unit.unit_number, lat, lng, timestamp
     });
     console.log(`[gps] updated ${unit.unit_number} → ${lat}, ${lng}`);
-  } else if (!unit) {
+  } else if (!unit && device_id !== null) {
     console.log(`[gps] unknown device_id: ${device_id} — set this in Edit Unit → Trak-4 Device ID`);
+    if (!unknownGpsDevices.has(String(device_id))) {
+      unknownGpsDevices.add(String(device_id));
+      io.to('dispatchers').emit('gps:unknown_device', { device_id: String(device_id) });
+    }
   }
 
+  res.json({ ok: true });
+});
+
+// ── Locations ─────────────────────────────────────────────────────
+app.get('/api/locations', (req, res) => {
+  res.json(locations);
+});
+
+app.post('/api/locations', verifyToken, async (req, res) => {
+  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
+  const { name, lat, lng, color = '#6366f1', location_type = 'permanent' } = req.body;
+  if (!name?.trim()) return res.status(400).json({ error: 'name required' });
+  const loc = { id: `loc-${Date.now()}`, name: name.trim(), lat, lng, color, location_type };
+  locations.push(loc);
+  if (location_type === 'permanent') await saveLocation(loc).catch(console.error);
+  res.status(201).json(loc);
+});
+
+app.delete('/api/locations/:id', verifyToken, async (req, res) => {
+  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
+  const idx = locations.findIndex(l => l.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'Not found' });
+  locations.splice(idx, 1);
+  deleteLocationFromDb(req.params.id).catch(console.error);
+  res.json({ ok: true });
+});
+
+// ── Call timestamps & narrative ───────────────────────────────────
+app.patch('/api/calls/:id/timestamps', verifyToken, async (req, res) => {
+  const call = calls.find(c => c.id === req.params.id);
+  if (!call) return res.status(404).json({ error: 'Not found' });
+  const ALLOWED = ['received_at','dispatched_at','acknowledged_at','en_route_at',
+                   'on_scene_at','patient_contact_at','cleared_at','available_at','closed_at'];
+  Object.entries(req.body).forEach(([k, v]) => {
+    if (ALLOWED.includes(k)) call[k] = v;
+  });
+  saveCall(call).catch(console.error);
+  res.json({ ok: true });
+});
+
+app.patch('/api/calls/:id/narrative', verifyToken, async (req, res) => {
+  const call = calls.find(c => c.id === req.params.id);
+  if (!call) return res.status(404).json({ error: 'Not found' });
+  call.narrative = req.body.narrative ?? null;
+  saveCall(call).catch(console.error);
   res.json({ ok: true });
 });
 
@@ -570,7 +653,8 @@ io.on('connection', (socket) => {
     socket.join('dispatchers');
     socket.emit('init:state', {
       units: units.map(u => ({ ...u, password_hash: undefined })),
-      calls
+      calls,
+      locations
     });
   });
 

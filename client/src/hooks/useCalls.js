@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { MOCK_ALL_CALLS } from '../data/mockData';
-import { createCall, updateCallStatus, assignCall, closeCall as apiCloseCall } from '../services/api';
+import { createCall, updateCallStatus, assignCall, closeCall as apiCloseCall, updateCallTimestamps, updateCallNarrative } from '../services/api';
 
 const STATUS_TS_MAP = {
   dispatched:      'dispatched_at',
@@ -64,15 +64,18 @@ export function useCalls() {
 
   const updateTimestamp = useCallback((callId, field, isoValue) => {
     setCalls(prev => prev.map(c => c.id === callId ? { ...c, [field]: isoValue } : c));
+    updateCallTimestamps(callId, { [field]: isoValue }).catch(() => {});
   }, []);
 
   const logTimeNow = useCallback((callId) => {
+    let nextField = null;
     setCalls(prev => prev.map(c => {
       if (c.id !== callId) return c;
-      const nextField = TS_STEPS.find(f => !c[f]);
+      nextField = TS_STEPS.find(f => !c[f]);
       if (!nextField) return c;
       return { ...c, [nextField]: new Date().toISOString() };
     }));
+    if (nextField) updateCallTimestamps(callId, { [nextField]: new Date().toISOString() }).catch(() => {});
   }, []);
 
   const closeCall = useCallback(async (callId, disposition, close_notes) => {

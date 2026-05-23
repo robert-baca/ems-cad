@@ -45,8 +45,8 @@ export default function ParkMap({
           'circle-radius': 13,
           'circle-color': ['get', 'color'],
           'circle-stroke-width': 2.5,
-          'circle-stroke-color': '#ffffff',
-          'circle-opacity': 0.95
+          'circle-stroke-color': ['get', 'stroke_color'],
+          'circle-opacity': ['get', 'opacity']
         }
       });
 
@@ -99,16 +99,23 @@ export default function ParkMap({
     if (!map || !mapReadyRef.current) return;
     const source = map.getSource('units');
     if (!source) return;
+    const now = Date.now();
     const features = units
       .filter(u => u.last_lat && u.last_lng)
-      .map(u => ({
-        type: 'Feature',
-        geometry: { type: 'Point', coordinates: [u.last_lng, u.last_lat] },
-        properties: {
-          unit_id: u.id, unit_number: u.unit_number,
-          color: STATUS_COLORS[u.status] || '#9ca3af'
-        }
-      }));
+      .map(u => {
+        const ageMs = u.last_gps_at ? now - new Date(u.last_gps_at).getTime() : Infinity;
+        const stale = ageMs > 10 * 60 * 1000;
+        return {
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: [u.last_lng, u.last_lat] },
+          properties: {
+            unit_id: u.id, unit_number: u.unit_number,
+            color: STATUS_COLORS[u.status] || '#9ca3af',
+            opacity: stale ? 0.4 : 0.95,
+            stroke_color: stale ? '#6b7280' : '#ffffff'
+          }
+        };
+      });
     source.setData({ type: 'FeatureCollection', features });
   }, [units]);
 

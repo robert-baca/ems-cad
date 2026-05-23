@@ -33,6 +33,10 @@ export const updateCallStatus = (callId, status) =>
   api.patch(`/calls/${callId}/status`, { status });
 export const closeCall = (callId, disposition, close_notes) =>
   api.patch(`/calls/${callId}/status`, { status: 'closed', disposition, close_notes });
+export const updateCallTimestamps = (callId, fields) =>
+  api.patch(`/calls/${callId}/timestamps`, fields);
+export const updateCallNarrative = (callId, narrative) =>
+  api.patch(`/calls/${callId}/narrative`, { narrative });
 
 // ── Auth ───────────────────────────────────────────────────────────
 export const loginDispatcher = (username, password) =>
