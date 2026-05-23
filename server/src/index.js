@@ -472,14 +472,20 @@ app.patch('/api/calls/:id/status', verifyToken, async (req, res) => {
   io.to('dispatchers').emit('call:status_change', payload);
   io.to(`crew:${call.assigned_unit_id}`).emit('call:updated', { call_id: call.id, changes: { status: call.status } });
 
-  if (call.assigned_unit_id) {
-    const unit = units.find(u => u.id === call.assigned_unit_id);
+  const newUnitStatus = req.body.status === 'closed' ? 'available' : req.body.status;
+  const allUnitIds = [
+    call.assigned_unit_id,
+    ...(call.additional_unit_ids || [])
+  ].filter(Boolean);
+
+  allUnitIds.forEach(uid => {
+    const unit = units.find(u => u.id === uid);
     if (unit) {
-      unit.status = req.body.status === 'closed' ? 'available' : req.body.status;
+      unit.status = newUnitStatus;
       saveUnit(unit).catch(console.error);
       io.to('dispatchers').emit('unit:status_change', { unit_id: unit.id, status: unit.status });
     }
-  }
+  });
   res.json(call);
 });
 
