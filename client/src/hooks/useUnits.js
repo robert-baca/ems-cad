@@ -3,7 +3,7 @@ import { MOCK_UNITS } from '../data/mockData';
 import { updateUnitStatus, createUnit as apiCreateUnit, editUnit as apiEditUnit, deleteUnit as apiDeleteUnit } from '../services/api';
 
 export function useUnits() {
-  const [units, setUnits] = useState(MOCK_UNITS);
+  const [units, setUnits] = useState([]);
 
   const handleGpsUpdate = useCallback(({ unit_id, lat, lng }) => {
     setUnits(prev =>

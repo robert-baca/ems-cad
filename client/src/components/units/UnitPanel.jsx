@@ -3,7 +3,7 @@ import { STATUS_COLORS, STATUS_LABELS } from '../../data/mockData';
 import EditUnitModal from './EditUnitModal';
 import AddUnitModal from './AddUnitModal';
 
-const TYPE_ICONS = { ALS: '🚑', BLS: '🚐', Bike: '🚲', Cart: '🛺' };
+const TYPE_ICONS = { ALS: '🚑', BLS: '🚐', Cart: '🛺' };
 
 const CERT_COLORS = {
   'Paramedic': '#f87171',
@@ -12,7 +12,9 @@ const CERT_COLORS = {
   'First Responder': '#4ade80'
 };
 
-function UnitCard({ unit, isSelected, onClick, onHistory, onEdit }) {
+const ON_CALL_STATUSES = new Set(['dispatched', 'en_route', 'on_scene', 'patient_contact']);
+
+function UnitCard({ unit, isSelected, onClick, onHistory, onEdit, onToggleOos }) {
   const color = STATUS_COLORS[unit.status] || '#9ca3af';
   const profile = unit.profile;
 
@@ -60,14 +62,28 @@ function UnitCard({ unit, isSelected, onClick, onHistory, onEdit }) {
           )}
         </button>
 
-        {/* Edit button — appears on hover */}
-        <button
-          onClick={(e) => { e.stopPropagation(); onEdit(unit); }}
-          className="absolute top-2 right-2 w-6 h-6 flex items-center justify-center rounded text-gray-600 hover:text-blue-400 hover:bg-gray-600 opacity-0 group-hover:opacity-100 transition-opacity text-xs"
-          title="Edit unit"
-        >
-          ✏️
-        </button>
+        {/* Hover buttons */}
+        <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          {!ON_CALL_STATUSES.has(unit.status) && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onToggleOos(unit); }}
+              className={`px-1.5 py-0.5 rounded text-xs font-bold transition-colors
+                ${unit.status === 'out_of_service'
+                  ? 'text-green-400 hover:bg-gray-600'
+                  : 'text-gray-500 hover:text-yellow-400 hover:bg-gray-600'}`}
+              title={unit.status === 'out_of_service' ? 'Mark available' : 'Mark out of service'}
+            >
+              {unit.status === 'out_of_service' ? '✓ OOS' : 'OOS'}
+            </button>
+          )}
+          <button
+            onClick={(e) => { e.stopPropagation(); onEdit(unit); }}
+            className="w-6 h-6 flex items-center justify-center rounded text-gray-600 hover:text-blue-400 hover:bg-gray-600 text-xs"
+            title="Edit unit"
+          >
+            ✏️
+          </button>
+        </div>
       </div>
 
       <button
@@ -82,7 +98,7 @@ function UnitCard({ unit, isSelected, onClick, onHistory, onEdit }) {
   );
 }
 
-export default function UnitPanel({ units, selectedUnitId, onSelectUnit, onUnitHistory, onEditUnit, onRemoveUnit, onAddUnit }) {
+export default function UnitPanel({ units, selectedUnitId, onSelectUnit, onUnitHistory, onEditUnit, onRemoveUnit, onAddUnit, onStatusChange }) {
   const [editingUnit,  setEditingUnit]  = useState(null);
   const [showAddUnit,  setShowAddUnit]  = useState(false);
 
@@ -141,6 +157,7 @@ export default function UnitPanel({ units, selectedUnitId, onSelectUnit, onUnitH
               onClick={() => onSelectUnit?.(unit.id === selectedUnitId ? null : unit.id)}
               onHistory={onUnitHistory}
               onEdit={setEditingUnit}
+              onToggleOos={(u) => onStatusChange?.(u.id, u.status === 'out_of_service' ? 'available' : 'out_of_service')}
             />
           ))}
         </div>

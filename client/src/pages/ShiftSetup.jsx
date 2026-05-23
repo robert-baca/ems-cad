@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 
 const TYPE_ICONS   = { ALS: '🚑', BLS: '🚐', Bike: '🚲', Cart: '🛺' };
-const UNIT_TYPES   = ['ALS', 'BLS', 'Bike', 'Cart'];
+const UNIT_TYPES   = ['ALS', 'BLS', 'Cart'];
 const SHIFT_LABELS = ['Day Shift', 'Evening Shift', 'Night Shift'];
 const STATIONS     = ['Station 7', 'Station 14', 'Roaming'];
 
@@ -227,16 +227,18 @@ export default function ShiftSetup({ token, onShiftStarted }) {
                     {inService && (
                       <div className="space-y-2">
                         <div className="flex gap-3 items-start">
-                          <div className="flex-1">
-                            <label className="block text-gray-500 text-xs mb-1">Medic Name</label>
-                            <input
-                              type="text"
-                              value={s.crew || ''}
-                              onChange={e => updateStaffing(u.id, 'crew', e.target.value)}
-                              placeholder="Medic name…"
-                              className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500"
-                            />
-                          </div>
+                          {activeType !== 'Cart' && (
+                            <div className="flex-1">
+                              <label className="block text-gray-500 text-xs mb-1">Medic Name</label>
+                              <input
+                                type="text"
+                                value={s.crew || ''}
+                                onChange={e => updateStaffing(u.id, 'crew', e.target.value)}
+                                placeholder="Medic name…"
+                                className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500"
+                              />
+                            </div>
+                          )}
                           <div>
                             <label className="block text-gray-500 text-xs mb-1">Level</label>
                             <div className="flex gap-1">

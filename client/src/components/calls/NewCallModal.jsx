@@ -50,6 +50,8 @@ export default function NewCallModal({ pin, units, onDispatch, onClose }) {
     onClose();
   };
 
+  const TYPE_ICONS = { ALS: '🚑', BLS: '🚐', Cart: '🛺' };
+
   const availableUnits = units.filter(u =>
     u.status === 'available' || u.status === 'cleared'
   );
@@ -173,7 +175,7 @@ export default function NewCallModal({ pin, units, onDispatch, onClose }) {
               <option value="">Unassigned</option>
               {availableUnits.map(u => (
                 <option key={u.id} value={u.id}>
-                  {u.unit_number} — {u.unit_name} ({u.unit_type})
+                  {TYPE_ICONS[u.unit_type] || '🚑'} {u.unit_number} ({u.unit_type})
                 </option>
               ))}
             </select>

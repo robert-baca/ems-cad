@@ -37,7 +37,7 @@ export default function DispatcherDashboard() {
     units, setUnits,
     handleGpsUpdate, handleStatusChange, handleProfileUpdate,
     handleUnitUpdated, handleUnitRemoved,
-    addUnit, editUnit, removeUnit
+    addUnit, editUnit, removeUnit, changeStatus
   } = useUnits();
   const {
     calls, handleCallCreated, handleCallUpdated, handleCallStatusChange, handleCallAssigned,
@@ -229,6 +229,7 @@ export default function DispatcherDashboard() {
           onAddUnit={addUnit}
           onEditUnit={editUnit}
           onRemoveUnit={removeUnit}
+          onStatusChange={changeStatus}
         />
 
         {/* Center: Map */}

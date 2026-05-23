@@ -18,7 +18,7 @@ const TS_STEPS = [
 ];
 
 export function useCalls() {
-  const [calls, setCalls] = useState(MOCK_ALL_CALLS);
+  const [calls, setCalls] = useState([]);
 
   const handleCallCreated      = useCallback((call) => setCalls(prev => [call, ...prev]), []);
   const handleCallUpdated      = useCallback(({ call_id, changes }) =>

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 
-const UNIT_TYPES = ['ALS', 'BLS', 'Bike', 'Cart'];
+const UNIT_TYPES = ['ALS', 'BLS', 'Cart'];
 
 export default function AddUnitModal({ onAdd, onClose }) {
   const [unitNumber, setUnitNumber] = useState('');

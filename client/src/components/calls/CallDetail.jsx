@@ -43,6 +43,8 @@ export default function CallDetail({
   const commentCount = call.comments?.length || 0;
   const isPending = !call.assigned_unit_id;
 
+  const TYPE_ICONS = { ALS: '🚑', BLS: '🚐', Cart: '🛺' };
+
   const availableUnits = units.filter(u =>
     u.status === 'available' || u.status === 'cleared'
   );
@@ -95,7 +97,7 @@ export default function CallDetail({
                 <option value="">Select unit…</option>
                 {availableUnits.map(u => (
                   <option key={u.id} value={u.id}>
-                    {u.unit_number} — {u.unit_name} ({u.unit_type})
+                    {TYPE_ICONS[u.unit_type] || '🚑'} {u.unit_number} ({u.unit_type})
                   </option>
                 ))}
                 {availableUnits.length === 0 && (
