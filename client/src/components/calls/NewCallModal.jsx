@@ -3,7 +3,12 @@ import { CALL_TYPES } from '../../data/mockData';
 
 const TYPE_ICONS = { ALS: '🚑', BLS: '🚐', Cart: '🛺' };
 
-export default function NewCallModal({ pin, units, onDispatch, onClose }) {
+const QUICK_TYPES = [
+  'Cardiac Arrest', 'Chest Pain', 'Trauma', 'Syncope / Fainting',
+  'Heat Illness', 'Laceration', 'Altered Mental Status', 'Allergic Reaction'
+];
+
+export default function NewCallModal({ pin, units, onDispatch, onClose, parentCallNumber }) {
   const [form, setForm] = useState({
     call_type:      '',
     chief_complaint: '',
@@ -63,7 +68,7 @@ export default function NewCallModal({ pin, units, onDispatch, onClose }) {
 
       <div className="relative bg-gray-800 rounded-2xl w-full max-w-md shadow-2xl border border-gray-700 max-h-[90vh] flex flex-col">
         <div className="flex items-center justify-between p-4 border-b border-gray-700 flex-shrink-0">
-          <h2 className="text-white font-bold text-lg">🚨 New Call</h2>
+          <h2 className="text-white font-bold text-lg">🚨 New Case</h2>
           <button onClick={onClose}
             className="text-gray-400 hover:text-white w-8 h-8 flex items-center justify-center rounded hover:bg-gray-700 text-xl">
             ×
@@ -71,6 +76,13 @@ export default function NewCallModal({ pin, units, onDispatch, onClose }) {
         </div>
 
         <form onSubmit={handleSubmit} className="p-4 space-y-4 overflow-y-auto flex-1">
+          {/* Parent case banner */}
+          {parentCallNumber && (
+            <div className="bg-blue-900/50 border border-blue-700 rounded-lg px-3 py-2 flex items-center gap-2">
+              <span className="text-blue-300 text-xs font-semibold">🔗 Sub-case of Case #{parentCallNumber}</span>
+            </div>
+          )}
+
           {/* Pin location */}
           {pin && (
             <div className="bg-gray-700 rounded-lg px-3 py-2 flex items-center gap-2">
@@ -96,14 +108,25 @@ export default function NewCallModal({ pin, units, onDispatch, onClose }) {
 
           {/* Call type */}
           <div>
-            <label className="block text-gray-400 text-xs mb-1">Call Type *</label>
+            <label className="block text-gray-400 text-xs mb-1.5">Call Type *</label>
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {QUICK_TYPES.map(t => (
+                <button key={t} type="button" onClick={() => set('call_type', t)}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all
+                    ${form.call_type === t
+                      ? 'bg-red-700 border-red-500 text-white'
+                      : 'bg-gray-700 border-gray-600 text-gray-300 hover:border-gray-400'}`}>
+                  {t}
+                </button>
+              ))}
+            </div>
             <select
               required
               value={form.call_type}
               onChange={e => set('call_type', e.target.value)}
               className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
             >
-              <option value="">Select type…</option>
+              <option value="">Other type…</option>
               {CALL_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
             </select>
           </div>

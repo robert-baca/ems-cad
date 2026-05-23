@@ -144,7 +144,7 @@ export default function DisplayBoard() {
                   </div>
                   {assignedCall && (
                     <div className="mt-0.5 pl-4 text-gray-400 text-xs truncate leading-tight">
-                      #{assignedCall.call_number} {assignedCall.call_type}
+                      {assignedCall.response_mode === 'cart' ? '🛺' : '🚶'} #{assignedCall.call_number} {assignedCall.call_type}
                     </div>
                   )}
                 </div>

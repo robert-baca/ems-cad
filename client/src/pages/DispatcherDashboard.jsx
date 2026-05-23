@@ -42,7 +42,8 @@ export default function DispatcherDashboard() {
   const {
     calls, setCalls,
     handleCallCreated, handleCallUpdated, handleCallStatusChange, handleCallAssigned,
-    dispatchCall, assignUnit, closeCall, updateTimestamp, logTimeNow, addComment, addUnitToCall, removeUnitFromCall
+    dispatchCall, assignUnit, closeCall, updateTimestamp, logTimeNow, addComment,
+    addUnitToCall, removeUnitFromCall, updatePriority, addMutualAid, removeMutualAid
   } = useCalls();
   const { locations, addLocation, removeLocation, clearShiftLocations, setPermLocations } = useLocations();
 
@@ -250,6 +251,7 @@ export default function DispatcherDashboard() {
         {/* Left: Unit panel */}
         <UnitPanel
           units={units}
+          calls={activeCalls}
           selectedUnitId={selectedUnitId}
           onSelectUnit={setSelectedUnitId}
           onUnitHistory={(unit) => setHistoryUnit(unit)}
@@ -341,6 +343,9 @@ export default function DispatcherDashboard() {
               onCloseCall={closeCall}
               parentCall={parentCall}
               subCases={subCases}
+              onUpdatePriority={updatePriority}
+              onAddMutualAid={addMutualAid}
+              onRemoveMutualAid={removeMutualAid}
             />
           </div>
         )}
@@ -353,6 +358,7 @@ export default function DispatcherDashboard() {
           units={units}
           onDispatch={handleDispatch}
           onClose={() => { setShowNewCallModal(false); setNewCallPin(null); setSplitParentId(null); }}
+          parentCallNumber={splitParentId ? calls.find(c => c.id === splitParentId)?.call_number : null}
         />
       )}
 

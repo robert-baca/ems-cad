@@ -14,7 +14,7 @@ const CERT_COLORS = {
 
 const ON_CALL_STATUSES = new Set(['dispatched', 'en_route', 'on_scene', 'patient_contact']);
 
-function UnitCard({ unit, isSelected, onClick, onHistory, onEdit, onToggleOos, onFlyTo }) {
+function UnitCard({ unit, activeCall, isSelected, onClick, onHistory, onEdit, onToggleOos, onFlyTo }) {
   const color = STATUS_COLORS[unit.status] || '#9ca3af';
   const profile = unit.profile;
 
@@ -41,6 +41,11 @@ function UnitCard({ unit, isSelected, onClick, onHistory, onEdit, onToggleOos, o
           <div className="text-xs font-medium" style={{ color }}>
             {STATUS_LABELS[unit.status]}
           </div>
+          {activeCall && (
+            <div className="text-yellow-300 text-xs font-semibold mt-0.5 truncate">
+              Case #{activeCall.call_number} · {activeCall.call_type}
+            </div>
+          )}
           {unit.crew || profile?.name ? (
             <div className="text-gray-400 text-xs mt-0.5 truncate">{unit.crew || profile?.name}</div>
           ) : (
@@ -113,7 +118,7 @@ function UnitCard({ unit, isSelected, onClick, onHistory, onEdit, onToggleOos, o
   );
 }
 
-export default function UnitPanel({ units, selectedUnitId, onSelectUnit, onUnitHistory, onEditUnit, onRemoveUnit, onAddUnit, onStatusChange, onFlyTo }) {
+export default function UnitPanel({ units, calls, selectedUnitId, onSelectUnit, onUnitHistory, onEditUnit, onRemoveUnit, onAddUnit, onStatusChange, onFlyTo }) {
   const [editingUnit,  setEditingUnit]  = useState(null);
   const [showAddUnit,  setShowAddUnit]  = useState(false);
 
@@ -164,18 +169,25 @@ export default function UnitPanel({ units, selectedUnitId, onSelectUnit, onUnitH
         </div>
 
         <div className="flex-1 overflow-y-auto p-2">
-          {units.map(unit => (
-            <UnitCard
-              key={unit.id}
-              unit={unit}
-              isSelected={unit.id === selectedUnitId}
-              onClick={() => onSelectUnit?.(unit.id === selectedUnitId ? null : unit.id)}
-              onHistory={onUnitHistory}
-              onEdit={setEditingUnit}
-              onToggleOos={(u) => onStatusChange?.(u.id, u.status === 'out_of_service' ? 'available' : 'out_of_service')}
-              onFlyTo={(u) => onFlyTo?.(u)}
-            />
-          ))}
+          {units.map(unit => {
+            const activeCall = calls?.find(c =>
+              (c.assigned_unit_id === unit.id || (c.additional_unit_ids || []).includes(unit.id)) &&
+              ON_CALL_STATUSES.has(c.status)
+            );
+            return (
+              <UnitCard
+                key={unit.id}
+                unit={unit}
+                activeCall={activeCall}
+                isSelected={unit.id === selectedUnitId}
+                onClick={() => onSelectUnit?.(unit.id === selectedUnitId ? null : unit.id)}
+                onHistory={onUnitHistory}
+                onEdit={setEditingUnit}
+                onToggleOos={(u) => onStatusChange?.(u.id, u.status === 'out_of_service' ? 'available' : 'out_of_service')}
+                onFlyTo={(u) => onFlyTo?.(u)}
+              />
+            );
+          })}
         </div>
       </div>
 

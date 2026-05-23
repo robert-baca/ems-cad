@@ -1,6 +1,5 @@
 import { useState, useCallback } from 'react';
-import { MOCK_ALL_CALLS } from '../data/mockData';
-import { createCall, updateCallStatus, assignCall, closeCall as apiCloseCall, updateCallTimestamps, updateCallNarrative, addUnitToCall as apiAddUnitToCall, removeUnitFromCall as apiRemoveUnitFromCall } from '../services/api';
+import { createCall, updateCallStatus, assignCall, closeCall as apiCloseCall, updateCallTimestamps, updateCallNarrative, addUnitToCall as apiAddUnitToCall, removeUnitFromCall as apiRemoveUnitFromCall, updateCallPriority as apiUpdatePriority, addMutualAid as apiAddMutualAid, removeMutualAid as apiRemoveMutualAid } from '../services/api';
 
 const STATUS_TS_MAP = {
   dispatched:      'dispatched_at',
@@ -105,6 +104,29 @@ export function useCalls() {
     try { await apiRemoveUnitFromCall(callId, unitId); } catch {}
   }, []);
 
+  const updatePriority = useCallback(async (callId, priority) => {
+    setCalls(prev => prev.map(c => c.id === callId ? { ...c, priority } : c));
+    try { await apiUpdatePriority(callId, priority); } catch {}
+  }, []);
+
+  const addMutualAid = useCallback(async (callId, name, unit_id, role) => {
+    try {
+      const res = await apiAddMutualAid(callId, name, unit_id, role);
+      setCalls(prev => prev.map(c =>
+        c.id === callId ? { ...c, mutual_aid_agencies: [...(c.mutual_aid_agencies || []), res.data] } : c
+      ));
+    } catch {}
+  }, []);
+
+  const removeMutualAid = useCallback(async (callId, entryId) => {
+    setCalls(prev => prev.map(c =>
+      c.id === callId
+        ? { ...c, mutual_aid_agencies: (c.mutual_aid_agencies || []).filter(e => e.id !== entryId) }
+        : c
+    ));
+    try { await apiRemoveMutualAid(callId, entryId); } catch {}
+  }, []);
+
   const addComment = useCallback((callId, text, author = 'Dispatcher') => {
     const comment = { id: `cmt-${Date.now()}`, text, author, created_at: new Date().toISOString() };
     setCalls(prev => prev.map(c =>
@@ -115,6 +137,7 @@ export function useCalls() {
   return {
     calls, setCalls,
     handleCallCreated, handleCallUpdated, handleCallStatusChange, handleCallAssigned,
-    dispatchCall, assignUnit, advanceStatus, closeCall, updateTimestamp, logTimeNow, addComment, addUnitToCall, removeUnitFromCall
+    dispatchCall, assignUnit, advanceStatus, closeCall, updateTimestamp, logTimeNow, addComment,
+    addUnitToCall, removeUnitFromCall, updatePriority, addMutualAid, removeMutualAid
   };
 }

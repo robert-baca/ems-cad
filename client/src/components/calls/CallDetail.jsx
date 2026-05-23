@@ -29,7 +29,7 @@ function LiveClock() {
 export default function CallDetail({
   call, unit, units = [], authorName = 'Dispatcher',
   onClose, onTimestampUpdate, onLogTime, onAddComment, onAssignUnit, onCloseCall, onAddUnit,
-  onRemoveUnit, onSplitCall, parentCall, subCases = []
+  onRemoveUnit, onSplitCall, parentCall, subCases = [], onUpdatePriority, onAddMutualAid, onRemoveMutualAid
 }) {
   const [tab, setTab]                   = useState('detail');
   const [assigningUnit, setAssigningUnit] = useState(false);
@@ -38,6 +38,10 @@ export default function CallDetail({
   const [addUnitId,      setAddUnitId]      = useState('');
   const [showCloseModal, setShowCloseModal] = useState(false);
   const [narrative, setNarrative]         = useState(call.narrative || '');
+  const [addingAid,     setAddingAid]     = useState(false);
+  const [aidName,       setAidName]       = useState('');
+  const [aidUnit,       setAidUnit]       = useState('');
+  const [aidRole,       setAidRole]       = useState('');
   const clock = LiveClock();
 
   const handleNarrativeBlur = useCallback(() => {
@@ -195,7 +199,27 @@ export default function CallDetail({
               <Row label="Complaint" value={call.chief_complaint || '—'} />
               <Row label="Location"  value={call.location_name || '—'} />
               <Row label="Zone"      value={call.park_zone || '—'} />
+              {call.response_mode && <Row label="Response" value={call.response_mode === 'cart' ? '🛺 Cart' : '🚶 On Foot'} />}
               {call.notes && <Row label="Notes" value={call.notes} />}
+            </div>
+
+            {/* Priority toggle */}
+            <div className="bg-gray-700 rounded-xl p-3 space-y-2">
+              <div className="text-gray-400 text-xs uppercase tracking-wider">Priority</div>
+              <div className="flex gap-2">
+                {[
+                  { val: 1, label: 'P1 Critical', active: 'bg-red-600 text-white', inactive: 'bg-gray-600 text-gray-400 hover:bg-gray-500' },
+                  { val: 2, label: 'P2 Urgent',   active: 'bg-orange-600 text-white', inactive: 'bg-gray-600 text-gray-400 hover:bg-gray-500' },
+                  { val: 3, label: 'P3 Routine',  active: 'bg-blue-700 text-white', inactive: 'bg-gray-600 text-gray-400 hover:bg-gray-500' }
+                ].map(({ val, label, active, inactive }) => (
+                  <button key={val} type="button"
+                    onClick={() => call.priority !== val && onUpdatePriority?.(call.id, val)}
+                    className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-colors
+                      ${call.priority === val ? active : inactive}`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
             </div>
 
             {/* Assigned unit info */}
@@ -323,6 +347,62 @@ export default function CallDetail({
                 className="w-full bg-gray-600 text-gray-100 text-sm rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500 resize-none"
               />
               <p className="text-gray-600 text-xs">Auto-saves when you click away</p>
+            </div>
+
+            {/* Mutual Aid */}
+            <div className="bg-gray-700 rounded-xl p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="text-gray-400 text-xs uppercase tracking-wider">Mutual Aid / Outside Agency</div>
+                {!addingAid && (
+                  <button onClick={() => setAddingAid(true)}
+                    className="text-blue-400 hover:text-blue-300 text-xs transition-colors">+ Add</button>
+                )}
+              </div>
+              {(call.mutual_aid_agencies || []).map(a => (
+                <div key={a.id} className="flex items-center justify-between text-sm">
+                  <div>
+                    <span className="text-white font-medium">{a.name}</span>
+                    {a.unit_id && <span className="text-gray-400 text-xs ml-1">· {a.unit_id}</span>}
+                    {a.role   && <span className="text-gray-500 text-xs ml-1">({a.role})</span>}
+                  </div>
+                  <button onClick={() => onRemoveMutualAid?.(call.id, a.id)}
+                    className="text-gray-600 hover:text-red-400 text-xs transition-colors ml-2">✕</button>
+                </div>
+              ))}
+              {(call.mutual_aid_agencies || []).length === 0 && !addingAid && (
+                <div className="text-gray-600 text-xs">None logged</div>
+              )}
+              {addingAid && (
+                <div className="space-y-1.5 pt-1">
+                  <input autoFocus value={aidName} onChange={e => setAidName(e.target.value)}
+                    placeholder="Agency name (e.g. MedStar)"
+                    className="w-full bg-gray-600 text-white rounded-lg px-2.5 py-1.5 text-xs outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500" />
+                  <div className="flex gap-1.5">
+                    <input value={aidUnit} onChange={e => setAidUnit(e.target.value)}
+                      placeholder="Unit ID (e.g. Medic 42)"
+                      className="flex-1 bg-gray-600 text-white rounded-lg px-2.5 py-1.5 text-xs outline-none focus:ring-1 focus:ring-blue-500 placeholder-gray-500" />
+                    <input value={aidRole} onChange={e => setAidRole(e.target.value)}
+                      placeholder="Role (Transport…)"
+                      className="flex-1 bg-gray-600 text-white rounded-lg px-2.5 py-1.5 text-xs outline-none focus:ring-1 focus:ring-blue-500 placeholder-gray-500" />
+                  </div>
+                  <div className="flex gap-1.5">
+                    <button
+                      onClick={() => {
+                        if (!aidName.trim()) return;
+                        onAddMutualAid?.(call.id, aidName.trim(), aidUnit.trim(), aidRole.trim());
+                        setAidName(''); setAidUnit(''); setAidRole(''); setAddingAid(false);
+                      }}
+                      disabled={!aidName.trim()}
+                      className="flex-1 py-1.5 bg-blue-700 hover:bg-blue-600 disabled:bg-gray-600 text-white text-xs font-bold rounded-lg transition-colors">
+                      Log Agency
+                    </button>
+                    <button onClick={() => { setAddingAid(false); setAidName(''); setAidUnit(''); setAidRole(''); }}
+                      className="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-gray-300 text-xs rounded-lg transition-colors">
+                      ✕
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Log Time */}

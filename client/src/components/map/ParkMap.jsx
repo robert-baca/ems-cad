@@ -126,22 +126,24 @@ export default function ParkMap({
     Object.values(callMarkersRef.current).forEach(m => m.remove());
     callMarkersRef.current = {};
 
+    const PRIORITY_COLORS = { 1: '#ef4444', 2: '#f97316', 3: '#6366f1' };
+
     calls.forEach(call => {
       if (!call.location_lat || !call.location_lng) return;
       const isPending = call.status === 'pending';
+      const color = PRIORITY_COLORS[call.priority] || '#ef4444';
 
       const el = document.createElement('div');
       el.className = 'call-pin-wrapper';
       if (isPending) {
-        // Dimmer static dot for pending calls
         el.innerHTML = `
-          <div class="call-pin-dot" style="background:#6366f1;opacity:0.8;width:16px;height:16px"></div>
+          <div class="call-pin-dot" style="background:${color};opacity:0.6;width:14px;height:14px"></div>
         `;
       } else {
         el.innerHTML = `
-          <div class="call-pulse-ring"></div>
-          <div class="call-pulse-ring ring2"></div>
-          <div class="call-pin-dot"></div>
+          <div class="call-pulse-ring" style="border-color:${color}"></div>
+          <div class="call-pulse-ring ring2" style="border-color:${color}"></div>
+          <div class="call-pin-dot" style="background:${color}"></div>
         `;
       }
 

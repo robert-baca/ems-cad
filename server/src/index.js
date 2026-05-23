@@ -90,6 +90,7 @@ async function initDb() {
   await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS additional_unit_ids JSONB DEFAULT '[]'`);
   await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS response_mode TEXT`);
   await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS parent_call_id TEXT`);
+  await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS mutual_aid_agencies JSONB DEFAULT '[]'`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS locations (
@@ -120,8 +121,9 @@ async function initDb() {
   const callsRes = await pool.query('SELECT * FROM calls ORDER BY received_at DESC');
   calls = callsRes.rows.map(r => ({
     ...r,
-    comments:            r.comments            || [],
-    additional_unit_ids: r.additional_unit_ids || []
+    comments:             r.comments             || [],
+    additional_unit_ids:  r.additional_unit_ids  || [],
+    mutual_aid_agencies:  r.mutual_aid_agencies  || []
   }));
   nextCallNum = calls.length > 0 ? Math.max(...calls.map(c => c.call_number)) + 1 : 100;
 
@@ -159,8 +161,9 @@ async function saveCall(call) {
     INSERT INTO calls (id, call_number, status, call_type, priority, location_name,
       location_lat, location_lng, assigned_unit_id, received_at, dispatched_at, acknowledged_at,
       en_route_at, on_scene_at, patient_contact_at, cleared_at, available_at, closed_at,
-      disposition, close_notes, comments, narrative, additional_unit_ids, response_mode, parent_call_id)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
+      disposition, close_notes, comments, narrative, additional_unit_ids, response_mode,
+      parent_call_id, mutual_aid_agencies)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
     ON CONFLICT (id) DO UPDATE SET
       status=EXCLUDED.status, call_type=EXCLUDED.call_type, priority=EXCLUDED.priority,
       location_name=EXCLUDED.location_name, location_lat=EXCLUDED.location_lat,
@@ -172,14 +175,15 @@ async function saveCall(call) {
       disposition=EXCLUDED.disposition, close_notes=EXCLUDED.close_notes,
       comments=EXCLUDED.comments, narrative=EXCLUDED.narrative,
       additional_unit_ids=EXCLUDED.additional_unit_ids, response_mode=EXCLUDED.response_mode,
-      parent_call_id=EXCLUDED.parent_call_id
+      parent_call_id=EXCLUDED.parent_call_id, mutual_aid_agencies=EXCLUDED.mutual_aid_agencies
   `, [call.id, call.call_number, call.status, call.call_type, call.priority,
       call.location_name, call.location_lat, call.location_lng, call.assigned_unit_id,
       call.received_at, call.dispatched_at, call.acknowledged_at, call.en_route_at,
       call.on_scene_at, call.patient_contact_at, call.cleared_at, call.available_at,
       call.closed_at, call.disposition, call.close_notes, JSON.stringify(call.comments || []),
       call.narrative || null, JSON.stringify(call.additional_unit_ids || []),
-      call.response_mode || null, call.parent_call_id || null]);
+      call.response_mode || null, call.parent_call_id || null,
+      JSON.stringify(call.mutual_aid_agencies || [])]);
 }
 
 async function saveLocation(loc) {
@@ -661,6 +665,42 @@ app.delete('/api/locations/:id', verifyToken, async (req, res) => {
   if (idx === -1) return res.status(404).json({ error: 'Not found' });
   locations.splice(idx, 1);
   deleteLocationFromDb(req.params.id).catch(console.error);
+  res.json({ ok: true });
+});
+
+app.patch('/api/calls/:id/priority', verifyToken, async (req, res) => {
+  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
+  const call = calls.find(c => c.id === req.params.id);
+  if (!call) return res.status(404).json({ error: 'Not found' });
+  const priority = Number(req.body.priority);
+  if (![1, 2, 3].includes(priority)) return res.status(400).json({ error: 'Priority must be 1, 2, or 3' });
+  call.priority = priority;
+  saveCall(call).catch(console.error);
+  io.to('dispatchers').emit('call:updated', { call_id: call.id, changes: { priority } });
+  res.json({ ok: true });
+});
+
+app.post('/api/calls/:id/mutual-aid', verifyToken, async (req, res) => {
+  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
+  const call = calls.find(c => c.id === req.params.id);
+  if (!call) return res.status(404).json({ error: 'Not found' });
+  const { name, unit_id, role } = req.body;
+  if (!name?.trim()) return res.status(400).json({ error: 'name required' });
+  const entry = { id: `ma-${Date.now()}`, name: name.trim(), unit_id: unit_id?.trim() || null, role: role?.trim() || null, arrived_at: new Date().toISOString() };
+  if (!call.mutual_aid_agencies) call.mutual_aid_agencies = [];
+  call.mutual_aid_agencies.push(entry);
+  saveCall(call).catch(console.error);
+  io.to('dispatchers').emit('call:updated', { call_id: call.id, changes: { mutual_aid_agencies: call.mutual_aid_agencies } });
+  res.json(entry);
+});
+
+app.delete('/api/calls/:id/mutual-aid/:entryId', verifyToken, async (req, res) => {
+  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
+  const call = calls.find(c => c.id === req.params.id);
+  if (!call) return res.status(404).json({ error: 'Not found' });
+  call.mutual_aid_agencies = (call.mutual_aid_agencies || []).filter(e => e.id !== req.params.entryId);
+  saveCall(call).catch(console.error);
+  io.to('dispatchers').emit('call:updated', { call_id: call.id, changes: { mutual_aid_agencies: call.mutual_aid_agencies } });
   res.json({ ok: true });
 });
 

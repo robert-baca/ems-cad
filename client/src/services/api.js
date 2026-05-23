@@ -41,6 +41,12 @@ export const addUnitToCall = (callId, unitId) =>
   api.post(`/calls/${callId}/add-unit`, { unit_id: unitId });
 export const removeUnitFromCall = (callId, unitId) =>
   api.delete(`/calls/${callId}/units/${unitId}`);
+export const updateCallPriority = (callId, priority) =>
+  api.patch(`/calls/${callId}/priority`, { priority });
+export const addMutualAid = (callId, name, unit_id, role) =>
+  api.post(`/calls/${callId}/mutual-aid`, { name, unit_id, role });
+export const removeMutualAid = (callId, entryId) =>
+  api.delete(`/calls/${callId}/mutual-aid/${entryId}`);
 
 // ── Auth ───────────────────────────────────────────────────────────
 export const loginDispatcher = (username, password) =>

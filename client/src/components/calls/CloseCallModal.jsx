@@ -37,7 +37,7 @@ export default function CloseCallModal({ call, onConfirm, onClose }) {
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-700">
           <div>
-            <div className="text-white font-bold">Close Call #{call.call_number}</div>
+            <div className="text-white font-bold">Close Case #{call.call_number}</div>
             <div className="text-gray-400 text-xs">{call.call_type} · P{call.priority}</div>
           </div>
           <button onClick={onClose}
@@ -95,7 +95,7 @@ export default function CloseCallModal({ call, onConfirm, onClose }) {
           </button>
           <button onClick={handleClose} disabled={closing}
             className="flex-1 py-2.5 bg-red-700 hover:bg-red-600 disabled:bg-red-900 text-white font-semibold text-sm rounded-lg transition-colors">
-            {closing ? 'Closing…' : chosen ? `Close — ${chosen.icon}` : 'Close Call'}
+            {closing ? 'Closing…' : chosen ? `Close Case — ${chosen.icon}` : 'Close Case'}
           </button>
         </div>
       </div>
