@@ -42,7 +42,7 @@ export default function DispatcherDashboard() {
   const {
     calls, setCalls,
     handleCallCreated, handleCallUpdated, handleCallStatusChange, handleCallAssigned,
-    dispatchCall, assignUnit, closeCall, updateTimestamp, logTimeNow, addComment, addUnitToCall
+    dispatchCall, assignUnit, closeCall, updateTimestamp, logTimeNow, addComment, addUnitToCall, removeUnitFromCall
   } = useCalls();
   const { locations, addLocation, removeLocation, clearShiftLocations, setPermLocations } = useLocations();
 
@@ -58,6 +58,7 @@ export default function DispatcherDashboard() {
   const [historyUnit,       setHistoryUnit]         = useState(null);
   const [flyToTarget,       setFlyToTarget]         = useState(null);
   const [unknownGpsDevice,  setUnknownGpsDevice]   = useState(null);
+  const [splitParentId,     setSplitParentId]       = useState(null);
 
   // Load current shift on mount
   useEffect(() => {
@@ -113,6 +114,12 @@ export default function DispatcherDashboard() {
   const selectedUnit = selectedCall
     ? units.find(u => u.id === selectedCall.assigned_unit_id) || null
     : null;
+  const parentCall = selectedCall?.parent_call_id
+    ? calls.find(c => c.id === selectedCall.parent_call_id) || null
+    : null;
+  const subCases = selectedCall
+    ? calls.filter(c => c.parent_call_id === selectedCall.id)
+    : [];
   const activeCalls  = calls.filter(c => c.status !== 'closed');
   const pendingCount = activeCalls.filter(c => c.status === 'pending').length;
 
@@ -136,11 +143,18 @@ export default function DispatcherDashboard() {
     addLocation(name, lat, lng, color, locationType);
   };
 
+  const handleSplitCall = (parentCall) => {
+    setSplitParentId(parentCall.id);
+    setNewCallPin({ lat: parentCall.location_lat, lng: parentCall.location_lng });
+    setShowNewCallModal(true);
+  };
+
   const handleDispatch = async (data) => {
-    const call = await dispatchCall(data);
+    const payload = splitParentId ? { ...data, parent_call_id: splitParentId } : data;
+    setSplitParentId(null);
+    const call = await dispatchCall(payload);
     setNewCallPin(null);
-    setSelectedCallId(call.id);
-    setShowHistory(false);
+    if (call) { setSelectedCallId(call.id); setShowHistory(false); }
   };
 
   const handleHistorySelectCall = (callId) => {
@@ -322,7 +336,11 @@ export default function DispatcherDashboard() {
               onAddComment={addComment}
               onAssignUnit={assignUnit}
               onAddUnit={addUnitToCall}
+              onRemoveUnit={removeUnitFromCall}
+              onSplitCall={handleSplitCall}
               onCloseCall={closeCall}
+              parentCall={parentCall}
+              subCases={subCases}
             />
           </div>
         )}
@@ -334,7 +352,7 @@ export default function DispatcherDashboard() {
           pin={newCallPin}
           units={units}
           onDispatch={handleDispatch}
-          onClose={() => { setShowNewCallModal(false); setNewCallPin(null); }}
+          onClose={() => { setShowNewCallModal(false); setNewCallPin(null); setSplitParentId(null); }}
         />
       )}
 

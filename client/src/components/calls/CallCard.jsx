@@ -25,7 +25,7 @@ export default function CallCard({ call, unit, isSelected, onClick }) {
       {/* Top row */}
       <div className="flex items-center justify-between mb-1.5">
         <div className="flex items-center gap-2">
-          <span className="text-white font-bold text-sm">#{call.call_number}</span>
+          <span className="text-white font-bold text-sm">Case #{call.call_number}</span>
           <span className={`text-xs px-1.5 py-0.5 rounded font-medium text-white ${PRIORITY_COLORS[call.priority]}`}>
             {PRIORITY_LABELS[call.priority]}
           </span>

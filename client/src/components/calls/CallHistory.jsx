@@ -180,7 +180,7 @@ export default function CallHistory({ calls, units, onClose, onSelectCall }) {
                     onClick={() => onSelectCall?.(call.id)}
                     className="hover:bg-gray-700 cursor-pointer transition-colors"
                   >
-                    <td className="px-3 py-2.5 text-white font-bold text-xs">#{call.call_number}</td>
+                    <td className="px-3 py-2.5 text-white font-bold text-xs">Case #{call.call_number}</td>
                     <td className="px-2 py-2.5 text-gray-200 max-w-[140px]">
                       <div className="truncate text-xs">{call.call_type}</div>
                       <div className="text-gray-500 text-xs truncate">{call.location_name}</div>

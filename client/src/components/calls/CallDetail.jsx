@@ -28,7 +28,8 @@ function LiveClock() {
 
 export default function CallDetail({
   call, unit, units = [], authorName = 'Dispatcher',
-  onClose, onTimestampUpdate, onLogTime, onAddComment, onAssignUnit, onCloseCall, onAddUnit
+  onClose, onTimestampUpdate, onLogTime, onAddComment, onAssignUnit, onCloseCall, onAddUnit,
+  onRemoveUnit, onSplitCall, parentCall, subCases = []
 }) {
   const [tab, setTab]                   = useState('detail');
   const [assigningUnit, setAssigningUnit] = useState(false);
@@ -82,8 +83,8 @@ export default function CallDetail({
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700 flex-shrink-0">
         <div>
-          <div className="flex items-center gap-2">
-            <span className="text-white font-bold text-base">Call #{call.call_number}</span>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-white font-bold text-base">Case #{call.call_number}</span>
             <span className={`text-sm font-semibold ${PRIORITY_COLORS[call.priority]}`}>
               P{call.priority}
             </span>
@@ -92,8 +93,18 @@ export default function CallDetail({
                 PENDING
               </span>
             )}
+            {parentCall && (
+              <span className="text-xs bg-gray-600 text-gray-300 px-1.5 py-0.5 rounded">
+                Sub-case of #{parentCall.call_number}
+              </span>
+            )}
           </div>
           <div className="text-gray-400 text-xs mt-0.5">{call.call_type}</div>
+          {subCases.length > 0 && (
+            <div className="text-xs text-blue-400 mt-0.5">
+              Sub-cases: {subCases.map(c => `#${c.call_number}`).join(', ')}
+            </div>
+          )}
         </div>
         <button onClick={onClose}
           className="text-gray-400 hover:text-white w-8 h-8 flex items-center justify-center rounded hover:bg-gray-700 text-xl">
@@ -250,9 +261,18 @@ export default function CallDetail({
                       <span className="text-white text-sm font-semibold">{u.unit_number}</span>
                       <span className="text-gray-400 text-xs ml-2">{u.unit_type}</span>
                     </div>
-                    <div className="text-xs font-medium px-2 py-0.5 rounded-full"
-                      style={{ color: STATUS_COLORS[u.status], background: STATUS_COLORS[u.status] + '22' }}>
-                      {STATUS_LABELS[u.status]}
+                    <div className="flex items-center gap-2">
+                      <div className="text-xs font-medium px-2 py-0.5 rounded-full"
+                        style={{ color: STATUS_COLORS[u.status], background: STATUS_COLORS[u.status] + '22' }}>
+                        {STATUS_LABELS[u.status]}
+                      </div>
+                      <button
+                        onClick={() => onRemoveUnit?.(call.id, u.id)}
+                        title="Remove from call"
+                        className="text-gray-600 hover:text-red-400 text-sm transition-colors leading-none"
+                      >
+                        ✕
+                      </button>
                     </div>
                   </div>
                 ))}
@@ -361,10 +381,17 @@ export default function CallDetail({
       {/* Actions */}
       <div className="p-4 border-t border-gray-700 flex gap-2 flex-shrink-0">
         <button
+          onClick={() => onSplitCall?.(call)}
+          title="Create a new case linked to this one (second patient)"
+          className="flex-1 py-2 text-sm bg-gray-700 hover:bg-gray-600 text-gray-200 rounded-lg transition-colors font-semibold"
+        >
+          🧑‍⚕️ New Patient
+        </button>
+        <button
           onClick={() => setShowCloseModal(true)}
           className="flex-1 py-2 text-sm bg-red-700 hover:bg-red-600 text-white rounded-lg transition-colors font-semibold"
         >
-          Close Call
+          Close Case
         </button>
       </div>
 
