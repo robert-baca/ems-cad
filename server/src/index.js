@@ -26,13 +26,7 @@ const dispatchers = [
   { id: 'd2', username: 'dispatch2', full_name: 'Dispatch 2',       password_hash: bcrypt.hashSync(PW, 8) }
 ];
 
-let units = [
-  { id: 'u1', unit_number: 'EMS-1', unit_name: 'Medic 1', unit_type: 'ALS', status: 'available', last_lat: 32.7538, last_lng: -97.0688, password_hash: bcrypt.hashSync(PW, 8), profile: null },
-  { id: 'u2', unit_number: 'EMS-2', unit_name: 'Medic 2', unit_type: 'BLS', status: 'available', last_lat: 32.7555, last_lng: -97.0638, password_hash: bcrypt.hashSync(PW, 8), profile: null },
-  { id: 'u3', unit_number: 'EMS-3', unit_name: 'Medic 3', unit_type: 'ALS', status: 'available', last_lat: 32.7562, last_lng: -97.0622, password_hash: bcrypt.hashSync(PW, 8), profile: null },
-  { id: 'u4', unit_number: 'EMS-4', unit_name: 'Bike A',  unit_type: 'Bike', status: 'available', last_lat: 32.7549, last_lng: -97.0658, password_hash: bcrypt.hashSync(PW, 8), profile: null },
-  { id: 'u5', unit_number: 'EMS-5', unit_name: 'Cart 1',  unit_type: 'Cart', status: 'available', last_lat: 32.7543, last_lng: -97.0672, password_hash: bcrypt.hashSync(PW, 8), profile: null }
-];
+let units = [];
 
 let calls = []; // starts empty — dispatchers create calls live
 

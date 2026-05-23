@@ -3,15 +3,22 @@ import { useState, useEffect } from 'react';
 const TYPE_ICONS   = { ALS: '🚑', BLS: '🚐', Bike: '🚲', Cart: '🛺' };
 const UNIT_TYPES   = ['ALS', 'BLS', 'Bike', 'Cart'];
 const SHIFT_LABELS = ['Day Shift', 'Evening Shift', 'Night Shift'];
-const STATIONS     = ['Station 7', 'Station 14', 'Roaming', 'Lead Medic'];
+const STATIONS     = ['Station 7', 'Station 14', 'Roaming'];
 
 export default function ShiftSetup({ token, onShiftStarted }) {
-  const [units,        setUnits]       = useState([]);
-  const [shiftLabel,   setShiftLabel]  = useState('Day Shift');
-  const [customLabel,  setCustomLabel] = useState('');
-  const [staffing,     setStaffing]    = useState({});
-  const [saving,       setSaving]      = useState(false);
-  const [error,        setError]       = useState('');
+  const [units,       setUnits]      = useState([]);
+  const [shiftLabel,  setShiftLabel] = useState('Day Shift');
+  const [customLabel, setCustomLabel] = useState('');
+  const [staffing,    setStaffing]   = useState({});
+  const [saving,      setSaving]     = useState(false);
+  const [error,       setError]      = useState('');
+
+  // Add unit inline form
+  const [addingUnit,  setAddingUnit]  = useState(false);
+  const [newNumber,   setNewNumber]   = useState('');
+  const [newType,     setNewType]     = useState('ALS');
+  const [addError,    setAddError]    = useState('');
+  const [addSaving,   setAddSaving]   = useState(false);
 
   useEffect(() => {
     fetch('/api/units')
@@ -30,6 +37,35 @@ export default function ShiftSetup({ token, onShiftStarted }) {
 
   const updateStaffing = (unit_id, field, value) => {
     setStaffing(prev => ({ ...prev, [unit_id]: { ...prev[unit_id], [field]: value } }));
+  };
+
+  const handleAddUnit = async () => {
+    if (!newNumber.trim()) { setAddError('Enter a unit number.'); return; }
+    setAddSaving(true);
+    setAddError('');
+    try {
+      const res = await fetch('/api/units', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ unit_number: newNumber.trim(), unit_name: newNumber.trim(), unit_type: newType })
+      });
+      const unit = await res.json();
+      if (!res.ok) throw new Error(unit.error || 'Failed to add unit');
+      setUnits(prev => [...prev, unit]);
+      setStaffing(prev => ({ ...prev, [unit.id]: { crew: '', unit_type: newType, in_service: true, station: '' } }));
+      setNewNumber('');
+      setNewType('ALS');
+      setAddingUnit(false);
+    } catch (err) {
+      setAddError(err.message);
+    } finally {
+      setAddSaving(false);
+    }
+  };
+
+  const handleRemoveUnit = (unit_id) => {
+    setUnits(prev => prev.filter(u => u.id !== unit_id));
+    setStaffing(prev => { const next = { ...prev }; delete next[unit_id]; return next; });
   };
 
   const handleStart = async () => {
@@ -100,7 +136,68 @@ export default function ShiftSetup({ token, onShiftStarted }) {
 
           {/* Unit roster */}
           <div className="px-6 py-4">
-            <div className="text-gray-400 text-xs uppercase tracking-wider mb-4">Unit Roster</div>
+            <div className="flex items-center justify-between mb-4">
+              <div className="text-gray-400 text-xs uppercase tracking-wider">Unit Roster</div>
+              <button
+                onClick={() => { setAddingUnit(true); setAddError(''); }}
+                className="text-xs px-3 py-1.5 bg-green-800 hover:bg-green-700 text-green-300 rounded-lg font-medium transition-colors"
+              >
+                + Add Unit
+              </button>
+            </div>
+
+            {/* Inline add unit form */}
+            {addingUnit && (
+              <div className="mb-4 rounded-xl border border-green-700 bg-gray-750 p-4">
+                <div className="text-green-400 text-xs font-semibold uppercase tracking-wider mb-3">New Unit</div>
+                <div className="flex gap-3 items-end">
+                  <div className="flex-1">
+                    <label className="block text-gray-500 text-xs mb-1">Unit Number</label>
+                    <input
+                      type="text"
+                      value={newNumber}
+                      onChange={e => setNewNumber(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') handleAddUnit(); if (e.key === 'Escape') setAddingUnit(false); }}
+                      placeholder="e.g. Medic 1, Cart 1"
+                      autoFocus
+                      className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-green-500 placeholder-gray-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-gray-500 text-xs mb-1">Type</label>
+                    <div className="flex gap-1">
+                      {UNIT_TYPES.map(t => (
+                        <button key={t} onClick={() => setNewType(t)}
+                          className={`px-2.5 py-2 rounded-lg text-xs font-bold transition-colors
+                            ${newType === t
+                              ? (t === 'ALS' ? 'bg-red-600 text-white' : t === 'BLS' ? 'bg-blue-600 text-white' : 'bg-green-700 text-white')
+                              : 'bg-gray-700 text-gray-400 hover:bg-gray-600'}`}>
+                          {t}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                {addError && <p className="text-red-400 text-xs mt-2">{addError}</p>}
+                <div className="flex gap-2 mt-3">
+                  <button onClick={() => { setAddingUnit(false); setNewNumber(''); setAddError(''); }}
+                    className="flex-1 py-2 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded-lg transition-colors">
+                    Cancel
+                  </button>
+                  <button onClick={handleAddUnit} disabled={addSaving}
+                    className="flex-1 py-2 bg-green-700 hover:bg-green-600 disabled:bg-green-900 text-white font-semibold text-sm rounded-lg transition-colors">
+                    {addSaving ? 'Adding…' : 'Add'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {units.length === 0 && !addingUnit && (
+              <div className="text-center py-8 text-gray-500 text-sm">
+                No units yet — click <span className="text-green-400 font-medium">+ Add Unit</span> to build your roster
+              </div>
+            )}
+
             <div className="space-y-3">
               {units.map(u => {
                 const s          = staffing[u.id] || {};
@@ -110,35 +207,36 @@ export default function ShiftSetup({ token, onShiftStarted }) {
                   <div key={u.id}
                     className={`rounded-xl border p-4 transition-all ${inService ? 'border-gray-600 bg-gray-750' : 'border-gray-700 bg-gray-800 opacity-50'}`}>
                     <div className="flex items-center gap-3 mb-3">
-                      <span className="text-xl">{TYPE_ICONS[u.unit_type] || '🚑'}</span>
+                      <span className="text-xl">{TYPE_ICONS[activeType] || '🚑'}</span>
                       <div className="flex-1">
                         <div className="text-white font-bold text-sm">{u.unit_number}</div>
-                        <div className="text-gray-500 text-xs">{u.unit_name}</div>
                       </div>
-                      {/* In-service toggle */}
                       <button onClick={() => updateStaffing(u.id, 'in_service', !inService)}
                         className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-colors
                           ${inService ? 'bg-green-800 text-green-300' : 'bg-gray-700 text-gray-500'}`}>
                         <div className={`w-2 h-2 rounded-full ${inService ? 'bg-green-400' : 'bg-gray-600'}`} />
                         {inService ? 'In Service' : 'Out of Service'}
                       </button>
+                      <button onClick={() => handleRemoveUnit(u.id)}
+                        className="text-gray-600 hover:text-red-400 text-lg leading-none transition-colors"
+                        title="Remove unit">
+                        ×
+                      </button>
                     </div>
 
                     {inService && (
                       <div className="space-y-2">
                         <div className="flex gap-3 items-start">
-                          {/* Crew name */}
                           <div className="flex-1">
-                            <label className="block text-gray-500 text-xs mb-1">Crew / Medic</label>
+                            <label className="block text-gray-500 text-xs mb-1">Medic Name</label>
                             <input
                               type="text"
                               value={s.crew || ''}
                               onChange={e => updateStaffing(u.id, 'crew', e.target.value)}
-                              placeholder="Name or names…"
+                              placeholder="Medic name…"
                               className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500"
                             />
                           </div>
-                          {/* Unit type */}
                           <div>
                             <label className="block text-gray-500 text-xs mb-1">Level</label>
                             <div className="flex gap-1">
@@ -154,7 +252,6 @@ export default function ShiftSetup({ token, onShiftStarted }) {
                             </div>
                           </div>
                         </div>
-                        {/* Based out of */}
                         <div>
                           <label className="block text-gray-500 text-xs mb-1">Based out of</label>
                           <div className="flex gap-1 flex-wrap">
