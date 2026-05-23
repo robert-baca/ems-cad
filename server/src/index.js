@@ -543,6 +543,13 @@ app.post('/api/gps/webhook', (req, res) => {
   res.json({ ok: true });
 });
 
+// ── Display board auth ────────────────────────────────────────────
+app.post('/api/display/auth', (req, res) => {
+  const correct = process.env.DISPLAY_PIN || '4567';
+  if (String(req.body.pin) === correct) return res.json({ ok: true });
+  res.status(401).json({ error: 'Invalid PIN' });
+});
+
 // ── Health ────────────────────────────────────────────────────────
 app.get('/api/health', (req, res) => res.json({ status: 'ok', ts: new Date().toISOString() }));
 

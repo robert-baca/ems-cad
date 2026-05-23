@@ -2,6 +2,7 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
 import Login from './pages/Login';
 import DispatcherDashboard from './pages/DispatcherDashboard';
+import DisplayBoard from './pages/DisplayBoard';
 
 function ProtectedRoute({ children }) {
   const { user } = useAuth();
@@ -21,6 +22,7 @@ export default function App() {
           </ProtectedRoute>
         }
       />
+      <Route path="/display" element={<DisplayBoard />} />
       <Route path="*" element={<Navigate to="/login" replace />} />
     </Routes>
   );
