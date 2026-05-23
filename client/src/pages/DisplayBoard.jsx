@@ -77,6 +77,10 @@ export default function DisplayBoard() {
       ));
     });
 
+    socket.on('call:updated', ({ call_id, changes }) => {
+      setCalls(prev => prev.map(c => c.id === call_id ? { ...c, ...changes } : c));
+    });
+
     socket.on('shift:started', ({ units: u }) => {
       setUnits(u);
       setCalls([]);
@@ -126,15 +130,26 @@ export default function DisplayBoard() {
             <div className="text-gray-400 text-xs font-semibold uppercase tracking-wider">Units</div>
           </div>
           <div className="flex-1 overflow-y-auto p-2 space-y-1">
-            {sortedUnits.map(u => (
-              <div key={u.id} className="flex items-center gap-2 px-2 py-2 rounded-lg bg-gray-750 border border-gray-700">
-                <div
-                  className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                  style={{ background: STATUS_COLORS[u.status] || '#9ca3af' }}
-                />
-                <span className="text-white text-xs font-bold truncate">{u.unit_number}</span>
-              </div>
-            ))}
+            {sortedUnits.map(u => {
+              const assignedCall = activeCalls.find(c =>
+                c.assigned_unit_id === u.id ||
+                (c.additional_unit_ids || []).includes(u.id)
+              );
+              return (
+                <div key={u.id} className="px-2 py-2 rounded-lg bg-gray-750 border border-gray-700">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                      style={{ background: STATUS_COLORS[u.status] || '#9ca3af' }} />
+                    <span className="text-white text-xs font-bold truncate">{u.unit_number}</span>
+                  </div>
+                  {assignedCall && (
+                    <div className="mt-0.5 pl-4 text-gray-400 text-xs truncate leading-tight">
+                      #{assignedCall.call_number} {assignedCall.call_type}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
             {units.length === 0 && (
               <div className="text-gray-600 text-xs text-center mt-4">No units</div>
             )}

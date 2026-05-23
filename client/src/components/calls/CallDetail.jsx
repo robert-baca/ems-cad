@@ -28,13 +28,15 @@ function LiveClock() {
 
 export default function CallDetail({
   call, unit, units = [], authorName = 'Dispatcher',
-  onClose, onTimestampUpdate, onLogTime, onAddComment, onAssignUnit, onCloseCall
+  onClose, onTimestampUpdate, onLogTime, onAddComment, onAssignUnit, onCloseCall, onAddUnit
 }) {
-  const [tab, setTab]                 = useState('detail');
+  const [tab, setTab]                   = useState('detail');
   const [assigningUnit, setAssigningUnit] = useState(false);
+  const [addingUnit,    setAddingUnit]    = useState(false);
   const [selectedUnitId, setSelectedUnitId] = useState('');
+  const [addUnitId,      setAddUnitId]      = useState('');
   const [showCloseModal, setShowCloseModal] = useState(false);
-  const [narrative, setNarrative]     = useState(call.narrative || '');
+  const [narrative, setNarrative]         = useState(call.narrative || '');
   const clock = LiveClock();
 
   const handleNarrativeBlur = useCallback(() => {
@@ -51,8 +53,14 @@ export default function CallDetail({
 
   const TYPE_ICONS = { ALS: '🚑', BLS: '🚐', Cart: '🛺' };
 
+  const additionalUnits = (call.additional_unit_ids || [])
+    .map(id => units.find(u => u.id === id))
+    .filter(Boolean);
+
   const availableUnits = units.filter(u =>
-    u.status === 'available' || u.status === 'cleared'
+    (u.status === 'available' || u.status === 'cleared') &&
+    u.id !== call.assigned_unit_id &&
+    !(call.additional_unit_ids || []).includes(u.id)
   );
 
   const handleAssign = () => {
@@ -60,6 +68,13 @@ export default function CallDetail({
     onAssignUnit?.(call.id, selectedUnitId);
     setAssigningUnit(false);
     setSelectedUnitId('');
+  };
+
+  const handleAddUnit = () => {
+    if (!addUnitId) return;
+    onAddUnit?.(call.id, addUnitId);
+    setAddingUnit(false);
+    setAddUnitId('');
   };
 
   return (
@@ -173,7 +188,7 @@ export default function CallDetail({
             </div>
 
             {/* Assigned unit info */}
-            {unit && (
+            {unit && !assigningUnit && (
               <div className="bg-gray-700 rounded-xl p-3 flex items-center justify-between">
                 <div>
                   <div className="text-white font-semibold">{unit.unit_number}</div>
@@ -189,6 +204,88 @@ export default function CallDetail({
                     className="text-gray-500 hover:text-blue-400 text-xs mt-1 block text-center transition-colors"
                   >
                     change
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Reassign unit — shown when change is clicked on an already-assigned call */}
+            {unit && assigningUnit && (
+              <div className="bg-gray-700 rounded-xl p-3 space-y-2">
+                <div className="text-gray-400 text-xs uppercase tracking-wider">Reassign Unit</div>
+                <div className="flex gap-2">
+                  <select
+                    autoFocus
+                    value={selectedUnitId}
+                    onChange={e => setSelectedUnitId(e.target.value)}
+                    className="flex-1 bg-gray-600 text-white rounded-lg px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">Select unit…</option>
+                    {units.filter(u => u.status === 'available' || u.status === 'cleared').map(u => (
+                      <option key={u.id} value={u.id}>
+                        {TYPE_ICONS[u.unit_type] || '🚑'} {u.unit_number} ({u.unit_type})
+                      </option>
+                    ))}
+                    {units.filter(u => u.status === 'available' || u.status === 'cleared').length === 0 && <option disabled>No available units</option>}
+                  </select>
+                  <button onClick={handleAssign} disabled={!selectedUnitId}
+                    className="px-3 py-1.5 bg-green-700 hover:bg-green-600 disabled:bg-gray-600 text-white text-xs font-bold rounded-lg transition-colors">
+                    Reassign
+                  </button>
+                  <button onClick={() => { setAssigningUnit(false); setSelectedUnitId(''); }}
+                    className="px-2 py-1.5 bg-gray-600 hover:bg-gray-500 text-gray-300 text-xs rounded-lg transition-colors">
+                    ✕
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Additional units */}
+            {additionalUnits.length > 0 && (
+              <div className="bg-gray-700 rounded-xl p-3 space-y-1.5">
+                <div className="text-gray-400 text-xs uppercase tracking-wider">Additional Units</div>
+                {additionalUnits.map(u => (
+                  <div key={u.id} className="flex items-center justify-between">
+                    <div>
+                      <span className="text-white text-sm font-semibold">{u.unit_number}</span>
+                      <span className="text-gray-400 text-xs ml-2">{u.unit_type}</span>
+                    </div>
+                    <div className="text-xs font-medium px-2 py-0.5 rounded-full"
+                      style={{ color: STATUS_COLORS[u.status], background: STATUS_COLORS[u.status] + '22' }}>
+                      {STATUS_LABELS[u.status]}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Add Unit button / form */}
+            {!addingUnit ? (
+              <button onClick={() => setAddingUnit(true)}
+                className="w-full py-2 bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white text-xs font-semibold rounded-lg transition-colors border border-gray-600 border-dashed">
+                + Add Unit to Call
+              </button>
+            ) : (
+              <div className="bg-gray-700 rounded-xl p-3 space-y-2">
+                <div className="text-gray-400 text-xs uppercase tracking-wider">Add Unit</div>
+                <div className="flex gap-2">
+                  <select autoFocus value={addUnitId} onChange={e => setAddUnitId(e.target.value)}
+                    className="flex-1 bg-gray-600 text-white rounded-lg px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="">Select unit…</option>
+                    {availableUnits.map(u => (
+                      <option key={u.id} value={u.id}>
+                        {TYPE_ICONS[u.unit_type] || '🚑'} {u.unit_number} ({u.unit_type})
+                      </option>
+                    ))}
+                    {availableUnits.length === 0 && <option disabled>No available units</option>}
+                  </select>
+                  <button onClick={handleAddUnit} disabled={!addUnitId}
+                    className="px-3 py-1.5 bg-blue-700 hover:bg-blue-600 disabled:bg-gray-600 text-white text-xs font-bold rounded-lg transition-colors">
+                    Add
+                  </button>
+                  <button onClick={() => { setAddingUnit(false); setAddUnitId(''); }}
+                    className="px-2 py-1.5 bg-gray-600 hover:bg-gray-500 text-gray-300 text-xs rounded-lg transition-colors">
+                    ✕
                   </button>
                 </div>
               </div>

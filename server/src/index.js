@@ -87,6 +87,8 @@ async function initDb() {
   `);
 
   await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS narrative TEXT`);
+  await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS additional_unit_ids JSONB DEFAULT '[]'`);
+  await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS response_mode TEXT`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS locations (
@@ -115,7 +117,11 @@ async function initDb() {
   units = unitsRes.rows;
 
   const callsRes = await pool.query('SELECT * FROM calls ORDER BY received_at DESC');
-  calls = callsRes.rows.map(r => ({ ...r, comments: r.comments || [] }));
+  calls = callsRes.rows.map(r => ({
+    ...r,
+    comments:            r.comments            || [],
+    additional_unit_ids: r.additional_unit_ids || []
+  }));
   nextCallNum = calls.length > 0 ? Math.max(...calls.map(c => c.call_number)) + 1 : 100;
 
   const shiftRes = await pool.query("SELECT * FROM shifts WHERE ended_at IS NULL ORDER BY started_at DESC LIMIT 1");
@@ -152,8 +158,8 @@ async function saveCall(call) {
     INSERT INTO calls (id, call_number, status, call_type, priority, location_name,
       location_lat, location_lng, assigned_unit_id, received_at, dispatched_at, acknowledged_at,
       en_route_at, on_scene_at, patient_contact_at, cleared_at, available_at, closed_at,
-      disposition, close_notes, comments, narrative)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+      disposition, close_notes, comments, narrative, additional_unit_ids, response_mode)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
     ON CONFLICT (id) DO UPDATE SET
       status=EXCLUDED.status, call_type=EXCLUDED.call_type, priority=EXCLUDED.priority,
       location_name=EXCLUDED.location_name, location_lat=EXCLUDED.location_lat,
@@ -163,13 +169,15 @@ async function saveCall(call) {
       patient_contact_at=EXCLUDED.patient_contact_at, cleared_at=EXCLUDED.cleared_at,
       available_at=EXCLUDED.available_at, closed_at=EXCLUDED.closed_at,
       disposition=EXCLUDED.disposition, close_notes=EXCLUDED.close_notes,
-      comments=EXCLUDED.comments, narrative=EXCLUDED.narrative
+      comments=EXCLUDED.comments, narrative=EXCLUDED.narrative,
+      additional_unit_ids=EXCLUDED.additional_unit_ids, response_mode=EXCLUDED.response_mode
   `, [call.id, call.call_number, call.status, call.call_type, call.priority,
       call.location_name, call.location_lat, call.location_lng, call.assigned_unit_id,
       call.received_at, call.dispatched_at, call.acknowledged_at, call.en_route_at,
       call.on_scene_at, call.patient_contact_at, call.cleared_at, call.available_at,
       call.closed_at, call.disposition, call.close_notes, JSON.stringify(call.comments || []),
-      call.narrative || null]);
+      call.narrative || null, JSON.stringify(call.additional_unit_ids || []),
+      call.response_mode || null]);
 }
 
 async function saveLocation(loc) {
@@ -335,7 +343,8 @@ app.get('/api/calls', verifyToken, (req, res) => {
 
 app.post('/api/calls', verifyToken, async (req, res) => {
   if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
-  const hasUnit = !!req.body.assigned_unit_id;
+  const hasUnit        = !!req.body.assigned_unit_id;
+  const additionalIds  = Array.isArray(req.body.additional_unit_ids) ? req.body.additional_unit_ids : [];
   const call = {
     id: `call-${Date.now()}`,
     call_number: nextCallNum++,
@@ -346,7 +355,8 @@ app.post('/api/calls', verifyToken, async (req, res) => {
     patient_contact_at: null, cleared_at: null, available_at: null,
     closed_at: null, disposition: null, close_notes: null,
     comments: [],
-    ...req.body
+    ...req.body,
+    additional_unit_ids: additionalIds  // override body value; always a proper array
   };
   calls.unshift(call);
   await saveCall(call).catch(console.error);
@@ -361,6 +371,15 @@ app.post('/api/calls', verifyToken, async (req, res) => {
       io.to('dispatchers').emit('unit:status_change', { unit_id: unit.id, status: 'dispatched' });
     }
   }
+  additionalIds.forEach(uid => {
+    const u = units.find(u => u.id === uid);
+    if (u) {
+      u.status = 'dispatched';
+      saveUnit(u).catch(console.error);
+      io.to('dispatchers').emit('unit:status_change', { unit_id: u.id, status: 'dispatched' });
+      io.to(`crew:${uid}`).emit('call:assigned_to_me', call);
+    }
+  });
 
   res.status(201).json(call);
 });
@@ -384,6 +403,28 @@ app.patch('/api/calls/:id/assign', verifyToken, async (req, res) => {
   saveCall(call).catch(console.error);
   io.to('dispatchers').emit('call:assigned', { call_id: call.id, unit_id: req.body.unit_id });
   io.to(`crew:${req.body.unit_id}`).emit('call:assigned_to_me', call);
+  res.json(call);
+});
+
+app.post('/api/calls/:id/add-unit', verifyToken, async (req, res) => {
+  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
+  const call = calls.find(c => c.id === req.params.id);
+  if (!call) return res.status(404).json({ error: 'Not found' });
+  const { unit_id } = req.body;
+  if (!unit_id) return res.status(400).json({ error: 'unit_id required' });
+  if (!call.additional_unit_ids) call.additional_unit_ids = [];
+  if (!call.additional_unit_ids.includes(unit_id) && call.assigned_unit_id !== unit_id) {
+    call.additional_unit_ids.push(unit_id);
+  }
+  const unit = units.find(u => u.id === unit_id);
+  if (unit) {
+    unit.status = 'dispatched';
+    saveUnit(unit).catch(console.error);
+    io.to('dispatchers').emit('unit:status_change', { unit_id: unit.id, status: 'dispatched' });
+    io.to(`crew:${unit_id}`).emit('call:assigned_to_me', call);
+  }
+  saveCall(call).catch(console.error);
+  io.to('dispatchers').emit('call:updated', { call_id: call.id, changes: { additional_unit_ids: call.additional_unit_ids } });
   res.json(call);
 });
 

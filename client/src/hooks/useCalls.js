@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { MOCK_ALL_CALLS } from '../data/mockData';
-import { createCall, updateCallStatus, assignCall, closeCall as apiCloseCall, updateCallTimestamps, updateCallNarrative } from '../services/api';
+import { createCall, updateCallStatus, assignCall, closeCall as apiCloseCall, updateCallTimestamps, updateCallNarrative, addUnitToCall as apiAddUnitToCall } from '../services/api';
 
 const STATUS_TS_MAP = {
   dispatched:      'dispatched_at',
@@ -87,6 +87,15 @@ export function useCalls() {
     try { await apiCloseCall(callId, disposition, close_notes); } catch {}
   }, []);
 
+  const addUnitToCall = useCallback(async (callId, unitId) => {
+    setCalls(prev => prev.map(c =>
+      c.id === callId
+        ? { ...c, additional_unit_ids: [...(c.additional_unit_ids || []).filter(id => id !== unitId), unitId] }
+        : c
+    ));
+    try { await apiAddUnitToCall(callId, unitId); } catch {}
+  }, []);
+
   const addComment = useCallback((callId, text, author = 'Dispatcher') => {
     const comment = { id: `cmt-${Date.now()}`, text, author, created_at: new Date().toISOString() };
     setCalls(prev => prev.map(c =>
@@ -97,6 +106,6 @@ export function useCalls() {
   return {
     calls, setCalls,
     handleCallCreated, handleCallUpdated, handleCallStatusChange, handleCallAssigned,
-    dispatchCall, assignUnit, advanceStatus, closeCall, updateTimestamp, logTimeNow, addComment
+    dispatchCall, assignUnit, advanceStatus, closeCall, updateTimestamp, logTimeNow, addComment, addUnitToCall
   };
 }

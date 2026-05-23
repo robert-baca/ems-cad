@@ -48,8 +48,8 @@ export function useUnits() {
 
   const addUnit = useCallback(async (data) => {
     try {
-      const res = await apiCreateUnit(data);
-      setUnits(prev => [...prev, res.data]);
+      await apiCreateUnit(data);
+      // socket 'unit:updated' event will add it via handleUnitUpdated
     } catch {}
   }, []);
 

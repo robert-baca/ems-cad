@@ -42,7 +42,7 @@ export default function DispatcherDashboard() {
   const {
     calls, setCalls,
     handleCallCreated, handleCallUpdated, handleCallStatusChange, handleCallAssigned,
-    dispatchCall, assignUnit, closeCall, updateTimestamp, logTimeNow, addComment
+    dispatchCall, assignUnit, closeCall, updateTimestamp, logTimeNow, addComment, addUnitToCall
   } = useCalls();
   const { locations, addLocation, removeLocation, clearShiftLocations, setPermLocations } = useLocations();
 
@@ -321,6 +321,7 @@ export default function DispatcherDashboard() {
               onLogTime={logTimeNow}
               onAddComment={addComment}
               onAssignUnit={assignUnit}
+              onAddUnit={addUnitToCall}
               onCloseCall={closeCall}
             />
           </div>
