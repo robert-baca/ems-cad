@@ -602,6 +602,7 @@ app.post('/api/shift/end', verifyToken, async (req, res) => {
     saveUnit(u).catch(console.error);
   });
 
+  currentShift = null;
   const sanitizedUnits = units.map(u => ({ ...u, password_hash: undefined }));
   io.to('dispatchers').emit('shift:ended', { ...summary, units: sanitizedUnits });
   res.json(summary);
