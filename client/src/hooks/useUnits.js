@@ -11,9 +11,11 @@ export function useUnits() {
       .catch(() => {});
   }, []);
 
-  const handleGpsUpdate = useCallback(({ unit_id, lat, lng }) => {
+  const handleGpsUpdate = useCallback(({ unit_id, lat, lng, timestamp }) => {
     setUnits(prev =>
-      prev.map(u => u.id === unit_id ? { ...u, last_lat: lat, last_lng: lng } : u)
+      prev.map(u => u.id === unit_id
+        ? { ...u, last_lat: lat, last_lng: lng, last_gps_at: timestamp || new Date().toISOString() }
+        : u)
     );
   }, []);
 

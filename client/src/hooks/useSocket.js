@@ -27,8 +27,8 @@ export function useSocket(handlers = {}) {
       }
     });
 
-    Object.entries(handlersRef.current).forEach(([event, fn]) => {
-      socket.on(event, fn);
+    Object.keys(handlersRef.current).forEach(event => {
+      socket.on(event, (...args) => handlersRef.current[event]?.(...args));
     });
 
     return () => { socket.disconnect(); };

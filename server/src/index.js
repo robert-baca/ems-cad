@@ -685,6 +685,53 @@ app.post('/api/gps/webhook', (req, res) => {
   res.json({ ok: true });
 });
 
+// ── Trak-4 active polling (every 15 s) ───────────────────────────
+const TRAK4_POLL_MS = 15000;
+
+async function pollTrak4() {
+  const apiKey = process.env.TRAK4_API_KEY;
+  if (!apiKey) return;
+
+  const trackedUnits = units.filter(u => u.trak4_device_id);
+  if (trackedUnits.length === 0) return;
+
+  try {
+    const r = await fetch('https://api-v3.trak-4.com/device_list', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ APIKey: apiKey })
+    });
+    if (!r.ok) return;
+    const data = await r.json();
+    const devices = data.Devices || [];
+
+    devices.forEach(d => {
+      const deviceId = String(d.DeviceID);
+      const unit = trackedUnits.find(u => String(u.trak4_device_id) === deviceId);
+      if (!unit) return;
+
+      const lat = d.LastReport_Latitude;
+      const lng = d.LastReport_Longitude;
+      const timestamp = d.LastReport_ReceivedTime || new Date().toISOString();
+      if (!lat || !lng) return;
+
+      // Only emit if position actually changed
+      if (unit.last_lat === lat && unit.last_lng === lng) return;
+
+      unit.last_lat    = lat;
+      unit.last_lng    = lng;
+      unit.last_gps_at = timestamp;
+      saveUnit(unit).catch(() => {});
+      io.to('dispatchers').emit('unit:gps_update', {
+        unit_id: unit.id, unit_number: unit.unit_number, lat, lng, timestamp
+      });
+      console.log(`[trak4-poll] updated ${unit.unit_number} → ${lat}, ${lng}`);
+    });
+  } catch (e) {
+    console.error('[trak4-poll] error:', e.message);
+  }
+}
+
 // ── Locations ─────────────────────────────────────────────────────
 app.get('/api/locations', (req, res) => {
   res.json(locations);
@@ -852,6 +899,10 @@ initDb()
       console.log(`   Default login — dispatchers: "dispatch" / "ems2024"`);
       console.log(`   Default login — crews: "EMS-1" through "EMS-5" / "ems2024"\n`);
     });
+    if (process.env.TRAK4_API_KEY) {
+      setInterval(pollTrak4, TRAK4_POLL_MS);
+      console.log(`[trak4-poll] active polling every ${TRAK4_POLL_MS / 1000}s`);
+    }
   })
   .catch(err => {
     console.error('[db] Failed to connect to database:', err.message);
