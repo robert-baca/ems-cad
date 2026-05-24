@@ -626,6 +626,29 @@ app.patch('/api/shift/units/:unit_id', verifyToken, async (req, res) => {
   res.json(sanitized);
 });
 
+// ── Trak-4 device list ────────────────────────────────────────────
+app.get('/api/trak4/devices', verifyToken, async (req, res) => {
+  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
+  const apiKey = process.env.TRAK4_API_KEY;
+  if (!apiKey) return res.status(501).json({ error: 'TRAK4_API_KEY not configured' });
+  try {
+    const r = await fetch('https://api-v3.trak-4.com/device_list', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ APIKey: apiKey })
+    });
+    const data = await r.json();
+    if (!r.ok) return res.status(502).json({ error: data.Error_Message || 'Trak-4 error' });
+    const devices = (data.Devices || []).map(d => ({
+      device_id: String(d.DeviceID),
+      label:     d.Label || d.KeyCode || String(d.DeviceID)
+    }));
+    res.json({ devices });
+  } catch (e) {
+    res.status(502).json({ error: 'Failed to reach Trak-4 API' });
+  }
+});
+
 // ── GPS webhook ───────────────────────────────────────────────────
 app.post('/api/gps/webhook', (req, res) => {
   const body = req.body;
