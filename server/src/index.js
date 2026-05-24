@@ -92,6 +92,8 @@ async function initDb() {
   await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS response_mode TEXT`);
   await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS parent_call_id TEXT`);
   await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS mutual_aid_agencies JSONB DEFAULT '[]'`);
+  await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS arrived_first_aid_at TEXT`);
+  await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS transporting_at TEXT`);
   await pool.query(`ALTER TABLE locations ADD COLUMN IF NOT EXISTS location_type TEXT DEFAULT 'permanent'`);
   await pool.query(`ALTER TABLE units ADD COLUMN IF NOT EXISTS trak4_device_id TEXT`);
 
@@ -163,18 +165,20 @@ async function saveCall(call) {
   await pool.query(`
     INSERT INTO calls (id, call_number, status, call_type, priority, location_name,
       location_lat, location_lng, assigned_unit_id, received_at, dispatched_at, acknowledged_at,
-      en_route_at, on_scene_at, patient_contact_at, cleared_at, available_at, closed_at,
+      en_route_at, on_scene_at, patient_contact_at, arrived_first_aid_at, transporting_at,
+      cleared_at, available_at, closed_at,
       disposition, close_notes, comments, narrative, additional_unit_ids, response_mode,
       parent_call_id, mutual_aid_agencies)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)
     ON CONFLICT (id) DO UPDATE SET
       status=EXCLUDED.status, call_type=EXCLUDED.call_type, priority=EXCLUDED.priority,
       location_name=EXCLUDED.location_name, location_lat=EXCLUDED.location_lat,
       location_lng=EXCLUDED.location_lng, assigned_unit_id=EXCLUDED.assigned_unit_id,
       dispatched_at=EXCLUDED.dispatched_at, acknowledged_at=EXCLUDED.acknowledged_at,
       en_route_at=EXCLUDED.en_route_at, on_scene_at=EXCLUDED.on_scene_at,
-      patient_contact_at=EXCLUDED.patient_contact_at, cleared_at=EXCLUDED.cleared_at,
-      available_at=EXCLUDED.available_at, closed_at=EXCLUDED.closed_at,
+      patient_contact_at=EXCLUDED.patient_contact_at,
+      arrived_first_aid_at=EXCLUDED.arrived_first_aid_at, transporting_at=EXCLUDED.transporting_at,
+      cleared_at=EXCLUDED.cleared_at, available_at=EXCLUDED.available_at, closed_at=EXCLUDED.closed_at,
       disposition=EXCLUDED.disposition, close_notes=EXCLUDED.close_notes,
       comments=EXCLUDED.comments, narrative=EXCLUDED.narrative,
       additional_unit_ids=EXCLUDED.additional_unit_ids, response_mode=EXCLUDED.response_mode,
@@ -182,7 +186,8 @@ async function saveCall(call) {
   `, [call.id, call.call_number, call.status, call.call_type, call.priority,
       call.location_name, call.location_lat, call.location_lng, call.assigned_unit_id,
       call.received_at, call.dispatched_at, call.acknowledged_at, call.en_route_at,
-      call.on_scene_at, call.patient_contact_at, call.cleared_at, call.available_at,
+      call.on_scene_at, call.patient_contact_at, call.arrived_first_aid_at || null,
+      call.transporting_at || null, call.cleared_at, call.available_at,
       call.closed_at, call.disposition, call.close_notes, JSON.stringify(call.comments || []),
       call.narrative || null, JSON.stringify(call.additional_unit_ids || []),
       call.response_mode || null, call.parent_call_id || null,
@@ -797,7 +802,8 @@ app.patch('/api/calls/:id/timestamps', verifyToken, async (req, res) => {
   const call = calls.find(c => c.id === req.params.id);
   if (!call) return res.status(404).json({ error: 'Not found' });
   const ALLOWED = ['received_at','dispatched_at','acknowledged_at','en_route_at',
-                   'on_scene_at','patient_contact_at','cleared_at','available_at','closed_at'];
+                   'on_scene_at','patient_contact_at','arrived_first_aid_at','transporting_at',
+                   'cleared_at','available_at','closed_at'];
   Object.entries(req.body).forEach(([k, v]) => {
     if (ALLOWED.includes(k)) call[k] = v;
   });

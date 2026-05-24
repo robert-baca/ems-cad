@@ -9,12 +9,15 @@ const PRIORITY_COLORS = { 1: 'text-red-400', 2: 'text-orange-400', 3: 'text-blue
 
 const TS_SEQUENCE = [
   'dispatched_at', 'acknowledged_at', 'en_route_at',
-  'on_scene_at', 'patient_contact_at', 'cleared_at', 'available_at'
+  'on_scene_at', 'patient_contact_at', 'arrived_first_aid_at', 'transporting_at',
+  'cleared_at', 'available_at'
 ];
 const TS_LABELS = {
-  dispatched_at: 'Dispatched', acknowledged_at: 'Acknowledged', en_route_at: 'En Route',
-  on_scene_at: 'On Scene', patient_contact_at: 'Patient Contact',
-  cleared_at: 'Cleared', available_at: 'Available'
+  dispatched_at:       'Dispatched',       acknowledged_at:      'Acknowledged',
+  en_route_at:         'En Route',         on_scene_at:          'On Scene',
+  patient_contact_at:  'Patient Contact',  arrived_first_aid_at: 'Arrived at First Aid',
+  transporting_at:     'Transporting',     cleared_at:           'Cleared',
+  available_at:        'Available'
 };
 
 function LiveClock() {
