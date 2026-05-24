@@ -9,7 +9,7 @@ const PRIORITY_COLORS = { 1: 'text-red-400', 2: 'text-orange-400', 3: 'text-blue
 
 const TS_SEQUENCE = [
   'dispatched_at', 'acknowledged_at', 'en_route_at',
-  'on_scene_at', 'patient_contact_at', 'arrived_first_aid_at', 'transporting_at',
+  'on_scene_at', 'patient_contact_at', 'transporting_at', 'arrived_first_aid_at',
   'cleared_at', 'available_at'
 ];
 const TS_LABELS = {

@@ -7,8 +7,8 @@ const STEPS = [
   { label: 'En Route',           tsField: 'en_route_at' },
   { label: 'On Scene',           tsField: 'on_scene_at' },
   { label: 'Patient Contact',    tsField: 'patient_contact_at' },
-  { label: 'Arrived at First Aid', tsField: 'arrived_first_aid_at' },
   { label: 'Transporting',       tsField: 'transporting_at' },
+  { label: 'Arrived at First Aid', tsField: 'arrived_first_aid_at' },
   { label: 'Cleared',            tsField: 'cleared_at' },
   { label: 'Available',          tsField: 'available_at' }
 ];
