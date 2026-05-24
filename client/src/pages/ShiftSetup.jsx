@@ -5,12 +5,13 @@ const UNIT_TYPES = ['ALS', 'BLS', 'Cart'];
 const STATIONS   = ['Station 7', 'Station 14', 'Roaming'];
 
 export default function ShiftSetup({ token, onShiftStarted }) {
-  const [units,      setUnits]     = useState([]);
-  const [startTime,  setStartTime] = useState('07:00');
-  const [endTime,    setEndTime]   = useState('15:00');
-  const [staffing,   setStaffing]  = useState({});
-  const [saving,      setSaving]     = useState(false);
-  const [error,       setError]      = useState('');
+  const [units,        setUnits]       = useState([]);
+  const [startTime,    setStartTime]   = useState('07:00');
+  const [endTime,      setEndTime]     = useState('15:00');
+  const [staffing,     setStaffing]    = useState({});
+  const [saving,       setSaving]      = useState(false);
+  const [error,        setError]       = useState('');
+  const [trak4Devices, setTrak4Devices] = useState([]);
 
   // Add unit inline form
   const [addingUnit,  setAddingUnit]  = useState(false);
@@ -27,12 +28,26 @@ export default function ShiftSetup({ token, onShiftStarted }) {
         setUnits(data);
         const initial = {};
         data.forEach(u => {
-          initial[u.id] = { crew: u.crew || '', unit_type: u.unit_type, in_service: u.status !== 'out_of_service', station: u.station || '' };
+          initial[u.id] = { crew: u.crew || '', unit_type: u.unit_type, in_service: u.status !== 'out_of_service', station: u.station || '', trak4_device_id: u.trak4_device_id || '' };
         });
         setStaffing(initial);
       })
       .catch(() => {});
-  }, []);
+
+    fetch('/api/trak4/devices', { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data?.devices) setTrak4Devices(data.devices); })
+      .catch(() => {});
+  }, [token]);
+
+  const handleDeviceChange = async (unit_id, device_id) => {
+    updateStaffing(unit_id, 'trak4_device_id', device_id);
+    await fetch(`/api/units/${unit_id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ trak4_device_id: device_id || null })
+    }).catch(() => {});
+  };
 
   const updateStaffing = (unit_id, field, value) => {
     setStaffing(prev => ({ ...prev, [unit_id]: { ...prev[unit_id], [field]: value } }));
@@ -267,6 +282,31 @@ export default function ShiftSetup({ token, onShiftStarted }) {
                               </button>
                             ))}
                           </div>
+                        </div>
+                        <div>
+                          <label className="block text-gray-500 text-xs mb-1">GPS Tracker</label>
+                          {trak4Devices.length > 0 ? (
+                            <select
+                              value={s.trak4_device_id || ''}
+                              onChange={e => handleDeviceChange(u.id, e.target.value)}
+                              className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                            >
+                              <option value="">— None —</option>
+                              {trak4Devices.map(d => (
+                                <option key={d.device_id} value={d.device_id}>
+                                  {d.label} ({d.device_id})
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            <input
+                              type="text"
+                              value={s.trak4_device_id || ''}
+                              onChange={e => handleDeviceChange(u.id, e.target.value)}
+                              placeholder="Device ID (e.g. 185401)"
+                              className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500 font-mono"
+                            />
+                          )}
                         </div>
                       </div>
                     )}
