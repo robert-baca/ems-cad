@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
-import { updateUnitStatus, createUnit as apiCreateUnit, editUnit as apiEditUnit, deleteUnit as apiDeleteUnit } from '../services/api';
+import { updateUnitStatus, createUnit as apiCreateUnit, editUnit as apiEditUnit, deleteUnit as apiDeleteUnit, clearUnitGps as apiClearGps } from '../services/api';
 
 export function useUnits() {
   const [units, setUnits] = useState([]);
@@ -71,10 +71,17 @@ export function useUnits() {
     );
   }, []);
 
+  const clearGps = useCallback(async (unitId) => {
+    setUnits(prev =>
+      prev.map(u => u.id === unitId ? { ...u, last_lat: null, last_lng: null, last_gps_at: null } : u)
+    );
+    try { await apiClearGps(unitId); } catch {}
+  }, []);
+
   return {
     units, setUnits,
     handleGpsUpdate, handleStatusChange, handleProfileUpdate,
     handleUnitUpdated, handleUnitRemoved,
-    changeStatus, addUnit, editUnit, removeUnit, moveUnit
+    changeStatus, addUnit, editUnit, removeUnit, moveUnit, clearGps
   };
 }

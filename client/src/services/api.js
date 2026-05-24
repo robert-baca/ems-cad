@@ -22,6 +22,7 @@ export const updateUnitStatus = (unitId, status) =>
   api.patch(`/units/${unitId}/status`, { status });
 export const editUnit = (unitId, data) => api.put(`/units/${unitId}`, data);
 export const deleteUnit = (unitId) => api.delete(`/units/${unitId}`);
+export const clearUnitGps = (unitId) => api.delete(`/units/${unitId}/gps`);
 
 // ── Calls ──────────────────────────────────────────────────────────
 export const getCalls = () => api.get('/calls');

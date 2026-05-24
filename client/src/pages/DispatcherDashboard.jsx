@@ -37,7 +37,7 @@ export default function DispatcherDashboard() {
     units, setUnits,
     handleGpsUpdate, handleStatusChange, handleProfileUpdate,
     handleUnitUpdated, handleUnitRemoved,
-    addUnit, editUnit, removeUnit, changeStatus
+    addUnit, editUnit, removeUnit, changeStatus, clearGps
   } = useUnits();
   const {
     calls, setCalls,
@@ -259,6 +259,7 @@ export default function DispatcherDashboard() {
           onEditUnit={editUnit}
           onRemoveUnit={removeUnit}
           onStatusChange={changeStatus}
+          onClearGps={clearGps}
           onFlyTo={(unit) => setFlyToTarget({ lat: unit.last_lat, lng: unit.last_lng, _t: Date.now() })}
         />
 

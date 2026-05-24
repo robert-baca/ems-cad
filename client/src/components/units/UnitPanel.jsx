@@ -3,7 +3,20 @@ import { STATUS_COLORS, STATUS_LABELS } from '../../data/mockData';
 import EditUnitModal from './EditUnitModal';
 import AddUnitModal from './AddUnitModal';
 
-const TYPE_ICONS = { ALS: '🚑', BLS: '🚐', Cart: '🛺' };
+const TYPE_ICONS = { ALS: '🚑', BLS: '🚐', Cart: '🛺', Bike: '🚴' };
+
+const TYPE_ORDER = { ALS: 0, BLS: 1, Cart: 2, Bike: 3 };
+const STATUS_PRIORITY = { dispatched: 0, en_route: 0, on_scene: 0, patient_contact: 0, available: 1, cleared: 2, out_of_service: 3 };
+
+function sortUnits(units) {
+  return [...units].sort((a, b) => {
+    const typeDiff = (TYPE_ORDER[a.unit_type] ?? 9) - (TYPE_ORDER[b.unit_type] ?? 9);
+    if (typeDiff !== 0) return typeDiff;
+    const statusDiff = (STATUS_PRIORITY[a.status] ?? 2) - (STATUS_PRIORITY[b.status] ?? 2);
+    if (statusDiff !== 0) return statusDiff;
+    return a.unit_number.localeCompare(b.unit_number, undefined, { numeric: true });
+  });
+}
 
 const CERT_COLORS = {
   'Paramedic': '#f87171',
@@ -14,7 +27,7 @@ const CERT_COLORS = {
 
 const ON_CALL_STATUSES = new Set(['dispatched', 'en_route', 'on_scene', 'patient_contact']);
 
-function UnitCard({ unit, activeCall, isSelected, onClick, onHistory, onEdit, onToggleOos, onFlyTo }) {
+function UnitCard({ unit, activeCall, isSelected, onClick, onHistory, onEdit, onToggleOos, onFlyTo, onClearGps }) {
   const color = STATUS_COLORS[unit.status] || '#9ca3af';
   const profile = unit.profile;
 
@@ -92,15 +105,26 @@ function UnitCard({ unit, activeCall, isSelected, onClick, onHistory, onEdit, on
             </button>
           )}
           {unit.last_lat && unit.last_lng ? (
-            <button
-              onClick={(e) => { e.stopPropagation(); onFlyTo(unit); }}
-              className="flex-1 py-1.5 rounded-lg text-xs font-bold bg-gray-700 hover:bg-blue-900 text-gray-400 hover:text-blue-300 transition-colors"
-            >
-              📍 Go to unit
-            </button>
+            <>
+              <button
+                onClick={(e) => { e.stopPropagation(); onFlyTo(unit); }}
+                className="flex-1 py-1.5 rounded-lg text-xs font-bold bg-gray-700 hover:bg-blue-900 text-gray-400 hover:text-blue-300 transition-colors"
+              >
+                📍 Go to unit
+              </button>
+              {!activeCall && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onClearGps(unit.id); }}
+                  className="py-1.5 px-2 rounded-lg text-xs font-bold bg-gray-700 hover:bg-red-900 text-gray-500 hover:text-red-400 transition-colors"
+                  title="Remove GPS pin from map"
+                >
+                  🗑
+                </button>
+              )}
+            </>
           ) : (
             <div className="flex-1 py-1.5 rounded-lg text-xs text-center text-gray-600 bg-gray-800 border border-gray-700">
-              📍 No GPS yet
+              📍 No GPS
             </div>
           )}
         </div>
@@ -118,7 +142,7 @@ function UnitCard({ unit, activeCall, isSelected, onClick, onHistory, onEdit, on
   );
 }
 
-export default function UnitPanel({ units, calls, selectedUnitId, onSelectUnit, onUnitHistory, onEditUnit, onRemoveUnit, onAddUnit, onStatusChange, onFlyTo }) {
+export default function UnitPanel({ units, calls, selectedUnitId, onSelectUnit, onUnitHistory, onEditUnit, onRemoveUnit, onAddUnit, onStatusChange, onClearGps, onFlyTo }) {
   const [editingUnit,  setEditingUnit]  = useState(null);
   const [showAddUnit,  setShowAddUnit]  = useState(false);
 
@@ -169,7 +193,7 @@ export default function UnitPanel({ units, calls, selectedUnitId, onSelectUnit, 
         </div>
 
         <div className="flex-1 overflow-y-auto p-2">
-          {units.map(unit => {
+          {sortUnits(units).map(unit => {
             const activeCall = calls?.find(c =>
               (c.assigned_unit_id === unit.id || (c.additional_unit_ids || []).includes(unit.id)) &&
               ON_CALL_STATUSES.has(c.status)
@@ -185,10 +209,28 @@ export default function UnitPanel({ units, calls, selectedUnitId, onSelectUnit, 
                 onEdit={setEditingUnit}
                 onToggleOos={(u) => onStatusChange?.(u.id, u.status === 'out_of_service' ? 'available' : 'out_of_service')}
                 onFlyTo={(u) => onFlyTo?.(u)}
+                onClearGps={(id) => onClearGps?.(id)}
               />
             );
           })}
         </div>
+
+        {/* Bulk clear unassigned GPS pins */}
+        {units.some(u => u.last_lat && u.last_lng && !ON_CALL_STATUSES.has(u.status)) && (
+          <div className="px-2 pb-2 flex-shrink-0 border-t border-gray-700 pt-2">
+            <button
+              onClick={() => {
+                units
+                  .filter(u => u.last_lat && u.last_lng && !ON_CALL_STATUSES.has(u.status))
+                  .forEach(u => onClearGps?.(u.id));
+              }}
+              className="w-full py-1.5 rounded-lg text-xs font-bold bg-gray-700 hover:bg-red-900 text-gray-500 hover:text-red-400 transition-colors"
+              title="Remove all GPS pins for units not on an active call"
+            >
+              🗑 Clear unassigned GPS
+            </button>
+          </div>
+        )}
       </div>
 
       {editingUnit && (
