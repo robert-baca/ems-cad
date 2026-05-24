@@ -1,26 +1,16 @@
-import { useState, useEffect } from 'react';
-import { useAuth } from '../../context/AuthContext';
+import { useState } from 'react';
 
 const UNIT_TYPES = ['ALS', 'BLS', 'Cart'];
 
 export default function EditUnitModal({ unit, onSave, onDelete, onClose }) {
-  const { user } = useAuth();
-  const [unitNumber,   setUnitNumber]  = useState(unit.unit_number);
-  const [unitName,     setUnitName]    = useState(unit.unit_name);
-  const [unitType,     setUnitType]    = useState(unit.unit_type);
-  const [deviceId,     setDeviceId]    = useState(unit.trak4_device_id || '');
-  const [password,     setPassword]    = useState('');
+  const [unitNumber,  setUnitNumber] = useState(unit.unit_number);
+  const [unitName,    setUnitName]   = useState(unit.unit_name);
+  const [unitType,    setUnitType]   = useState(unit.unit_type);
+  const [deviceId,    setDeviceId]   = useState(unit.tracki_device_id || '');
+  const [password,    setPassword]   = useState('');
   const [saving,      setSaving]     = useState(false);
   const [confirming,  setConfirming] = useState(false);
   const [error,       setError]      = useState('');
-  const [trak4Devices, setTrak4Devices] = useState([]);
-
-  useEffect(() => {
-    fetch('/api/trak4/devices', { headers: { Authorization: `Bearer ${user?.token}` } })
-      .then(r => r.ok ? r.json() : null)
-      .then(data => { if (data?.devices) setTrak4Devices(data.devices); })
-      .catch(() => {});
-  }, [user?.token]);
 
   const handleSave = async () => {
     if (!unitNumber.trim()) { setError('Unit number is required.'); return; }
@@ -32,7 +22,7 @@ export default function EditUnitModal({ unit, onSave, onDelete, onClose }) {
         unit_number:      unitNumber.trim(),
         unit_name:        unitName.trim(),
         unit_type:        unitType,
-        trak4_device_id:  deviceId.trim() || null
+        tracki_device_id:  deviceId.trim() || null
       };
       if (password) data.password = password;
       await onSave(unit.id, data);
@@ -107,30 +97,15 @@ export default function EditUnitModal({ unit, onSave, onDelete, onClose }) {
 
               <div>
                 <label className="block text-gray-400 text-xs uppercase tracking-wider mb-1.5">
-                  Trak-4 Device <span className="text-gray-600 normal-case">(GPS tracker)</span>
+                  Tracki Device ID <span className="text-gray-600 normal-case">(GPS tracker — IMEI or device ID)</span>
                 </label>
-                {trak4Devices.length > 0 ? (
-                  <select
-                    value={deviceId}
-                    onChange={e => setDeviceId(e.target.value)}
-                    className="w-full bg-gray-700 text-white rounded-lg px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="">— None —</option>
-                    {trak4Devices.map(d => (
-                      <option key={d.device_id} value={d.device_id}>
-                        {d.label} ({d.device_id})
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <input
-                    type="text"
-                    value={deviceId}
-                    onChange={e => setDeviceId(e.target.value)}
-                    placeholder="e.g. 185401"
-                    className="w-full bg-gray-700 text-white rounded-lg px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500 font-mono"
-                  />
-                )}
+                <input
+                  type="text"
+                  value={deviceId}
+                  onChange={e => setDeviceId(e.target.value)}
+                  placeholder="e.g. 352094081234567"
+                  className="w-full bg-gray-700 text-white rounded-lg px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500 font-mono"
+                />
                 {deviceId && (
                   <p className="text-green-400 text-xs mt-1">✓ GPS tracking enabled for this unit</p>
                 )}

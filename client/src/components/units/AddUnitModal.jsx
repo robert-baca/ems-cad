@@ -20,7 +20,7 @@ export default function AddUnitModal({ onAdd, onClose }) {
         unit_number:     unitNumber.trim(),
         unit_name:       unitName.trim(),
         unit_type:       unitType,
-        trak4_device_id: deviceId.trim() || null
+        tracki_device_id: deviceId.trim() || null
       });
       onClose();
     } catch {
@@ -81,13 +81,13 @@ export default function AddUnitModal({ onAdd, onClose }) {
 
           <div>
             <label className="block text-gray-400 text-xs uppercase tracking-wider mb-1.5">
-              Trak-4 Device ID <span className="text-gray-600 normal-case">(optional)</span>
+              Tracki Device ID <span className="text-gray-600 normal-case">(optional — IMEI or device ID)</span>
             </label>
             <input
               type="text"
               value={deviceId}
               onChange={e => setDeviceId(e.target.value)}
-              placeholder="e.g. T4-123456"
+              placeholder="e.g. 352094081234567"
               className="w-full bg-gray-700 text-white rounded-lg px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500 font-mono"
             />
           </div>

@@ -51,7 +51,7 @@ async function initDb() {
       status TEXT DEFAULT 'available',
       crew TEXT,
       station TEXT,
-      trak4_device_id TEXT,
+      tracki_device_id TEXT,
       last_lat DOUBLE PRECISION,
       last_lng DOUBLE PRECISION,
       last_gps_at TEXT,
@@ -95,7 +95,15 @@ async function initDb() {
   await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS arrived_first_aid_at TEXT`);
   await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS transporting_at TEXT`);
   await pool.query(`ALTER TABLE locations ADD COLUMN IF NOT EXISTS location_type TEXT DEFAULT 'permanent'`);
-  await pool.query(`ALTER TABLE units ADD COLUMN IF NOT EXISTS trak4_device_id TEXT`);
+  await pool.query(`ALTER TABLE units ADD COLUMN IF NOT EXISTS tracki_device_id TEXT`);
+  // Migrate data from old tracki_device_id column if it still exists
+  await pool.query(`
+    DO $$ BEGIN
+      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='units' AND column_name='tracki_device_id') THEN
+        UPDATE units SET tracki_device_id = tracki_device_id WHERE tracki_device_id IS NULL AND tracki_device_id IS NOT NULL;
+      END IF;
+    END $$
+  `);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS locations (
@@ -145,15 +153,15 @@ async function initDb() {
 async function saveUnit(unit) {
   await pool.query(`
     INSERT INTO units (id, unit_number, unit_name, unit_type, status, crew, station,
-      trak4_device_id, last_lat, last_lng, last_gps_at, password_hash, profile)
+      tracki_device_id, last_lat, last_lng, last_gps_at, password_hash, profile)
     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
     ON CONFLICT (id) DO UPDATE SET
       unit_number=EXCLUDED.unit_number, unit_name=EXCLUDED.unit_name, unit_type=EXCLUDED.unit_type,
       status=EXCLUDED.status, crew=EXCLUDED.crew, station=EXCLUDED.station,
-      trak4_device_id=EXCLUDED.trak4_device_id, last_lat=EXCLUDED.last_lat, last_lng=EXCLUDED.last_lng,
+      tracki_device_id=EXCLUDED.tracki_device_id, last_lat=EXCLUDED.last_lat, last_lng=EXCLUDED.last_lng,
       last_gps_at=EXCLUDED.last_gps_at, password_hash=EXCLUDED.password_hash, profile=EXCLUDED.profile
   `, [unit.id, unit.unit_number, unit.unit_name, unit.unit_type, unit.status,
-      unit.crew, unit.station, unit.trak4_device_id, unit.last_lat, unit.last_lng,
+      unit.crew, unit.station, unit.tracki_device_id, unit.last_lat, unit.last_lng,
       unit.last_gps_at, unit.password_hash, unit.profile ? JSON.stringify(unit.profile) : null]);
 }
 
@@ -294,7 +302,7 @@ app.put('/api/units/:id/profile', verifyToken, async (req, res) => {
 
 app.post('/api/units', verifyToken, async (req, res) => {
   if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
-  const { unit_number, unit_name, unit_type = 'ALS', trak4_device_id } = req.body;
+  const { unit_number, unit_name, unit_type = 'ALS', tracki_device_id } = req.body;
   if (!unit_number?.trim() || !unit_name?.trim())
     return res.status(400).json({ error: 'unit_number and unit_name are required' });
   const newUnit = {
@@ -305,7 +313,7 @@ app.post('/api/units', verifyToken, async (req, res) => {
     status:          'available',
     last_lat:        null,
     last_lng:        null,
-    trak4_device_id: trak4_device_id || null,
+    tracki_device_id: tracki_device_id || null,
     password_hash:   bcrypt.hashSync('ems2024', 8),
     profile:         null,
     crew:            null,
@@ -323,11 +331,11 @@ app.put('/api/units/:id', verifyToken, async (req, res) => {
   const unit = units.find(u => u.id === req.params.id);
   if (!unit) return res.status(404).json({ error: 'Not found' });
 
-  const { unit_number, unit_name, unit_type, password, trak4_device_id } = req.body;
+  const { unit_number, unit_name, unit_type, password, tracki_device_id } = req.body;
   if (unit_number !== undefined)     unit.unit_number      = unit_number;
   if (unit_name   !== undefined)     unit.unit_name        = unit_name;
   if (unit_type   !== undefined)     unit.unit_type        = unit_type;
-  if ('trak4_device_id' in req.body) unit.trak4_device_id  = trak4_device_id;
+  if ('tracki_device_id' in req.body) unit.tracki_device_id  = tracki_device_id;
   if (password)                      unit.password_hash    = bcrypt.hashSync(password, 8);
 
   await saveUnit(unit).catch(console.error);
@@ -648,42 +656,21 @@ app.patch('/api/shift/units/:unit_id', verifyToken, async (req, res) => {
   res.json(sanitized);
 });
 
-// ── Trak-4 device list ────────────────────────────────────────────
-app.get('/api/trak4/devices', verifyToken, async (req, res) => {
-  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
-  const apiKey = process.env.TRAK4_API_KEY;
-  if (!apiKey) return res.status(501).json({ error: 'TRAK4_API_KEY not configured' });
-  try {
-    const r = await fetch('https://api-v3.trak-4.com/device_list', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ APIKey: apiKey })
-    });
-    const data = await r.json();
-    if (!r.ok) return res.status(502).json({ error: data.Error_Message || 'Trak-4 error' });
-    const devices = (data.Devices || []).map(d => ({
-      device_id: String(d.DeviceID),
-      label:     d.Label || d.KeyCode || String(d.DeviceID)
-    }));
-    res.json({ devices });
-  } catch (e) {
-    res.status(502).json({ error: 'Failed to reach Trak-4 API' });
-  }
-});
-
-// ── GPS webhook ───────────────────────────────────────────────────
+// ── GPS webhook (Tracki / any tracker) ───────────────────────────
+// Configure your Tracki device to POST to: https://<your-domain>/api/gps/webhook
+// The webhook matches on tracki_device_id (set per unit in Edit Unit).
+// Tracki typically sends: { imei, lat, lng, timestamp } — adjust field
+// names below if their format differs once you have their webhook docs.
 app.post('/api/gps/webhook', (req, res) => {
   const body = req.body;
   console.log('[gps] incoming ping:', JSON.stringify(body));
 
-  // Trak-4 wraps GPS data inside GPS_Report; fall back to flat fields for other trackers
-  const report    = body.GPS_Report || body;
-  const device_id = report.DeviceID ?? report.device_id ?? body.device_id ?? body.serial_number ?? body.serial ?? body.imei ?? body.id ?? null;
-  const lat       = parseFloat(report.Latitude  ?? report.lat ?? report.latitude  ?? 0);
-  const lng       = parseFloat(report.Longitude ?? report.lng ?? report.longitude ?? body.lon ?? 0);
-  const timestamp = report.ReceivedTime ?? report.timestamp ?? body.timestamp ?? body.gps_time ?? new Date().toISOString();
+  const device_id = body.imei ?? body.device_id ?? body.serial_number ?? body.serial ?? body.id ?? null;
+  const lat       = parseFloat(body.lat ?? body.latitude  ?? 0);
+  const lng       = parseFloat(body.lng ?? body.longitude ?? body.lon ?? 0);
+  const timestamp = body.timestamp ?? body.gps_time ?? new Date().toISOString();
 
-  const unit = units.find(u => u.trak4_device_id && String(u.trak4_device_id) === String(device_id));
+  const unit = units.find(u => u.tracki_device_id && String(u.tracki_device_id) === String(device_id));
   if (unit && lat && lng) {
     unit.last_lat    = lat;
     unit.last_lng    = lng;
@@ -694,7 +681,7 @@ app.post('/api/gps/webhook', (req, res) => {
     });
     console.log(`[gps] updated ${unit.unit_number} → ${lat}, ${lng}`);
   } else if (!unit && device_id !== null) {
-    console.log(`[gps] unknown device_id: ${device_id} — set this in Edit Unit → Trak-4 Device ID`);
+    console.log(`[gps] unknown device_id: ${device_id} — set this in Edit Unit → Tracki Device ID`);
     if (!unknownGpsDevices.has(String(device_id))) {
       unknownGpsDevices.add(String(device_id));
       io.to('dispatchers').emit('gps:unknown_device', { device_id: String(device_id) });
@@ -703,53 +690,6 @@ app.post('/api/gps/webhook', (req, res) => {
 
   res.json({ ok: true });
 });
-
-// ── Trak-4 active polling (every 15 s) ───────────────────────────
-const TRAK4_POLL_MS = 15000;
-
-async function pollTrak4() {
-  const apiKey = process.env.TRAK4_API_KEY;
-  if (!apiKey) return;
-
-  const trackedUnits = units.filter(u => u.trak4_device_id);
-  if (trackedUnits.length === 0) return;
-
-  try {
-    const r = await fetch('https://api-v3.trak-4.com/device_list', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ APIKey: apiKey })
-    });
-    if (!r.ok) return;
-    const data = await r.json();
-    const devices = data.Devices || [];
-
-    devices.forEach(d => {
-      const deviceId = String(d.DeviceID);
-      const unit = trackedUnits.find(u => String(u.trak4_device_id) === deviceId);
-      if (!unit) return;
-
-      const lat = d.LastReport_Latitude;
-      const lng = d.LastReport_Longitude;
-      const timestamp = d.LastReport_ReceivedTime || new Date().toISOString();
-      if (!lat || !lng) return;
-
-      // Only emit if position actually changed
-      if (unit.last_lat === lat && unit.last_lng === lng) return;
-
-      unit.last_lat    = lat;
-      unit.last_lng    = lng;
-      unit.last_gps_at = timestamp;
-      saveUnit(unit).catch(() => {});
-      io.to('dispatchers').emit('unit:gps_update', {
-        unit_id: unit.id, unit_number: unit.unit_number, lat, lng, timestamp
-      });
-      console.log(`[trak4-poll] updated ${unit.unit_number} → ${lat}, ${lng}`);
-    });
-  } catch (e) {
-    console.error('[trak4-poll] error:', e.message);
-  }
-}
 
 // ── Locations ─────────────────────────────────────────────────────
 app.get('/api/locations', (req, res) => {
@@ -919,10 +859,8 @@ initDb()
       console.log(`   Default login — dispatchers: "dispatch" / "ems2024"`);
       console.log(`   Default login — crews: "EMS-1" through "EMS-5" / "ems2024"\n`);
     });
-    if (process.env.TRAK4_API_KEY) {
-      setInterval(pollTrak4, TRAK4_POLL_MS);
-      console.log(`[trak4-poll] active polling every ${TRAK4_POLL_MS / 1000}s`);
-    }
+    // TODO: add Tracki API polling here once API credentials and docs are available
+    // if (process.env.TRACKI_API_KEY) { setInterval(pollTracki, 15000); }
   })
   .catch(err => {
     console.error('[db] Failed to connect to database:', err.message);

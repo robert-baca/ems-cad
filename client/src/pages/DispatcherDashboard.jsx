@@ -240,7 +240,7 @@ export default function DispatcherDashboard() {
       {/* ── GPS unknown device banner ─────────────────────────── */}
       {unknownGpsDevice && (
         <div className="flex items-center justify-between px-4 py-2 bg-yellow-900/60 border-b border-yellow-700 text-yellow-200 text-xs flex-shrink-0">
-          <span>📡 Unknown GPS device ID: <span className="font-mono font-bold">{unknownGpsDevice}</span> — paste this into Edit Unit → Trak-4 Device ID</span>
+          <span>📡 Unknown GPS device ID: <span className="font-mono font-bold">{unknownGpsDevice}</span> — paste this into Edit Unit → Tracki Device ID</span>
           <button onClick={() => setUnknownGpsDevice(null)} className="ml-4 text-yellow-400 hover:text-white">✕</button>
         </div>
       )}

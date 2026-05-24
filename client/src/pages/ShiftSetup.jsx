@@ -11,7 +11,6 @@ export default function ShiftSetup({ token, onShiftStarted }) {
   const [staffing,     setStaffing]    = useState({});
   const [saving,       setSaving]      = useState(false);
   const [error,        setError]       = useState('');
-  const [trak4Devices, setTrak4Devices] = useState([]);
 
   // Add unit inline form
   const [addingUnit,  setAddingUnit]  = useState(false);
@@ -28,24 +27,20 @@ export default function ShiftSetup({ token, onShiftStarted }) {
         setUnits(data);
         const initial = {};
         data.forEach(u => {
-          initial[u.id] = { crew: u.crew || '', unit_type: u.unit_type, in_service: u.status !== 'out_of_service', station: u.station || '', trak4_device_id: u.trak4_device_id || '' };
+          initial[u.id] = { crew: u.crew || '', unit_type: u.unit_type, in_service: u.status !== 'out_of_service', station: u.station || '', tracki_device_id: u.tracki_device_id || '' };
         });
         setStaffing(initial);
       })
       .catch(() => {});
 
-    fetch('/api/trak4/devices', { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => r.ok ? r.json() : null)
-      .then(data => { if (data?.devices) setTrak4Devices(data.devices); })
-      .catch(() => {});
   }, [token]);
 
   const handleDeviceChange = async (unit_id, device_id) => {
-    updateStaffing(unit_id, 'trak4_device_id', device_id);
+    updateStaffing(unit_id, 'tracki_device_id', device_id);
     await fetch(`/api/units/${unit_id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ trak4_device_id: device_id || null })
+      body: JSON.stringify({ tracki_device_id: device_id || null })
     }).catch(() => {});
   };
 
@@ -285,28 +280,13 @@ export default function ShiftSetup({ token, onShiftStarted }) {
                         </div>
                         <div>
                           <label className="block text-gray-500 text-xs mb-1">GPS Tracker</label>
-                          {trak4Devices.length > 0 ? (
-                            <select
-                              value={s.trak4_device_id || ''}
-                              onChange={e => handleDeviceChange(u.id, e.target.value)}
-                              className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                            >
-                              <option value="">— None —</option>
-                              {trak4Devices.map(d => (
-                                <option key={d.device_id} value={d.device_id}>
-                                  {d.label} ({d.device_id})
-                                </option>
-                              ))}
-                            </select>
-                          ) : (
                             <input
                               type="text"
-                              value={s.trak4_device_id || ''}
+                              value={s.tracki_device_id || ''}
                               onChange={e => handleDeviceChange(u.id, e.target.value)}
-                              placeholder="Device ID (e.g. 185401)"
+                              placeholder="Tracki IMEI / Device ID"
                               className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500 font-mono"
                             />
-                          )}
                         </div>
                       </div>
                     )}
