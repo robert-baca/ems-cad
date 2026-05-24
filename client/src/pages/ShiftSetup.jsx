@@ -43,7 +43,7 @@ export default function ShiftSetup({ token, onShiftStarted }) {
   const handleDeviceChange = async (unit_id, device_id) => {
     updateStaffing(unit_id, 'trak4_device_id', device_id);
     await fetch(`/api/units/${unit_id}`, {
-      method: 'PATCH',
+      method: 'PUT',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ trak4_device_id: device_id || null })
     }).catch(() => {});
