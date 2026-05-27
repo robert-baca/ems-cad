@@ -702,33 +702,6 @@ app.post('/api/gps/webhook', (req, res) => {
   res.json({ ok: true });
 });
 
-// ── OwnTracks HTTP endpoint ───────────────────────────────────────
-// In OwnTracks app: Connection → Mode: HTTP, URL: https://<your-domain>/api/gps/owntracks
-// Set the unit's GPS Device ID to match the OwnTracks "Tracker ID" (tid) — default is 2 chars.
-app.post('/api/gps/owntracks', (req, res) => {
-  const body = req.body;
-
-  // OwnTracks sends several message types; only location updates matter
-  if (body._type !== 'location') return res.json([]);
-
-  const device_id = body.tid ?? null;
-  const lat       = parseFloat(body.lat ?? 0);
-  const lng       = parseFloat(body.lon ?? body.lng ?? 0);
-  const timestamp = body.tst ? new Date(body.tst * 1000).toISOString() : new Date().toISOString();
-
-  const unit = units.find(u => u.tracki_device_id && String(u.tracki_device_id) === String(device_id));
-  if (unit && lat && lng) {
-    applyGpsUpdate(unit, lat, lng, timestamp);
-    console.log(`[gps/owntracks] updated ${unit.unit_number} → ${lat}, ${lng} (tid: ${device_id})`);
-  } else if (!unit && device_id !== null) {
-    console.log(`[gps/owntracks] unknown tid: ${device_id} — set GPS Device ID in Edit Unit`);
-    handleUnknownDevice(device_id);
-  }
-
-  // OwnTracks expects a JSON array response
-  res.json([]);
-});
-
 // ── Locations ─────────────────────────────────────────────────────
 app.get('/api/locations', (req, res) => {
   res.json(locations);
@@ -864,13 +837,6 @@ io.on('connection', (socket) => {
         io.to('dispatchers').emit('call:status_change', { call_id: activeCall.id, status, timestamp: new Date().toISOString() });
       }
     }
-  });
-
-  socket.on('crew:gps_update', ({ unit_id, lat, lng }) => {
-    if (who?.role !== 'crew' || who?.unit_id !== unit_id) return;
-    const unit = units.find(u => u.id === unit_id);
-    if (!unit || !lat || !lng) return;
-    applyGpsUpdate(unit, lat, lng, new Date().toISOString());
   });
 
   socket.on('crew:profile_update', ({ unit_id, profile }) => {
