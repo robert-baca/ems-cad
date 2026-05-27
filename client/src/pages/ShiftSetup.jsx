@@ -83,6 +83,13 @@ export default function ShiftSetup({ token, onShiftStarted }) {
 
   const handleStart = async () => {
     if (!startTime) { setError('Enter a start time.'); return; }
+    const uncrewd = units.filter(u => {
+      const s = staffing[u.id];
+      return (s?.in_service ?? true) && (s?.unit_type || u.unit_type) !== 'Cart' && !s?.crew?.trim();
+    });
+    if (uncrewd.length > 0) {
+      if (!window.confirm(`${uncrewd.length} unit${uncrewd.length > 1 ? 's have' : ' has'} no medic name set (${uncrewd.map(u => u.unit_number).join(', ')}). Start shift anyway?`)) return;
+    }
     const label = `${startTime} – ${endTime || '?'}`;
     setSaving(true);
     setError('');

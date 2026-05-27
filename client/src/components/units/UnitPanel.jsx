@@ -30,6 +30,11 @@ const ON_CALL_STATUSES = new Set(['dispatched', 'en_route', 'on_scene', 'patient
 function UnitCard({ unit, activeCall, isSelected, onClick, onHistory, onEdit, onToggleOos, onFlyTo, onClearGps }) {
   const color = STATUS_COLORS[unit.status] || '#9ca3af';
   const profile = unit.profile;
+  const hasGps = unit.last_lat && unit.last_lng;
+  const gpsAgeMin = hasGps && unit.last_gps_at
+    ? Math.floor((Date.now() - new Date(unit.last_gps_at)) / 60000)
+    : null;
+  const gpsStale = gpsAgeMin !== null && gpsAgeMin >= 10;
 
   return (
     <div
@@ -68,6 +73,11 @@ function UnitCard({ unit, activeCall, isSelected, onClick, onHistory, onEdit, on
           )}
           {unit.station && (
             <div className="text-gray-500 text-xs truncate">{unit.station}</div>
+          )}
+          {hasGps && gpsAgeMin !== null && (
+            <div className={`text-xs mt-0.5 font-medium ${gpsStale ? 'text-orange-400' : 'text-gray-500'}`}>
+              {gpsStale ? `GPS stale · ${gpsAgeMin}m ago` : `GPS · ${gpsAgeMin}m ago`}
+            </div>
           )}
           {profile?.certifications?.length > 0 && (
             <div className="flex flex-wrap gap-0.5 mt-1">

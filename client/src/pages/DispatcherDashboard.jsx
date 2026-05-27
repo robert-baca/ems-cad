@@ -92,7 +92,11 @@ export default function DispatcherDashboard() {
   };
 
   const handleEndShift = async () => {
-    if (!window.confirm('End shift and generate the day summary?')) return;
+    const openCalls = calls.filter(c => c.status !== 'closed');
+    const confirmMsg = openCalls.length > 0
+      ? `There ${openCalls.length === 1 ? 'is 1 active call' : `are ${openCalls.length} active calls`} still open.\n\nEnd shift anyway and generate the day summary?`
+      : 'End shift and generate the day summary?';
+    if (!window.confirm(confirmMsg)) return;
     setEndingShift(true);
     try {
       const res  = await fetch('/api/shift/end', {

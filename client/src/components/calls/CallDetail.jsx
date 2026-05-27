@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import CallTimeline from './CallTimeline';
 import CallComments from './CallComments';
 import CloseCallModal from './CloseCallModal';
@@ -22,10 +22,10 @@ const TS_LABELS = {
 
 function LiveClock() {
   const [t, setT] = useState(() => new Date());
-  useState(() => {
+  useEffect(() => {
     const id = setInterval(() => setT(new Date()), 1000);
     return () => clearInterval(id);
-  });
+  }, []);
   return t.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
@@ -118,6 +118,19 @@ export default function CallDetail({
           ×
         </button>
       </div>
+
+      {/* Log Time Now quick bar — shown whenever there's a next timestamp to fill */}
+      {nextTsField && !isPending && (
+        <div className="px-4 py-2 bg-green-900/30 border-b border-green-800/40 flex items-center justify-between flex-shrink-0">
+          <span className="text-green-300 text-xs font-medium">Next: {nextTsLabel}</span>
+          <button
+            onClick={() => onLogTime?.(call.id)}
+            className="text-xs px-3 py-1 bg-green-700 hover:bg-green-600 text-white font-bold rounded-lg transition-colors"
+          >
+            ⏱ Log Now
+          </button>
+        </div>
+      )}
 
       {/* Assign unit banner — shown when no unit is assigned */}
       {isPending && (
@@ -471,7 +484,13 @@ export default function CallDetail({
           🧑‍⚕️ New Patient
         </button>
         <button
-          onClick={() => setShowCloseModal(true)}
+          onClick={() => {
+            const openSubs = subCases.filter(c => c.status !== 'closed');
+            if (openSubs.length > 0) {
+              if (!window.confirm(`This case has ${openSubs.length} open sub-case${openSubs.length > 1 ? 's' : ''} (${openSubs.map(c => `#${c.call_number}`).join(', ')}). Close anyway?`)) return;
+            }
+            setShowCloseModal(true);
+          }}
           className="flex-1 py-2 text-sm bg-red-700 hover:bg-red-600 text-white rounded-lg transition-colors font-semibold"
         >
           Close Case

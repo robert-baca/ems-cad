@@ -24,8 +24,10 @@ function fmtTime(iso) {
 function parseManualTime(str) {
   const parts = str.trim().split(':').map(Number);
   if (parts.length < 2 || isNaN(parts[0]) || isNaN(parts[1])) return null;
+  const h = parts[0], m = parts[1], s = parts[2] || 0;
+  if (h < 0 || h > 23 || m < 0 || m > 59 || s < 0 || s > 59) return null;
   const d = new Date();
-  d.setHours(parts[0], parts[1], parts[2] || 0, 0);
+  d.setHours(h, m, s, 0);
   return d.toISOString();
 }
 
