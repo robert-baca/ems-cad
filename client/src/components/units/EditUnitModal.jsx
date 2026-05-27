@@ -97,13 +97,13 @@ export default function EditUnitModal({ unit, onSave, onDelete, onClose }) {
 
               <div>
                 <label className="block text-gray-400 text-xs uppercase tracking-wider mb-1.5">
-                  Tracki Device ID <span className="text-gray-600 normal-case">(GPS tracker — IMEI or device ID)</span>
+                  GPS Device ID <span className="text-gray-600 normal-case">(Tracki IMEI or OwnTracks tid)</span>
                 </label>
                 <input
                   type="text"
                   value={deviceId}
                   onChange={e => setDeviceId(e.target.value)}
-                  placeholder="e.g. 352094081234567"
+                  placeholder="e.g. 352094081234567 or M1"
                   className="w-full bg-gray-700 text-white rounded-lg px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500 font-mono"
                 />
                 {deviceId && (

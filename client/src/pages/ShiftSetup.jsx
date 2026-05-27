@@ -290,12 +290,12 @@ export default function ShiftSetup({ token, onShiftStarted }) {
                           </div>
                         </div>
                         <div>
-                          <label className="block text-gray-500 text-xs mb-1">GPS Tracker</label>
+                          <label className="block text-gray-500 text-xs mb-1">GPS Device ID</label>
                             <input
                               type="text"
                               value={s.tracki_device_id || ''}
                               onChange={e => handleDeviceChange(u.id, e.target.value)}
-                              placeholder="Tracki IMEI / Device ID"
+                              placeholder="Tracki IMEI or OwnTracks tid"
                               className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500 font-mono"
                             />
                         </div>

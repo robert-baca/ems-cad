@@ -657,39 +657,74 @@ app.patch('/api/shift/units/:unit_id', verifyToken, async (req, res) => {
   res.json(sanitized);
 });
 
-// ── GPS webhook (Tracki / any tracker) ───────────────────────────
-// Configure your Tracki device to POST to: https://<your-domain>/api/gps/webhook
-// The webhook matches on tracki_device_id (set per unit in Edit Unit).
-// Tracki typically sends: { imei, lat, lng, timestamp } — adjust field
-// names below if their format differs once you have their webhook docs.
+// ── GPS helpers ───────────────────────────────────────────────────
+function applyGpsUpdate(unit, lat, lng, timestamp) {
+  unit.last_lat    = lat;
+  unit.last_lng    = lng;
+  unit.last_gps_at = timestamp;
+  saveUnit(unit).catch(console.error);
+  io.to('dispatchers').emit('unit:gps_update', {
+    unit_id: unit.id, unit_number: unit.unit_number, lat, lng, timestamp
+  });
+}
+
+function handleUnknownDevice(device_id) {
+  const key = String(device_id);
+  if (!unknownGpsDevices.has(key)) {
+    unknownGpsDevices.add(key);
+    io.to('dispatchers').emit('gps:unknown_device', { device_id: key });
+  }
+}
+
+// ── GPS webhook (Tracki / generic hardware tracker) ───────────────
+// Configure your tracker to POST to: https://<your-domain>/api/gps/webhook
+// Set the unit's GPS Device ID to match the tracker's IMEI or device ID.
 app.post('/api/gps/webhook', (req, res) => {
   const body = req.body;
   console.log('[gps] incoming ping:', JSON.stringify(body));
 
-  const device_id = body.imei ?? body.device_id ?? body.serial_number ?? body.serial ?? body.id ?? null;
+  const device_id = body.imei ?? body.device_id ?? body.serial_number ?? body.serial ?? body.tid ?? body.id ?? null;
   const lat       = parseFloat(body.lat ?? body.latitude  ?? 0);
   const lng       = parseFloat(body.lng ?? body.longitude ?? body.lon ?? 0);
   const timestamp = body.timestamp ?? body.gps_time ?? new Date().toISOString();
 
   const unit = units.find(u => u.tracki_device_id && String(u.tracki_device_id) === String(device_id));
   if (unit && lat && lng) {
-    unit.last_lat    = lat;
-    unit.last_lng    = lng;
-    unit.last_gps_at = timestamp;
-    saveUnit(unit).catch(console.error);
-    io.to('dispatchers').emit('unit:gps_update', {
-      unit_id: unit.id, unit_number: unit.unit_number, lat, lng, timestamp
-    });
+    applyGpsUpdate(unit, lat, lng, timestamp);
     console.log(`[gps] updated ${unit.unit_number} → ${lat}, ${lng}`);
   } else if (!unit && device_id !== null) {
-    console.log(`[gps] unknown device_id: ${device_id} — set this in Edit Unit → Tracki Device ID`);
-    if (!unknownGpsDevices.has(String(device_id))) {
-      unknownGpsDevices.add(String(device_id));
-      io.to('dispatchers').emit('gps:unknown_device', { device_id: String(device_id) });
-    }
+    console.log(`[gps] unknown device_id: ${device_id} — set this in Edit Unit → GPS Device ID`);
+    handleUnknownDevice(device_id);
   }
 
   res.json({ ok: true });
+});
+
+// ── OwnTracks HTTP endpoint ───────────────────────────────────────
+// In OwnTracks app: Connection → Mode: HTTP, URL: https://<your-domain>/api/gps/owntracks
+// Set the unit's GPS Device ID to match the OwnTracks "Tracker ID" (tid) — default is 2 chars.
+app.post('/api/gps/owntracks', (req, res) => {
+  const body = req.body;
+
+  // OwnTracks sends several message types; only location updates matter
+  if (body._type !== 'location') return res.json([]);
+
+  const device_id = body.tid ?? null;
+  const lat       = parseFloat(body.lat ?? 0);
+  const lng       = parseFloat(body.lon ?? body.lng ?? 0);
+  const timestamp = body.tst ? new Date(body.tst * 1000).toISOString() : new Date().toISOString();
+
+  const unit = units.find(u => u.tracki_device_id && String(u.tracki_device_id) === String(device_id));
+  if (unit && lat && lng) {
+    applyGpsUpdate(unit, lat, lng, timestamp);
+    console.log(`[gps/owntracks] updated ${unit.unit_number} → ${lat}, ${lng} (tid: ${device_id})`);
+  } else if (!unit && device_id !== null) {
+    console.log(`[gps/owntracks] unknown tid: ${device_id} — set GPS Device ID in Edit Unit`);
+    handleUnknownDevice(device_id);
+  }
+
+  // OwnTracks expects a JSON array response
+  res.json([]);
 });
 
 // ── Locations ─────────────────────────────────────────────────────
@@ -827,6 +862,13 @@ io.on('connection', (socket) => {
         io.to('dispatchers').emit('call:status_change', { call_id: activeCall.id, status, timestamp: new Date().toISOString() });
       }
     }
+  });
+
+  socket.on('crew:gps_update', ({ unit_id, lat, lng }) => {
+    if (who?.role !== 'crew' || who?.unit_id !== unit_id) return;
+    const unit = units.find(u => u.id === unit_id);
+    if (!unit || !lat || !lng) return;
+    applyGpsUpdate(unit, lat, lng, new Date().toISOString());
   });
 
   socket.on('crew:profile_update', ({ unit_id, profile }) => {
