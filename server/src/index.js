@@ -132,7 +132,7 @@ async function initDb() {
   units = unitsRes.rows;
 
   const callsRes = await pool.query(
-    "SELECT * FROM calls WHERE received_at > NOW() - INTERVAL '30 days' ORDER BY received_at DESC"
+    "SELECT * FROM calls WHERE received_at::timestamptz > NOW() - INTERVAL '30 days' ORDER BY received_at DESC"
   );
   calls = callsRes.rows.map(r => ({
     ...r,
