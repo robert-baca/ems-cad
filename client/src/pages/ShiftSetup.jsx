@@ -75,6 +75,10 @@ export default function ShiftSetup({ token, onShiftStarted }) {
   const handleRemoveUnit = (unit_id) => {
     setUnits(prev => prev.filter(u => u.id !== unit_id));
     setStaffing(prev => { const next = { ...prev }; delete next[unit_id]; return next; });
+    fetch(`/api/units/${unit_id}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` }
+    }).catch(() => {});
   };
 
   const handleStart = async () => {
@@ -108,8 +112,8 @@ export default function ShiftSetup({ token, onShiftStarted }) {
   const today = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 
   return (
-    <div className="fixed inset-0 bg-gray-900 z-50 flex items-center justify-center p-4 overflow-y-auto">
-      <div className="w-full max-w-2xl">
+    <div className="fixed inset-0 bg-gray-900 z-50 overflow-y-auto">
+      <div className="w-full max-w-2xl mx-auto py-8 px-4">
         {/* Header */}
         <div className="text-center mb-6">
           <div className="text-4xl mb-2">🚑</div>

@@ -625,14 +625,13 @@ app.post('/api/shift/end', verifyToken, async (req, res) => {
 
   // Clear live state so the next shift starts fresh
   calls = [];
-  units.forEach(u => {
-    u.status = 'available';
-    saveUnit(u).catch(console.error);
-  });
+  for (const u of [...units]) {
+    deleteUnitFromDb(u.id).catch(console.error);
+  }
+  units = [];
 
   currentShift = null;
-  const sanitizedUnits = units.map(u => ({ ...u, password_hash: undefined }));
-  io.to('dispatchers').emit('shift:ended', { ...summary, units: sanitizedUnits });
+  io.to('dispatchers').emit('shift:ended', { ...summary, units: [] });
   res.json(summary);
 });
 
