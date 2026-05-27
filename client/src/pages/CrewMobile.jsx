@@ -7,7 +7,7 @@ import { useSocket } from '../hooks/useSocket';
 import ActiveCall from '../components/crew/ActiveCall';
 import StatusButtons from '../components/crew/StatusButtons';
 import CrewProfile from '../components/crew/CrewProfile';
-import { STATUS_COLORS, STATUS_LABELS, MOCK_UNITS } from '../data/mockData';
+import { STATUS_COLORS, STATUS_LABELS } from '../data/mockData';
 
 const CERT_LEVEL_COLORS = {
   'Paramedic': 'text-red-400',
@@ -28,7 +28,7 @@ export default function CrewMobile() {
 
   const myUnit = units.find(u =>
     u.id === user?.unit_id || u.unit_number === user?.unit_number
-  ) || MOCK_UNITS[2];
+  ) || null;
 
   const myCall = calls.find(c =>
     c.assigned_unit_id === myUnit?.id && c.status !== 'closed'
@@ -69,6 +69,25 @@ export default function CrewMobile() {
 
   const unitColor = STATUS_COLORS[myUnit?.status] || '#9ca3af';
   const displayName = profile?.name || user?.name || user?.unit_number || 'Crew';
+
+  if (!myUnit) {
+    return (
+      <div className="min-h-screen bg-gray-900 text-white flex flex-col items-center justify-center p-6 text-center max-w-md mx-auto">
+        <div className="text-5xl mb-4">🚑</div>
+        <div className="text-white font-bold text-lg mb-1">No Active Shift</div>
+        <div className="text-gray-400 text-sm mb-6">
+          Waiting for dispatch to start the shift. Check back soon.
+        </div>
+        <div className="text-gray-600 text-xs mb-8">Logged in as {user?.unit_number}</div>
+        <button
+          onClick={() => { logout(); navigate('/login'); }}
+          className="text-gray-500 hover:text-white text-xs px-3 py-1.5 rounded hover:bg-gray-700 transition-colors border border-gray-700"
+        >
+          Sign out
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-900 text-white flex flex-col max-w-md mx-auto">

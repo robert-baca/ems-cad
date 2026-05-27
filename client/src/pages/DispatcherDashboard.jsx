@@ -42,6 +42,7 @@ export default function DispatcherDashboard() {
   const {
     calls, setCalls,
     handleCallCreated, handleCallUpdated, handleCallStatusChange, handleCallAssigned,
+    handleCommentAdded,
     dispatchCall, assignUnit, closeCall, updateTimestamp, logTimeNow, addComment,
     addUnitToCall, removeUnitFromCall, updatePriority, addMutualAid, removeMutualAid
   } = useCalls();
@@ -70,7 +71,7 @@ export default function DispatcherDashboard() {
       .catch(() => setCurrentShift(null));
   }, [user?.token]);
 
-  useSocket({
+  const { isConnected } = useSocket({
     'init:state':          ({ units: u, calls: c, locations: l }) => { setUnits(u); setCalls(c); if (l) setPermLocations(l); },
     'unit:gps_update':     handleGpsUpdate,
     'unit:status_change':  handleStatusChange,
@@ -81,6 +82,7 @@ export default function DispatcherDashboard() {
     'call:updated':        handleCallUpdated,
     'call:status_change':  handleCallStatusChange,
     'call:assigned':       handleCallAssigned,
+    'call:comment_added':  handleCommentAdded,
     'shift:started':       ({ shift, units: u }) => { setCurrentShift(shift); if (setUnits) setUnits(u); },
     'shift:ended':         ({ units: u, ...summary }) => { setShiftSummary(summary); setCurrentShift(null); setCalls([]); if (u) setUnits(u); },
     'gps:unknown_device':  ({ device_id }) => setUnknownGpsDevice(device_id)
@@ -189,9 +191,11 @@ export default function DispatcherDashboard() {
             <span className="font-bold text-white tracking-wide">Six Flags EMS CAD</span>
             <span className="text-gray-500 text-xs ml-2">Over Texas</span>
           </div>
-          <div className="flex items-center gap-1.5 ml-2 bg-gray-700 px-2 py-1 rounded-full">
-            <div className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse" />
-            <span className="text-green-400 text-xs font-medium">LIVE</span>
+          <div className={`flex items-center gap-1.5 ml-2 px-2 py-1 rounded-full ${isConnected ? 'bg-gray-700' : 'bg-red-900/60 border border-red-700'}`}>
+            <div className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-green-400 animate-pulse' : 'bg-red-400'}`} />
+            <span className={`text-xs font-medium ${isConnected ? 'text-green-400' : 'text-red-400'}`}>
+              {isConnected ? 'LIVE' : 'RECONNECTING…'}
+            </span>
           </div>
           {currentShift && (
             <div className="text-gray-500 text-xs border border-gray-700 px-2 py-1 rounded-full">

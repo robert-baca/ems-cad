@@ -1,9 +1,10 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 
 export function useSocket(handlers = {}) {
   const socketRef = useRef(null);
   const handlersRef = useRef(handlers);
+  const [isConnected, setIsConnected] = useState(false);
   handlersRef.current = handlers;
 
   useEffect(() => {
@@ -20,12 +21,15 @@ export function useSocket(handlers = {}) {
     const socket = socketRef.current;
 
     socket.on('connect', () => {
+      setIsConnected(true);
       if (u?.role === 'dispatcher') {
         socket.emit('join:dispatcher');
       } else if (u?.role === 'crew' && u?.unit_id) {
         socket.emit('join:crew', { unit_id: u.unit_id });
       }
     });
+
+    socket.on('disconnect', () => setIsConnected(false));
 
     Object.keys(handlersRef.current).forEach(event => {
       socket.on(event, (...args) => handlersRef.current[event]?.(...args));
@@ -34,5 +38,5 @@ export function useSocket(handlers = {}) {
     return () => { socket.disconnect(); };
   }, []);
 
-  return socketRef;
+  return { socketRef, isConnected };
 }

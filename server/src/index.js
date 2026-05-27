@@ -131,7 +131,9 @@ async function initDb() {
   const unitsRes = await pool.query('SELECT * FROM units ORDER BY unit_number');
   units = unitsRes.rows;
 
-  const callsRes = await pool.query('SELECT * FROM calls ORDER BY received_at DESC');
+  const callsRes = await pool.query(
+    "SELECT * FROM calls WHERE received_at > NOW() - INTERVAL '30 days' ORDER BY received_at DESC"
+  );
   calls = callsRes.rows.map(r => ({
     ...r,
     comments:             r.comments             || [],

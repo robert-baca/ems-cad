@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { createCall, updateCallStatus, assignCall, closeCall as apiCloseCall, updateCallTimestamps, updateCallNarrative, addUnitToCall as apiAddUnitToCall, removeUnitFromCall as apiRemoveUnitFromCall, updateCallPriority as apiUpdatePriority, addMutualAid as apiAddMutualAid, removeMutualAid as apiRemoveMutualAid } from '../services/api';
+import { createCall, updateCallStatus, assignCall, closeCall as apiCloseCall, updateCallTimestamps, updateCallNarrative, addUnitToCall as apiAddUnitToCall, removeUnitFromCall as apiRemoveUnitFromCall, updateCallPriority as apiUpdatePriority, addMutualAid as apiAddMutualAid, removeMutualAid as apiRemoveMutualAid, addCallComment as apiAddComment } from '../services/api';
 
 const STATUS_TS_MAP = {
   dispatched:      'dispatched_at',
@@ -68,14 +68,15 @@ export function useCalls() {
   }, []);
 
   const logTimeNow = useCallback((callId) => {
+    const now = new Date().toISOString();
     let nextField = null;
     setCalls(prev => prev.map(c => {
       if (c.id !== callId) return c;
       nextField = TS_STEPS.find(f => !c[f]);
       if (!nextField) return c;
-      return { ...c, [nextField]: new Date().toISOString() };
+      return { ...c, [nextField]: now };
     }));
-    if (nextField) updateCallTimestamps(callId, { [nextField]: new Date().toISOString() }).catch(() => {});
+    if (nextField) updateCallTimestamps(callId, { [nextField]: now }).catch(() => {});
   }, []);
 
   const closeCall = useCallback(async (callId, disposition, close_notes) => {
@@ -128,16 +129,23 @@ export function useCalls() {
     try { await apiRemoveMutualAid(callId, entryId); } catch {}
   }, []);
 
-  const addComment = useCallback((callId, text, author = 'Dispatcher') => {
-    const comment = { id: `cmt-${Date.now()}`, text, author, created_at: new Date().toISOString() };
+  const handleCommentAdded = useCallback(({ call_id, comment }) => {
     setCalls(prev => prev.map(c =>
-      c.id === callId ? { ...c, comments: [...(c.comments || []), comment] } : c
+      c.id === call_id ? { ...c, comments: [...(c.comments || []), comment] } : c
     ));
+  }, []);
+
+  const addComment = useCallback(async (callId, text, author = 'Dispatcher') => {
+    try {
+      await apiAddComment(callId, text, author);
+      // server emits 'call:comment_added' which handleCommentAdded will pick up
+    } catch {}
   }, []);
 
   return {
     calls, setCalls,
     handleCallCreated, handleCallUpdated, handleCallStatusChange, handleCallAssigned,
+    handleCommentAdded,
     dispatchCall, assignUnit, advanceStatus, closeCall, updateTimestamp, logTimeNow, addComment,
     addUnitToCall, removeUnitFromCall, updatePriority, addMutualAid, removeMutualAid
   };

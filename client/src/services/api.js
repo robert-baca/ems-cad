@@ -48,11 +48,25 @@ export const addMutualAid = (callId, name, unit_id, role) =>
   api.post(`/calls/${callId}/mutual-aid`, { name, unit_id, role });
 export const removeMutualAid = (callId, entryId) =>
   api.delete(`/calls/${callId}/mutual-aid/${entryId}`);
+export const addCallComment = (callId, text, author) =>
+  api.post(`/calls/${callId}/comments`, { text, author });
 
 // ── Auth ───────────────────────────────────────────────────────────
 export const loginDispatcher = (username, password) =>
   api.post('/auth/login', { username, password, role: 'dispatcher' });
 export const loginCrew = (unit_number, password) =>
   api.post('/auth/login', { username: unit_number, password, role: 'crew' });
+
+// Redirect to login when token expires or is invalid
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      sessionStorage.removeItem('cad_user');
+      window.location.href = '/login';
+    }
+    return Promise.reject(error);
+  }
+);
 
 export default api;
