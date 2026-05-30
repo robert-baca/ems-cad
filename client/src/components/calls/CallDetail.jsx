@@ -452,13 +452,6 @@ export default function CallDetail({
               call={call}
               onTimestampUpdate={(field, iso) => onTimestampUpdate?.(call.id, field, iso)}
             />
-            <button
-              onClick={() => onLogTime?.(call.id)}
-              disabled={!nextTsField}
-              className="w-full py-2 bg-green-700 hover:bg-green-600 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-bold rounded-lg text-sm transition-colors flex items-center justify-center gap-2 mt-2"
-            >
-              ⏱ {nextTsLabel ? `LOG TIME — ${nextTsLabel}` : 'All times logged'}
-            </button>
           </>
         )}
 

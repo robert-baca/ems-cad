@@ -289,6 +289,7 @@ app.patch('/api/units/:id/status', verifyToken, async (req, res) => {
   unit.status = req.body.status;
   saveUnit(unit).catch(console.error);
   io.to('dispatchers').emit('unit:status_change', { unit_id: unit.id, status: unit.status });
+  io.to(`crew:${unit.id}`).emit('unit:status_change', { unit_id: unit.id, status: unit.status });
   res.json({ ok: true, unit });
 });
 
@@ -518,6 +519,7 @@ app.patch('/api/calls/:id/status', verifyToken, async (req, res) => {
       unit.status = newUnitStatus;
       saveUnit(unit).catch(console.error);
       io.to('dispatchers').emit('unit:status_change', { unit_id: unit.id, status: unit.status });
+      io.to(`crew:${uid}`).emit('unit:status_change', { unit_id: uid, status: newUnitStatus });
     }
   });
   res.json(call);
