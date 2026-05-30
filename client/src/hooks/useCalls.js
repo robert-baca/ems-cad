@@ -11,6 +11,16 @@ const STATUS_TS_MAP = {
   available:       'available_at'
 };
 
+// Reverse: timestamp field → call status (only fields that map directly to a status)
+const TS_STATUS_MAP = {
+  dispatched_at:      'dispatched',
+  en_route_at:        'en_route',
+  on_scene_at:        'on_scene',
+  patient_contact_at: 'patient_contact',
+  cleared_at:         'cleared',
+  available_at:       'available'
+};
+
 const TS_STEPS = [
   'dispatched_at', 'acknowledged_at', 'en_route_at',
   'on_scene_at', 'patient_contact_at', 'transporting_at', 'arrived_first_aid_at',
@@ -74,9 +84,14 @@ export function useCalls() {
       if (c.id !== callId) return c;
       nextField = TS_STEPS.find(f => !c[f]);
       if (!nextField) return c;
-      return { ...c, [nextField]: now };
+      const newStatus = TS_STATUS_MAP[nextField];
+      return { ...c, [nextField]: now, ...(newStatus ? { status: newStatus } : {}) };
     }));
-    if (nextField) updateCallTimestamps(callId, { [nextField]: now }).catch(() => {});
+    if (nextField) {
+      updateCallTimestamps(callId, { [nextField]: now }).catch(() => {});
+      const newStatus = TS_STATUS_MAP[nextField];
+      if (newStatus) updateCallStatus(callId, newStatus).catch(() => {});
+    }
   }, []);
 
   const closeCall = useCallback(async (callId, disposition, close_notes) => {
