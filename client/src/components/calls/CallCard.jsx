@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { STATUS_COLORS, STATUS_LABELS } from '../../data/mockData';
 
 const PRIORITY_LABELS = { 1: 'P1 · High Acuity', 2: 'P2 · Medium Acuity', 3: 'P3 · Low Acuity' };
@@ -9,7 +10,7 @@ function elapsedMin(iso) {
   return Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
 }
 
-export default function CallCard({ call, unit, isSelected, onClick }) {
+function CallCard({ call, unit, isSelected, onClick }) {
   const elapsed     = elapsedMin(call.received_at);
   const statusColor = STATUS_COLORS[call.status] || '#9ca3af';
   const isPending   = call.status === 'pending';
@@ -78,3 +79,9 @@ export default function CallCard({ call, unit, isSelected, onClick }) {
     </button>
   );
 }
+
+export default memo(CallCard, (prev, next) =>
+  prev.call === next.call &&
+  prev.unit === next.unit &&
+  prev.isSelected === next.isSelected
+);
