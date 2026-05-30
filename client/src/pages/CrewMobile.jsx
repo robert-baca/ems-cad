@@ -36,6 +36,16 @@ export default function CrewMobile() {
 
   const profile = user?.profile || null;
 
+  // Stale token: unit found by unit_number but unit_id in token doesn't match current
+  // unit's ID (happens when shift restarts with new unit IDs). Force re-login.
+  useEffect(() => {
+    if (!units.length) return;
+    if (myUnit && user?.unit_id && myUnit.id !== user.unit_id) {
+      logout();
+      navigate('/login');
+    }
+  }, [myUnit?.id, user?.unit_id, units.length]);
+
   // Auto-open profile on first login if not set
   useEffect(() => {
     if (user && !profile) {

@@ -283,7 +283,9 @@ app.patch('/api/units/:id/status', verifyToken, async (req, res) => {
   const unit = units.find(u => u.id === req.params.id);
   if (!unit) return res.status(404).json({ error: 'Not found' });
 
-  if (req.user.role === 'crew' && req.user.unit_id !== unit.id)
+  if (req.user.role === 'crew' &&
+      req.user.unit_id !== unit.id &&
+      req.user.unit_number !== unit.unit_number)
     return res.status(403).json({ error: 'Forbidden' });
 
   unit.status = req.body.status;
@@ -296,7 +298,9 @@ app.patch('/api/units/:id/status', verifyToken, async (req, res) => {
 app.put('/api/units/:id/profile', verifyToken, async (req, res) => {
   const unit = units.find(u => u.id === req.params.id);
   if (!unit) return res.status(404).json({ error: 'Not found' });
-  if (req.user.role === 'crew' && req.user.unit_id !== unit.id)
+  if (req.user.role === 'crew' &&
+      req.user.unit_id !== unit.id &&
+      req.user.unit_number !== unit.unit_number)
     return res.status(403).json({ error: 'Forbidden' });
 
   unit.profile = { ...req.body };
