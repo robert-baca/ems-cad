@@ -294,7 +294,8 @@ export default function ShiftSetup({ token, onShiftStarted }) {
                             <input
                               type="text"
                               value={s.tracki_device_id || ''}
-                              onChange={e => handleDeviceChange(u.id, e.target.value)}
+                              onChange={e => updateStaffing(u.id, 'tracki_device_id', e.target.value)}
+                              onBlur={e => handleDeviceChange(u.id, e.target.value)}
                               placeholder="Tracki IMEI / Device ID"
                               className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500 font-mono"
                             />

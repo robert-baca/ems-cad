@@ -88,7 +88,7 @@ export default function DispatcherDashboard() {
     'call:assigned':       handleCallAssigned,
     'call:comment_added':  handleCommentAdded,
     'shift:started':       ({ shift, units: u }) => { setCurrentShift(shift); if (setUnits) setUnits(u); },
-    'shift:ended':         ({ units: u, ...summary }) => { setShiftSummary(summary); setCurrentShift(null); setCalls([]); if (u) setUnits(u); },
+    'shift:ended':         ({ units: u, ...summary }) => { setShiftSummary(summary); setCurrentShift(null); setCalls([]); setSelectedCallId(null); if (u) setUnits(u); },
     'gps:unknown_device':  ({ device_id }) => setUnknownGpsDevice(device_id)
   });
 

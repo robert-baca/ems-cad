@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { createCall, updateCallStatus, assignCall, closeCall as apiCloseCall, updateCallTimestamps, updateCallNarrative, addUnitToCall as apiAddUnitToCall, removeUnitFromCall as apiRemoveUnitFromCall, updateCallPriority as apiUpdatePriority, addMutualAid as apiAddMutualAid, removeMutualAid as apiRemoveMutualAid, addCallComment as apiAddComment } from '../services/api';
 
 const STATUS_TS_MAP = {
@@ -29,6 +29,7 @@ const TS_STEPS = [
 
 export function useCalls() {
   const [calls, setCalls] = useState([]);
+  const loggingRef = useRef(new Set()); // tracks in-flight logTimeNow calls per callId
 
   const handleCallCreated      = useCallback((call) => setCalls(prev => prev.some(c => c.id === call.id) ? prev : [call, ...prev]), []);
   const handleCallUpdated      = useCallback(({ call_id, changes }) =>
@@ -78,6 +79,8 @@ export function useCalls() {
   }, []);
 
   const logTimeNow = useCallback((callId) => {
+    if (loggingRef.current.has(callId)) return;
+    loggingRef.current.add(callId);
     const now = new Date().toISOString();
     let nextField = null;
     setCalls(prev => prev.map(c => {
@@ -92,6 +95,7 @@ export function useCalls() {
       const newStatus = TS_STATUS_MAP[nextField];
       if (newStatus) updateCallStatus(callId, newStatus).catch(() => {});
     }
+    setTimeout(() => loggingRef.current.delete(callId), 1000);
   }, []);
 
   const closeCall = useCallback(async (callId, disposition, close_notes) => {

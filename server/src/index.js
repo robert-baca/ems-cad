@@ -741,6 +741,7 @@ app.patch('/api/calls/:id/priority', verifyToken, async (req, res) => {
   call.priority = priority;
   saveCall(call).catch(console.error);
   io.to('dispatchers').emit('call:updated', { call_id: call.id, changes: { priority } });
+  if (call.assigned_unit_id) io.to(`crew:${call.assigned_unit_id}`).emit('call:updated', { call_id: call.id, changes: { priority } });
   res.json({ ok: true });
 });
 
@@ -755,6 +756,7 @@ app.post('/api/calls/:id/mutual-aid', verifyToken, async (req, res) => {
   call.mutual_aid_agencies.push(entry);
   saveCall(call).catch(console.error);
   io.to('dispatchers').emit('call:updated', { call_id: call.id, changes: { mutual_aid_agencies: call.mutual_aid_agencies } });
+  if (call.assigned_unit_id) io.to(`crew:${call.assigned_unit_id}`).emit('call:updated', { call_id: call.id, changes: { mutual_aid_agencies: call.mutual_aid_agencies } });
   res.json(entry);
 });
 
@@ -765,6 +767,7 @@ app.delete('/api/calls/:id/mutual-aid/:entryId', verifyToken, async (req, res) =
   call.mutual_aid_agencies = (call.mutual_aid_agencies || []).filter(e => e.id !== req.params.entryId);
   saveCall(call).catch(console.error);
   io.to('dispatchers').emit('call:updated', { call_id: call.id, changes: { mutual_aid_agencies: call.mutual_aid_agencies } });
+  if (call.assigned_unit_id) io.to(`crew:${call.assigned_unit_id}`).emit('call:updated', { call_id: call.id, changes: { mutual_aid_agencies: call.mutual_aid_agencies } });
   res.json({ ok: true });
 });
 
@@ -787,6 +790,7 @@ app.patch('/api/calls/:id/narrative', verifyToken, async (req, res) => {
   if (!call) return res.status(404).json({ error: 'Not found' });
   call.narrative = req.body.narrative ?? null;
   saveCall(call).catch(console.error);
+  if (call.assigned_unit_id) io.to(`crew:${call.assigned_unit_id}`).emit('call:updated', { call_id: call.id, changes: { narrative: call.narrative } });
   res.json({ ok: true });
 });
 
