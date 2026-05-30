@@ -23,12 +23,18 @@ export default function DisplayBoard() {
   const [calls, setCalls] = useState([]);
 
   useEffect(() => {
-    if (!sessionStorage.getItem('display_authed')) {
+    const displayToken = sessionStorage.getItem('display_token');
+    if (!displayToken) {
       navigate('/login');
       return;
     }
 
-    const socket = io(window.location.origin);
+    const socket = io(window.location.origin, { auth: { token: displayToken } });
+
+    socket.on('error:auth', () => {
+      sessionStorage.removeItem('display_token');
+      navigate('/login');
+    });
 
     socket.emit('join:dispatcher');
 

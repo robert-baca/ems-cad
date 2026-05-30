@@ -51,7 +51,7 @@ export default function Login() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Invalid PIN');
-      sessionStorage.setItem('display_authed', '1');
+      sessionStorage.setItem('display_token', data.token);
       navigate('/display');
     } catch (err) {
       setPinError(err.message);

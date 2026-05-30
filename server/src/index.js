@@ -233,7 +233,7 @@ async function saveShift(shift) {
 
 // ── JWT helpers ───────────────────────────────────────────────────
 function signToken(payload) {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: '12h' });
+  return jwt.sign(payload, JWT_SECRET, { expiresIn: '24h' });
 }
 
 function verifyToken(req, res, next) {
@@ -794,11 +794,19 @@ app.patch('/api/calls/:id/narrative', verifyToken, async (req, res) => {
   res.json({ ok: true });
 });
 
+// ── Token refresh ─────────────────────────────────────────────────
+app.post('/api/auth/refresh', verifyToken, (req, res) => {
+  const { iat, exp, ...payload } = req.user;
+  const token = signToken(payload);
+  res.json({ token });
+});
+
 // ── Display board auth ────────────────────────────────────────────
 app.post('/api/display/auth', (req, res) => {
   const correct = process.env.DISPLAY_PIN || '4567';
-  if (String(req.body.pin) === correct) return res.json({ ok: true });
-  res.status(401).json({ error: 'Invalid PIN' });
+  if (String(req.body.pin) !== correct) return res.status(401).json({ error: 'Invalid PIN' });
+  const token = signToken({ role: 'display' });
+  res.json({ token });
 });
 
 // ── Health ────────────────────────────────────────────────────────
@@ -818,6 +826,11 @@ io.on('connection', (socket) => {
   console.log('[socket] connect', socket.id, who?.role, who?.unit_number || who?.username);
 
   socket.on('join:dispatcher', () => {
+    const role = socket.jwtUser?.role;
+    if (role !== 'dispatcher' && role !== 'display') {
+      socket.emit('error:auth', { message: 'Unauthorized' });
+      return;
+    }
     socket.join('dispatchers');
     socket.emit('init:state', {
       units: units.map(u => ({ ...u, password_hash: undefined })),

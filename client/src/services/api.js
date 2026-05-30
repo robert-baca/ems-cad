@@ -56,6 +56,7 @@ export const loginDispatcher = (username, password) =>
   api.post('/auth/login', { username, password, role: 'dispatcher' });
 export const loginCrew = (unit_number, password) =>
   api.post('/auth/login', { username: unit_number, password, role: 'crew' });
+export const refreshToken = () => api.post('/auth/refresh');
 
 // Redirect to login when token expires or is invalid
 api.interceptors.response.use(
