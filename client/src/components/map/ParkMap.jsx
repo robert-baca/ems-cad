@@ -20,6 +20,14 @@ export default function ParkMap({
   const newPinRef         = useRef(null);
   const mapReadyRef       = useRef(false);
 
+  // Resize map whenever its container changes dimensions (e.g. panel collapse)
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const ro = new ResizeObserver(() => mapRef.current?.resize());
+    ro.observe(containerRef.current);
+    return () => ro.disconnect();
+  }, []);
+
   // Init map once
   useEffect(() => {
     if (mapRef.current) return;
