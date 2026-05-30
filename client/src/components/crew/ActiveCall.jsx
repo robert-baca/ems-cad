@@ -1,4 +1,4 @@
-const PRIORITY_LABELS = { 1: 'P1 — Critical', 2: 'P2 — Urgent', 3: 'P3 — Routine' };
+const PRIORITY_LABELS = { 1: 'P1 — High Acuity', 2: 'P2 — Medium Acuity', 3: 'P3 — Low Acuity' };
 const PRIORITY_COLORS = { 1: 'text-red-400', 2: 'text-orange-400', 3: 'text-blue-400' };
 
 export default function ActiveCall({ call }) {

@@ -224,9 +224,9 @@ export default function CallDetail({
               <div className="text-gray-400 text-xs uppercase tracking-wider">Priority</div>
               <div className="flex gap-2">
                 {[
-                  { val: 1, label: 'P1 Critical', active: 'bg-red-600 text-white', inactive: 'bg-gray-600 text-gray-400 hover:bg-gray-500' },
-                  { val: 2, label: 'P2 Urgent',   active: 'bg-orange-600 text-white', inactive: 'bg-gray-600 text-gray-400 hover:bg-gray-500' },
-                  { val: 3, label: 'P3 Routine',  active: 'bg-blue-700 text-white', inactive: 'bg-gray-600 text-gray-400 hover:bg-gray-500' }
+                  { val: 1, label: 'P1 High Acuity',    active: 'bg-red-600 text-white', inactive: 'bg-gray-600 text-gray-400 hover:bg-gray-500' },
+                  { val: 2, label: 'P2 Medium Acuity', active: 'bg-orange-600 text-white', inactive: 'bg-gray-600 text-gray-400 hover:bg-gray-500' },
+                  { val: 3, label: 'P3 Low Acuity',    active: 'bg-blue-700 text-white', inactive: 'bg-gray-600 text-gray-400 hover:bg-gray-500' }
                 ].map(({ val, label, active, inactive }) => (
                   <button key={val} type="button"
                     onClick={() => call.priority !== val && onUpdatePriority?.(call.id, val)}

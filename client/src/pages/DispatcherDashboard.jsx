@@ -15,6 +15,7 @@ import CallHistory from '../components/calls/CallHistory';
 import NewCallModal from '../components/calls/NewCallModal';
 import ShiftSetup from './ShiftSetup';
 import ShiftSummaryModal from '../components/shift/ShiftSummaryModal';
+import OptionsModal from '../components/settings/OptionsModal';
 
 function Clock() {
   const [time, setTime] = useState(new Date());
@@ -61,6 +62,7 @@ export default function DispatcherDashboard() {
   const [flyToTarget,       setFlyToTarget]         = useState(null);
   const [unknownGpsDevice,  setUnknownGpsDevice]   = useState(null);
   const [splitParentId,     setSplitParentId]       = useState(null);
+  const [showOptions,       setShowOptions]          = useState(false);
 
   // Load current shift on mount
   useEffect(() => {
@@ -219,6 +221,13 @@ export default function DispatcherDashboard() {
           >
             📋 Call History
           </button>
+          <button
+            onClick={() => setShowOptions(true)}
+            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium transition-colors bg-gray-700 text-gray-300 hover:bg-gray-600 hover:text-white"
+            title="Options"
+          >
+            ⚙ Options
+          </button>
           {currentShift ? (
             <button
               onClick={handleEndShift}
@@ -361,6 +370,10 @@ export default function DispatcherDashboard() {
       </div>
 
       {/* Modals */}
+      {showOptions && (
+        <OptionsModal onClose={() => setShowOptions(false)} />
+      )}
+
       {showNewCallModal && (
         <NewCallModal
           pin={newCallPin}

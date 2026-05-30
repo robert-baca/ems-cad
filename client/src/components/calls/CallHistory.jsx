@@ -127,9 +127,9 @@ export default function CallHistory({ calls, units, onClose, onSelectCall }) {
         <select value={filterPri} onChange={e => setFilterPri(e.target.value)}
           className="bg-gray-700 text-white rounded-lg px-2 py-1.5 text-xs outline-none focus:ring-1 focus:ring-blue-500">
           <option value="">All Priority</option>
-          <option value="1">P1 — Critical</option>
-          <option value="2">P2 — Urgent</option>
-          <option value="3">P3 — Routine</option>
+          <option value="1">P1 — High Acuity</option>
+          <option value="2">P2 — Medium Acuity</option>
+          <option value="3">P3 — Low Acuity</option>
         </select>
         <select value={filterUnit} onChange={e => setFilterUnit(e.target.value)}
           className="bg-gray-700 text-white rounded-lg px-2 py-1.5 text-xs outline-none focus:ring-1 focus:ring-blue-500">

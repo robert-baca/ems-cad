@@ -1,6 +1,6 @@
 import { STATUS_COLORS, STATUS_LABELS } from '../../data/mockData';
 
-const PRIORITY_LABELS = { 1: 'P1 · Critical', 2: 'P2 · Urgent', 3: 'P3 · Routine' };
+const PRIORITY_LABELS = { 1: 'P1 · High Acuity', 2: 'P2 · Medium Acuity', 3: 'P3 · Low Acuity' };
 const PRIORITY_COLORS = { 1: 'bg-red-500', 2: 'bg-orange-500', 3: 'bg-blue-500' };
 const RESPONSE_ICONS  = { foot: '🚶', cart: '🛺' };
 

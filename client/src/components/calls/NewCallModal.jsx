@@ -1,14 +1,16 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { CALL_TYPES } from '../../data/mockData';
+import { loadQuickTypes } from '../settings/OptionsModal';
 
 const TYPE_ICONS = { ALS: '🚑', BLS: '🚐', Cart: '🛺' };
 
-const QUICK_TYPES = [
-  'Cardiac Arrest', 'Chest Pain', 'Trauma', 'Syncope / Fainting',
-  'Heat Illness', 'Laceration', 'Altered Mental Status', 'Allergic Reaction'
-];
-
 export default function NewCallModal({ pin, units, onDispatch, onClose, parentCallNumber }) {
+  const [quickTypes, setQuickTypes] = useState([]);
+
+  useEffect(() => {
+    setQuickTypes(loadQuickTypes());
+  }, []);
+
   const [form, setForm] = useState({
     call_type:      '',
     chief_complaint: '',
@@ -109,25 +111,30 @@ export default function NewCallModal({ pin, units, onDispatch, onClose, parentCa
           {/* Call type */}
           <div>
             <label className="block text-gray-400 text-xs mb-1.5">Call Type *</label>
-            <div className="flex flex-wrap gap-1.5 mb-2">
-              {QUICK_TYPES.map(t => (
-                <button key={t} type="button" onClick={() => set('call_type', t)}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all
-                    ${form.call_type === t
-                      ? 'bg-red-700 border-red-500 text-white'
-                      : 'bg-gray-700 border-gray-600 text-gray-300 hover:border-gray-400'}`}>
-                  {t}
-                </button>
-              ))}
-            </div>
+            {quickTypes.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mb-2">
+                {quickTypes.map(t => (
+                  <button key={t} type="button" onClick={() => set('call_type', t)}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all
+                      ${form.call_type === t
+                        ? 'bg-red-700 border-red-500 text-white'
+                        : 'bg-gray-700 border-gray-600 text-gray-300 hover:border-gray-400'}`}>
+                    {t}
+                  </button>
+                ))}
+              </div>
+            )}
             <select
               required
               value={form.call_type}
               onChange={e => set('call_type', e.target.value)}
               className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
             >
-              <option value="">Other type…</option>
+              <option value="">— Select call type —</option>
               {CALL_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+              {quickTypes.filter(t => !CALL_TYPES.includes(t)).map(t => (
+                <option key={t} value={t}>{t}</option>
+              ))}
             </select>
           </div>
 
@@ -148,9 +155,9 @@ export default function NewCallModal({ pin, units, onDispatch, onClose, parentCa
             <label className="block text-gray-400 text-xs mb-2">Priority</label>
             <div className="flex gap-2">
               {[
-                { val: 1, label: 'P1 Critical', color: 'bg-red-600 border-red-500' },
-                { val: 2, label: 'P2 Urgent',   color: 'bg-orange-600 border-orange-500' },
-                { val: 3, label: 'P3 Routine',  color: 'bg-blue-700 border-blue-500' }
+                { val: 1, label: 'P1 High Acuity',    color: 'bg-red-600 border-red-500' },
+                { val: 2, label: 'P2 Medium Acuity', color: 'bg-orange-600 border-orange-500' },
+                { val: 3, label: 'P3 Low Acuity',    color: 'bg-blue-700 border-blue-500' }
               ].map(({ val, label, color }) => (
                 <button key={val} type="button" onClick={() => set('priority', val)}
                   className={`flex-1 py-2 text-xs font-semibold rounded-lg border-2 transition-all
