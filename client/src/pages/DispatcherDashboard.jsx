@@ -63,6 +63,8 @@ export default function DispatcherDashboard() {
   const [unknownGpsDevice,  setUnknownGpsDevice]   = useState(null);
   const [splitParentId,     setSplitParentId]       = useState(null);
   const [showOptions,       setShowOptions]          = useState(false);
+  const [leftOpen,          setLeftOpen]             = useState(true);
+  const [rightOpen,         setRightOpen]            = useState(true);
 
   // Load current shift on mount
   useEffect(() => {
@@ -265,20 +267,22 @@ export default function DispatcherDashboard() {
       {/* ── Body ─────────────────────────────────────────────── */}
       <div className="flex flex-1 overflow-hidden">
 
-        {/* Left: Unit panel */}
-        <UnitPanel
-          units={units}
-          calls={activeCalls}
-          selectedUnitId={selectedUnitId}
-          onSelectUnit={setSelectedUnitId}
-          onUnitHistory={(unit) => setHistoryUnit(unit)}
-          onAddUnit={addUnit}
-          onEditUnit={editUnit}
-          onRemoveUnit={removeUnit}
-          onStatusChange={changeStatus}
-          onClearGps={clearGps}
-          onFlyTo={(unit) => setFlyToTarget({ lat: unit.last_lat, lng: unit.last_lng, _t: Date.now() })}
-        />
+        {/* Left: Unit panel (collapsible) */}
+        {leftOpen && (
+          <UnitPanel
+            units={units}
+            calls={activeCalls}
+            selectedUnitId={selectedUnitId}
+            onSelectUnit={setSelectedUnitId}
+            onUnitHistory={(unit) => setHistoryUnit(unit)}
+            onAddUnit={addUnit}
+            onEditUnit={editUnit}
+            onRemoveUnit={removeUnit}
+            onStatusChange={changeStatus}
+            onClearGps={clearGps}
+            onFlyTo={(unit) => setFlyToTarget({ lat: unit.last_lat, lng: unit.last_lng, _t: Date.now() })}
+          />
+        )}
 
         {/* Center: Map */}
         <div className="flex-1 relative">
@@ -295,10 +299,39 @@ export default function DispatcherDashboard() {
           <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-black/60 backdrop-blur-sm text-white text-xs px-3 py-1.5 rounded-full pointer-events-none select-none">
             Drag to pan · Right-click → new call or add location
           </div>
+
+          {/* Left panel toggle tab */}
+          <button
+            onClick={() => setLeftOpen(o => !o)}
+            title={leftOpen ? 'Hide Units' : 'Show Units'}
+            className="absolute left-0 top-1/2 -translate-y-1/2 z-10 bg-gray-800 border-y border-r border-gray-600 hover:bg-gray-700 active:bg-gray-600 transition-colors rounded-r-lg shadow-lg py-5 px-1.5 flex flex-col items-center gap-2"
+          >
+            <span className="text-gray-300 text-sm font-bold leading-none">{leftOpen ? '‹' : '›'}</span>
+            <span className="text-gray-500 text-[10px] font-medium tracking-wide select-none"
+              style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}>
+              Units{!leftOpen && units.length > 0 ? ` (${units.length})` : ''}
+            </span>
+          </button>
+
+          {/* Right panel toggle tab */}
+          <button
+            onClick={() => setRightOpen(o => !o)}
+            title={rightOpen ? 'Hide Calls' : 'Show Calls'}
+            className="absolute right-0 top-1/2 -translate-y-1/2 z-10 bg-gray-800 border-y border-l border-gray-600 hover:bg-gray-700 active:bg-gray-600 transition-colors rounded-l-lg shadow-lg py-5 px-1.5 flex flex-col items-center gap-2"
+          >
+            <span className="text-gray-300 text-sm font-bold leading-none">{rightOpen ? '›' : '‹'}</span>
+            <span className={`text-[10px] font-medium tracking-wide select-none ${!rightOpen && activeCalls.length > 0 ? 'text-red-400' : 'text-gray-500'}`}
+              style={{ writingMode: 'vertical-rl' }}>
+              Calls{!rightOpen && activeCalls.length > 0 ? ` (${activeCalls.length})` : ''}
+            </span>
+            {!rightOpen && pendingCount > 0 && (
+              <span className="w-3.5 h-3.5 rounded-full bg-indigo-500 animate-pulse" />
+            )}
+          </button>
         </div>
 
-        {/* Right: Active calls OR History */}
-        {showHistory ? (
+        {/* Right: Active calls OR History (collapsible) */}
+        {rightOpen && (showHistory ? (
           <div className="w-[640px] flex-shrink-0">
             <CallHistory
               calls={calls}
@@ -340,7 +373,7 @@ export default function DispatcherDashboard() {
               )}
             </div>
           </div>
-        )}
+        ))}
 
         {/* Far right: Call detail */}
         {selectedCall && (
