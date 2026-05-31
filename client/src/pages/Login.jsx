@@ -1,18 +1,256 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
 const ROLES = [
-  { key: 'dispatcher', label: 'Dispatcher', icon: '🎛️', description: 'Command & dispatch' },
-  { key: 'crew',       label: 'Crew',       icon: '🚑', description: 'Unit / medic login' },
-  { key: 'display',    label: 'Display Board', icon: '📺', description: 'Live map display' }
+  { key: 'dispatcher', label: 'Dispatcher',    icon: '🎛️', description: 'Command & dispatch' },
+  { key: 'crew',       label: 'Crew',           icon: '🚑', description: 'Unit / medic login'  },
+  { key: 'display',    label: 'Display Board',  icon: '📺', description: 'Live map display'    }
 ];
 
+const UNIT_TYPES = ['ALS', 'BLS', 'Cart'];
+const TYPE_COLORS = { ALS: 'text-red-400', BLS: 'text-blue-400', Cart: 'text-green-400' };
+
+// ── Crew unit picker sub-flow ─────────────────────────────────────
+function CrewLogin({ onBack, onSuccess }) {
+  const [step,         setStep]        = useState('loading'); // loading | pick | auth | add
+  const [shiftUnits,   setShiftUnits]  = useState([]);
+  const [selected,     setSelected]    = useState(null);   // unit object
+  const [password,     setPassword]    = useState('');
+  const [newNumber,    setNewNumber]   = useState('');
+  const [newType,      setNewType]     = useState('ALS');
+  const [error,        setError]       = useState('');
+  const [loading,      setLoading]     = useState(false);
+
+  useEffect(() => {
+    fetch('/api/shift/units')
+      .then(r => r.json())
+      .then(data => {
+        setShiftUnits(Array.isArray(data) ? data : []);
+        setStep('pick');
+      })
+      .catch(() => setStep('pick'));
+  }, []);
+
+  const pickUnit = (unit) => {
+    setSelected(unit);
+    setPassword('');
+    setError('');
+    setStep('auth');
+  };
+
+  const handleAuth = async (e) => {
+    e.preventDefault();
+    if (!password) { setError('Enter the crew password.'); return; }
+    setLoading(true); setError('');
+    try {
+      const res  = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: selected.unit_number, password, role: 'crew' })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Login failed');
+      onSuccess({ ...data.user, token: data.token }, '/crew');
+    } catch (err) { setError(err.message); }
+    finally { setLoading(false); }
+  };
+
+  const handleAddUnit = async (e) => {
+    e.preventDefault();
+    if (!newNumber.trim()) { setError('Enter a unit number.'); return; }
+    if (!password)         { setError('Enter the crew password.'); return; }
+    setLoading(true); setError('');
+    try {
+      const res  = await fetch('/api/crew/add-unit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ unit_number: newNumber.trim(), unit_type: newType, password })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to add unit');
+      onSuccess({ ...data.user, token: data.token }, '/crew');
+    } catch (err) { setError(err.message); }
+    finally { setLoading(false); }
+  };
+
+  // ── Loading ──
+  if (step === 'loading') {
+    return (
+      <div className="bg-gray-800 rounded-2xl p-8 border border-gray-700 text-center">
+        <div className="text-gray-400 text-sm animate-pulse">Loading shift roster…</div>
+      </div>
+    );
+  }
+
+  // ── Unit picker ──
+  if (step === 'pick') {
+    return (
+      <div className="bg-gray-800 rounded-2xl border border-gray-700 overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-700 flex items-center gap-3">
+          <span className="text-2xl">🚑</span>
+          <div>
+            <div className="text-white font-bold">Select Your Unit</div>
+            <div className="text-gray-500 text-xs">
+              {shiftUnits.length > 0 ? "Tap the unit you've been assigned" : 'No shift active — add your unit below'}
+            </div>
+          </div>
+        </div>
+
+        <div className="p-3 space-y-2 max-h-72 overflow-y-auto">
+          {shiftUnits.map(u => (
+            <button key={u.id} onClick={() => pickUnit(u)}
+              className="w-full flex items-center gap-3 bg-gray-750 hover:bg-gray-700 border border-gray-600 hover:border-gray-500 rounded-xl px-4 py-3 text-left transition-all group">
+              <div>
+                <div className="text-white font-bold text-sm group-hover:text-blue-300 transition-colors">
+                  {u.unit_number}
+                </div>
+                <div className="flex items-center gap-2 mt-0.5">
+                  <span className={`text-xs font-bold ${TYPE_COLORS[u.unit_type] || 'text-gray-400'}`}>
+                    {u.unit_type}
+                  </span>
+                  {u.crew && (
+                    <span className="text-gray-400 text-xs">· {u.crew}</span>
+                  )}
+                  {u.station && (
+                    <span className="text-gray-500 text-xs">· {u.station}</span>
+                  )}
+                </div>
+              </div>
+              <span className="ml-auto text-gray-600 group-hover:text-gray-400 text-lg">›</span>
+            </button>
+          ))}
+
+          {shiftUnits.length === 0 && (
+            <div className="text-center py-4 text-gray-500 text-sm">
+              No units on shift yet.
+            </div>
+          )}
+        </div>
+
+        <div className="px-3 pb-3 border-t border-gray-700 pt-3">
+          <button onClick={() => { setStep('add'); setError(''); setPassword(''); }}
+            className="w-full py-2.5 rounded-xl bg-gray-700 hover:bg-gray-600 border border-gray-600 text-gray-300 hover:text-white text-sm font-medium transition-colors">
+            + My unit isn't listed
+          </button>
+        </div>
+
+        <div className="px-3 pb-3">
+          <button onClick={onBack}
+            className="w-full py-2 text-gray-500 hover:text-gray-300 text-sm transition-colors">
+            ← Back
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Password for selected unit ──
+  if (step === 'auth') {
+    return (
+      <form onSubmit={handleAuth} className="bg-gray-800 rounded-2xl p-6 space-y-4 border border-gray-700">
+        <button type="button" onClick={() => { setStep('pick'); setError(''); }}
+          className="text-gray-500 hover:text-gray-300 text-sm transition-colors">
+          ← Back to units
+        </button>
+
+        <div className="bg-gray-750 rounded-xl border border-gray-600 px-4 py-3">
+          <div className="text-white font-bold">{selected.unit_number}</div>
+          <div className="flex items-center gap-2 mt-0.5">
+            <span className={`text-xs font-bold ${TYPE_COLORS[selected.unit_type] || 'text-gray-400'}`}>
+              {selected.unit_type}
+            </span>
+            {selected.crew && <span className="text-gray-400 text-xs">· {selected.crew}</span>}
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-gray-400 text-sm mb-1">Crew Password</label>
+          <input type="password" value={password} onChange={e => setPassword(e.target.value)}
+            placeholder="••••••••" autoFocus
+            className="w-full bg-gray-700 text-white rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-green-500 placeholder-gray-500" />
+        </div>
+
+        {error && <p className="text-red-400 text-sm">{error}</p>}
+
+        <button type="submit" disabled={loading}
+          className="w-full py-3 bg-green-700 hover:bg-green-600 disabled:bg-green-900 text-white font-semibold rounded-lg transition-colors">
+          {loading ? 'Signing in…' : `Sign in as ${selected.unit_number}`}
+        </button>
+
+        <button type="button" onClick={onBack}
+          className="w-full py-2 text-gray-500 hover:text-gray-300 text-sm transition-colors">
+          ← Back to role select
+        </button>
+      </form>
+    );
+  }
+
+  // ── Add unit ──
+  if (step === 'add') {
+    return (
+      <form onSubmit={handleAddUnit} className="bg-gray-800 rounded-2xl p-6 space-y-4 border border-gray-700">
+        <button type="button" onClick={() => { setStep('pick'); setError(''); }}
+          className="text-gray-500 hover:text-gray-300 text-sm transition-colors">
+          ← Back to units
+        </button>
+
+        <div>
+          <div className="text-white font-bold mb-0.5">Add Your Unit</div>
+          <div className="text-gray-500 text-xs">Enter the unit number dispatch assigned you</div>
+        </div>
+
+        <div>
+          <label className="block text-gray-400 text-sm mb-1">Unit Number</label>
+          <input type="text" value={newNumber} onChange={e => setNewNumber(e.target.value)}
+            placeholder="e.g. Medic 3, Cart 2" autoFocus
+            className="w-full bg-gray-700 text-white rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-green-500 placeholder-gray-500" />
+        </div>
+
+        <div>
+          <label className="block text-gray-400 text-sm mb-1">Unit Type</label>
+          <div className="flex gap-2">
+            {UNIT_TYPES.map(t => (
+              <button key={t} type="button" onClick={() => setNewType(t)}
+                className={`flex-1 py-2 rounded-lg text-xs font-bold transition-colors
+                  ${newType === t
+                    ? (t === 'ALS' ? 'bg-red-600 text-white' : t === 'BLS' ? 'bg-blue-600 text-white' : 'bg-green-700 text-white')
+                    : 'bg-gray-700 text-gray-400 hover:bg-gray-600'}`}>
+                {t}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-gray-400 text-sm mb-1">Crew Password</label>
+          <input type="password" value={password} onChange={e => setPassword(e.target.value)}
+            placeholder="••••••••"
+            className="w-full bg-gray-700 text-white rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-green-500 placeholder-gray-500" />
+        </div>
+
+        {error && <p className="text-red-400 text-sm">{error}</p>}
+
+        <button type="submit" disabled={loading}
+          className="w-full py-3 bg-green-700 hover:bg-green-600 disabled:bg-green-900 text-white font-semibold rounded-lg transition-colors">
+          {loading ? 'Adding…' : 'Add Unit & Sign In'}
+        </button>
+
+        <button type="button" onClick={onBack}
+          className="w-full py-2 text-gray-500 hover:text-gray-300 text-sm transition-colors">
+          ← Back to role select
+        </button>
+      </form>
+    );
+  }
+}
+
+// ── Main login page ───────────────────────────────────────────────
 export default function Login() {
   const { login } = useAuth();
   const navigate  = useNavigate();
 
-  const [role,     setRole]    = useState(null); // null = role picker
+  const [role,     setRole]    = useState(null);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [pin,      setPin]     = useState('');
@@ -20,6 +258,11 @@ export default function Login() {
   const [loading,  setLoading] = useState(false);
 
   const back = () => { setRole(null); setError(''); setUsername(''); setPassword(''); setPin(''); };
+
+  const handleCrewSuccess = (userData, path) => {
+    login(userData);
+    navigate(path);
+  };
 
   const handleDispatcherLogin = async (e) => {
     e.preventDefault();
@@ -35,24 +278,6 @@ export default function Login() {
       if (!res.ok) throw new Error(data.error || 'Login failed');
       login({ ...data.user, token: data.token });
       navigate('/dispatcher');
-    } catch (err) { setError(err.message); }
-    finally { setLoading(false); }
-  };
-
-  const handleCrewLogin = async (e) => {
-    e.preventDefault();
-    if (!username || !password) { setError('Enter your unit number and password.'); return; }
-    setLoading(true); setError('');
-    try {
-      const res  = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password, role: 'crew' })
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Login failed');
-      login({ ...data.user, token: data.token });
-      navigate('/crew');
     } catch (err) { setError(err.message); }
     finally { setLoading(false); }
   };
@@ -79,7 +304,6 @@ export default function Login() {
     <div className="min-h-screen bg-gray-900 flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
 
-        {/* Logo */}
         <div className="text-center mb-8">
           <div className="text-5xl mb-3">🚑</div>
           <h1 className="text-2xl font-bold text-white tracking-wide">Six Flags EMS CAD</h1>
@@ -90,16 +314,11 @@ export default function Login() {
         {!role && (
           <div className="space-y-3">
             {ROLES.map(r => (
-              <button
-                key={r.key}
-                onClick={() => setRole(r.key)}
-                className="w-full flex items-center gap-4 bg-gray-800 hover:bg-gray-750 border border-gray-700 hover:border-gray-500 rounded-2xl px-5 py-4 transition-all text-left group"
-              >
+              <button key={r.key} onClick={() => setRole(r.key)}
+                className="w-full flex items-center gap-4 bg-gray-800 hover:bg-gray-750 border border-gray-700 hover:border-gray-500 rounded-2xl px-5 py-4 transition-all text-left group">
                 <span className="text-3xl">{r.icon}</span>
                 <div>
-                  <div className="text-white font-bold text-base group-hover:text-blue-300 transition-colors">
-                    {r.label}
-                  </div>
+                  <div className="text-white font-bold text-base group-hover:text-blue-300 transition-colors">{r.label}</div>
                   <div className="text-gray-500 text-sm">{r.description}</div>
                 </div>
                 <span className="ml-auto text-gray-600 group-hover:text-gray-400 text-lg">›</span>
@@ -108,7 +327,12 @@ export default function Login() {
           </div>
         )}
 
-        {/* ── Dispatcher login ── */}
+        {/* ── Crew ── */}
+        {role === 'crew' && (
+          <CrewLogin onBack={back} onSuccess={handleCrewSuccess} />
+        )}
+
+        {/* ── Dispatcher ── */}
         {role === 'dispatcher' && (
           <form onSubmit={handleDispatcherLogin} className="bg-gray-800 rounded-2xl p-6 space-y-4 border border-gray-700">
             <div className="flex items-center gap-3 mb-2">
@@ -142,41 +366,7 @@ export default function Login() {
           </form>
         )}
 
-        {/* ── Crew login ── */}
-        {role === 'crew' && (
-          <form onSubmit={handleCrewLogin} className="bg-gray-800 rounded-2xl p-6 space-y-4 border border-gray-700">
-            <div className="flex items-center gap-3 mb-2">
-              <span className="text-2xl">🚑</span>
-              <div>
-                <div className="text-white font-bold">Crew Login</div>
-                <div className="text-gray-500 text-xs">Unit / medic access</div>
-              </div>
-            </div>
-            <div>
-              <label className="block text-gray-400 text-sm mb-1">Unit Number</label>
-              <input type="text" value={username} onChange={e => setUsername(e.target.value)}
-                placeholder="e.g. Medic 1" autoFocus
-                className="w-full bg-gray-700 text-white rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-green-500 placeholder-gray-500" />
-            </div>
-            <div>
-              <label className="block text-gray-400 text-sm mb-1">Password</label>
-              <input type="password" value={password} onChange={e => setPassword(e.target.value)}
-                placeholder="••••••••"
-                className="w-full bg-gray-700 text-white rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-green-500 placeholder-gray-500" />
-            </div>
-            {error && <p className="text-red-400 text-sm">{error}</p>}
-            <button type="submit" disabled={loading}
-              className="w-full py-3 bg-green-700 hover:bg-green-600 disabled:bg-green-900 text-white font-semibold rounded-lg transition-colors">
-              {loading ? 'Signing in…' : 'Sign In'}
-            </button>
-            <button type="button" onClick={back}
-              className="w-full py-2 text-gray-500 hover:text-gray-300 text-sm transition-colors">
-              ← Back
-            </button>
-          </form>
-        )}
-
-        {/* ── Display board PIN ── */}
+        {/* ── Display board ── */}
         {role === 'display' && (
           <form onSubmit={handleDisplayLogin} className="bg-gray-800 rounded-2xl p-6 space-y-4 border border-gray-700">
             <div className="flex items-center gap-3 mb-2">
@@ -188,8 +378,7 @@ export default function Login() {
             </div>
             <div>
               <label className="block text-gray-400 text-sm mb-1">PIN</label>
-              <input
-                type="password" inputMode="numeric" maxLength={8}
+              <input type="password" inputMode="numeric" maxLength={8}
                 value={pin} onChange={e => setPin(e.target.value)}
                 placeholder="••••" autoFocus
                 className="w-full bg-gray-700 text-white rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-indigo-500 placeholder-gray-500 text-center text-xl tracking-widest" />

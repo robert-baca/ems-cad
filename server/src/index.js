@@ -571,6 +571,43 @@ app.post('/api/calls/:id/comments', verifyToken, async (req, res) => {
 });
 
 // ── Shift ─────────────────────────────────────────────────────────
+
+// Public: crew login picker fetches this before authenticating
+app.get('/api/shift/units', (req, res) => {
+  if (!currentShift || currentShift.ended_at) return res.json([]);
+  res.json(units.map(u => ({
+    id: u.id, unit_number: u.unit_number, unit_type: u.unit_type,
+    crew: u.crew || null, station: u.station || null
+  })));
+});
+
+// Crew self-registration: add a unit that wasn't in the shift roster
+app.post('/api/crew/add-unit', async (req, res) => {
+  const { unit_number, unit_type = 'ALS', password } = req.body;
+  if (!unit_number?.trim()) return res.status(400).json({ error: 'unit_number required' });
+  const crewPw = process.env.CREW_PASSWORD || 'ems2024';
+  if (password !== crewPw) return res.status(401).json({ error: 'Invalid password' });
+
+  // Re-use existing unit if it was already created
+  let unit = units.find(u => u.unit_number.toLowerCase() === unit_number.trim().toLowerCase());
+  if (!unit) {
+    unit = {
+      id: `u-${Date.now()}`,
+      unit_number: unit_number.trim(), unit_name: unit_number.trim(),
+      unit_type, status: 'available',
+      last_lat: null, last_lng: null, last_gps_at: null, tracki_device_id: null,
+      password_hash: bcrypt.hashSync(crewPw, 8),
+      profile: null, crew: null, station: null
+    };
+    units.push(unit);
+    await saveUnit(unit).catch(console.error);
+    io.to('dispatchers').emit('unit:updated', { ...unit, password_hash: undefined });
+  }
+
+  const token = signToken({ unit_id: unit.id, unit_number: unit.unit_number, role: 'crew' });
+  res.json({ token, user: { role: 'crew', unit_id: unit.id, unit_number: unit.unit_number, profile: unit.profile } });
+});
+
 app.get('/api/shift/current', verifyToken, (req, res) => {
   res.json(currentShift);
 });
