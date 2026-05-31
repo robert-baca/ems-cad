@@ -570,6 +570,25 @@ app.post('/api/calls/:id/comments', verifyToken, async (req, res) => {
   res.json(comment);
 });
 
+// ── Crew PIN auth ─────────────────────────────────────────────────
+const crewPinOk = (pin) => String(pin) === (process.env.CREW_PIN || '1234');
+
+// Step 1: validate PIN, then client shows unit picker
+app.post('/api/crew/verify-pin', (req, res) => {
+  if (!crewPinOk(req.body.pin)) return res.status(401).json({ error: 'Invalid PIN' });
+  res.json({ ok: true });
+});
+
+// Step 2a: pick an existing shift unit → get JWT
+app.post('/api/crew/select-unit', (req, res) => {
+  const { pin, unit_id } = req.body;
+  if (!crewPinOk(pin)) return res.status(401).json({ error: 'Invalid PIN' });
+  const unit = units.find(u => u.id === unit_id);
+  if (!unit) return res.status(404).json({ error: 'Unit not found' });
+  const token = signToken({ unit_id: unit.id, unit_number: unit.unit_number, role: 'crew' });
+  res.json({ token, user: { role: 'crew', unit_id: unit.id, unit_number: unit.unit_number, profile: unit.profile } });
+});
+
 // ── Shift ─────────────────────────────────────────────────────────
 
 // Public: crew login picker fetches this before authenticating
@@ -581,12 +600,11 @@ app.get('/api/shift/units', (req, res) => {
   })));
 });
 
-// Crew self-registration: add a unit that wasn't in the shift roster
+// Step 2b: add a unit not in the shift roster → create it + get JWT
 app.post('/api/crew/add-unit', async (req, res) => {
-  const { unit_number, unit_type = 'ALS', password } = req.body;
+  const { unit_number, unit_type = 'ALS', pin } = req.body;
   if (!unit_number?.trim()) return res.status(400).json({ error: 'unit_number required' });
-  const crewPw = process.env.CREW_PASSWORD || 'ems2024';
-  if (password !== crewPw) return res.status(401).json({ error: 'Invalid password' });
+  if (!crewPinOk(pin)) return res.status(401).json({ error: 'Invalid PIN' });
 
   // Re-use existing unit if it was already created
   let unit = units.find(u => u.unit_number.toLowerCase() === unit_number.trim().toLowerCase());
@@ -596,7 +614,7 @@ app.post('/api/crew/add-unit', async (req, res) => {
       unit_number: unit_number.trim(), unit_name: unit_number.trim(),
       unit_type, status: 'available',
       last_lat: null, last_lng: null, last_gps_at: null, tracki_device_id: null,
-      password_hash: bcrypt.hashSync(crewPw, 8),
+      password_hash: null,
       profile: null, crew: null, station: null
     };
     units.push(unit);
