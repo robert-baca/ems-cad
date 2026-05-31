@@ -738,6 +738,18 @@ app.post('/api/gps/webhook', (req, res) => {
   res.json({ ok: true });
 });
 
+// ── Crew browser GPS (fallback when Tracki is stale) ─────────────
+app.post('/api/crew/gps', verifyToken, (req, res) => {
+  if (req.user.role !== 'crew') return res.status(403).json({ error: 'Forbidden' });
+  const unit = units.find(u => u.id === req.user.unit_id);
+  if (!unit) return res.status(404).json({ error: 'Not found' });
+  const lat = parseFloat(req.body.lat);
+  const lng = parseFloat(req.body.lng);
+  if (!lat || !lng) return res.status(400).json({ error: 'lat and lng required' });
+  applyGpsUpdate(unit, lat, lng, new Date().toISOString());
+  res.json({ ok: true });
+});
+
 // ── Locations ─────────────────────────────────────────────────────
 app.get('/api/locations', verifyToken, (req, res) => {
   res.json(locations);

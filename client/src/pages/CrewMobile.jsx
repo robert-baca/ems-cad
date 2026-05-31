@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { useUnits } from '../hooks/useUnits';
 import { useCalls } from '../hooks/useCalls';
 import { useSocket } from '../hooks/useSocket';
+import { useCrewGps } from '../hooks/useCrewGps';
 import ActiveCall from '../components/crew/ActiveCall';
 import StatusButtons from '../components/crew/StatusButtons';
 import CrewProfile from '../components/crew/CrewProfile';
@@ -20,24 +21,27 @@ export default function CrewMobile() {
   const { user, logout, updateProfile } = useAuth();
   const navigate = useNavigate();
 
-  const { units, handleGpsUpdate, handleStatusChange, changeStatus } = useUnits();
-  const { calls, handleCallCreated, handleCallUpdated, handleCallStatusChange, advanceStatus } = useCalls();
+  const { units, setUnits, handleGpsUpdate, handleStatusChange, changeStatus, handleUnitUpdated } = useUnits();
+  const { calls, setCalls, handleCallCreated, handleCallUpdated, handleCallStatusChange, handleCommentAdded, advanceStatus } = useCalls();
 
-  const [statusLoading, setStatusLoading] = useState(false);
-  const [showProfile, setShowProfile] = useState(false);
+  const [statusLoading,   setStatusLoading]   = useState(false);
+  const [showProfile,     setShowProfile]     = useState(false);
+  const [backupRequested, setBackupRequested] = useState(false);
 
   const myUnit = units.find(u =>
     u.id === user?.unit_id || u.unit_number === user?.unit_number
   ) || null;
 
-  const myCall = calls.find(c =>
-    c.assigned_unit_id === myUnit?.id && c.status !== 'closed'
-  ) || null;
+  const myCall = calls.find(c => {
+    if (c.status === 'closed') return false;
+    if (!myUnit) return false;
+    return c.assigned_unit_id === myUnit.id ||
+      (c.additional_unit_ids || []).includes(myUnit.id);
+  }) || null;
 
   const profile = user?.profile || null;
 
-  // Stale token: unit found by unit_number but unit_id in token doesn't match current
-  // unit's ID (happens when shift restarts with new unit IDs). Force re-login.
+  // Stale token: unit found by unit_number but ID doesn't match. Force re-login.
   useEffect(() => {
     if (!units.length) return;
     if (myUnit && user?.unit_id && myUnit.id !== user.unit_id) {
@@ -48,21 +52,31 @@ export default function CrewMobile() {
 
   // Auto-open profile on first login if not set
   useEffect(() => {
-    if (user && !profile) {
-      setShowProfile(true);
-    }
+    if (user && !profile) setShowProfile(true);
   }, []);
 
+  // Reset backup button when call changes
+  useEffect(() => {
+    setBackupRequested(false);
+  }, [myCall?.id]);
+
+  // Browser GPS fallback (only fires when Tracki is stale > 3 min)
+  useCrewGps({ token: user?.token, unit: myUnit, enabled: !!myUnit });
+
   useSocket({
-    'unit:gps_update':     handleGpsUpdate,
-    'unit:status_change':  handleStatusChange,
-    'call:created':        handleCallCreated,
-    'call:updated':        handleCallUpdated,
-    'call:status_change':  handleCallStatusChange,
-    'call:assigned_to_me': handleCallCreated
+    'unit:gps_update':    handleGpsUpdate,
+    'unit:status_change': handleStatusChange,
+    'unit:updated':       handleUnitUpdated,
+    'call:created':       handleCallCreated,
+    'call:updated':       handleCallUpdated,
+    'call:status_change': handleCallStatusChange,
+    'call:assigned_to_me': handleCallCreated,
+    'call:comment_added': handleCommentAdded,
+    'shift:ended':        () => { setUnits([]); setCalls([]); }
   });
 
   const handleStatusTap = async (status) => {
+    if (!myUnit) return;
     setStatusLoading(true);
     try {
       await changeStatus(myUnit.id, status);
@@ -72,12 +86,28 @@ export default function CrewMobile() {
     }
   };
 
+  const handleRequestBackup = useCallback(async () => {
+    if (!myCall || !myUnit) return;
+    const next = !backupRequested;
+    setBackupRequested(next);
+    const text = next
+      ? `🆘 BACKUP REQUESTED — ${myUnit.unit_number}`
+      : `✅ Backup no longer needed — ${myUnit.unit_number}`;
+    try {
+      await fetch(`/api/calls/${myCall.id}/comments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user?.token}` },
+        body: JSON.stringify({ text })
+      });
+    } catch {}
+  }, [backupRequested, myCall, myUnit, user?.token]);
+
   const handleProfileSave = (savedProfile) => {
     updateProfile(savedProfile);
     setShowProfile(false);
   };
 
-  const unitColor = STATUS_COLORS[myUnit?.status] || '#9ca3af';
+  const unitColor  = STATUS_COLORS[myUnit?.status] || '#9ca3af';
   const displayName = profile?.name || user?.name || user?.unit_number || 'Crew';
 
   if (!myUnit) {
@@ -129,9 +159,9 @@ export default function CrewMobile() {
           </div>
           <button
             onClick={() => setShowProfile(true)}
-            className="text-xs px-2.5 py-1 rounded-lg bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white transition-colors flex items-center gap-1"
+            className="text-xs px-2.5 py-1 rounded-lg bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white transition-colors"
           >
-            ✏️ {profile ? 'Edit Profile' : 'Set Profile'}
+            ✏️ {profile ? 'Edit' : 'Set Profile'}
           </button>
         </div>
 
@@ -146,38 +176,25 @@ export default function CrewMobile() {
               {STATUS_LABELS[myUnit?.status] || 'Unknown'}
             </div>
           </div>
+          {myUnit?.last_gps_at && (
+            <div className="ml-auto flex items-center gap-1">
+              <div className="w-1.5 h-1.5 rounded-full bg-green-400" />
+              <span className="text-green-400 text-xs">GPS</span>
+            </div>
+          )}
         </div>
       </div>
 
       {/* Body */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {/* Profile summary card — shown if profile is set */}
-        {profile && (
-          <div className="bg-gray-800 rounded-xl border border-gray-700 p-3">
-            <div className="flex items-start justify-between">
-              <div>
-                <div className="text-white font-semibold text-sm">{profile.name}</div>
-                {profile.employee_id && (
-                  <div className="text-gray-500 text-xs">ID: {profile.employee_id}</div>
-                )}
-                <div className={`text-xs font-bold mt-1 ${CERT_LEVEL_COLORS[profile.cert_level] || 'text-gray-400'}`}>
-                  {profile.cert_level}
-                </div>
-              </div>
-              {profile.certifications?.length > 0 && (
-                <div className="flex flex-wrap gap-1 max-w-[120px] justify-end">
-                  {profile.certifications.map(c => (
-                    <span key={c} className="text-xs bg-gray-700 text-gray-300 px-1.5 py-0.5 rounded-full font-bold">
-                      {c}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
+        <ActiveCall
+          call={myCall}
+          myUnit={myUnit}
+          units={units}
+          backupRequested={backupRequested}
+          onRequestBackup={handleRequestBackup}
+        />
 
-        <ActiveCall call={myCall} />
         {myUnit && (
           <StatusButtons
             currentStatus={myUnit.status}
@@ -185,14 +202,6 @@ export default function CrewMobile() {
             loading={statusLoading}
           />
         )}
-        <div className="bg-gray-800 rounded-xl p-3 border border-gray-700">
-          <div className="flex items-center gap-2">
-            <div className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse" />
-            <span className="text-gray-400 text-xs">
-              GPS tracking active when hardware is connected
-            </span>
-          </div>
-        </div>
       </div>
 
       {/* Profile modal */}
