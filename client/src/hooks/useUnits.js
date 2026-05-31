@@ -1,13 +1,12 @@
 import { useState, useCallback, useEffect } from 'react';
-import { updateUnitStatus, createUnit as apiCreateUnit, editUnit as apiEditUnit, deleteUnit as apiDeleteUnit, clearUnitGps as apiClearGps } from '../services/api';
+import { getUnits, updateUnitStatus, createUnit as apiCreateUnit, editUnit as apiEditUnit, deleteUnit as apiDeleteUnit, clearUnitGps as apiClearGps } from '../services/api';
 
 export function useUnits() {
   const [units, setUnits] = useState([]);
 
   useEffect(() => {
-    fetch('/api/units')
-      .then(r => r.json())
-      .then(data => { if (Array.isArray(data)) setUnits(data); })
+    getUnits()
+      .then(res => { if (Array.isArray(res.data)) setUnits(res.data); })
       .catch(() => {});
   }, []);
 

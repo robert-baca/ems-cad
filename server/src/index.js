@@ -274,8 +274,13 @@ app.post('/api/auth/login', async (req, res) => {
   res.status(400).json({ error: 'Unknown role' });
 });
 
+const VALID_UNIT_STATUSES = new Set([
+  'available', 'dispatched', 'acknowledged', 'en_route',
+  'on_scene', 'patient_contact', 'transporting', 'cleared', 'out_of_service'
+]);
+
 // ── Units ─────────────────────────────────────────────────────────
-app.get('/api/units', (req, res) => {
+app.get('/api/units', verifyToken, (req, res) => {
   res.json(units.map(u => ({ ...u, password_hash: undefined })));
 });
 
@@ -287,6 +292,9 @@ app.patch('/api/units/:id/status', verifyToken, async (req, res) => {
       req.user.unit_id !== unit.id &&
       req.user.unit_number !== unit.unit_number)
     return res.status(403).json({ error: 'Forbidden' });
+
+  if (!VALID_UNIT_STATUSES.has(req.body.status))
+    return res.status(400).json({ error: 'Invalid status' });
 
   unit.status = req.body.status;
   saveUnit(unit).catch(console.error);
@@ -389,19 +397,22 @@ app.post('/api/calls', verifyToken, async (req, res) => {
   if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
   const hasUnit        = !!req.body.assigned_unit_id;
   const additionalIds  = Array.isArray(req.body.additional_unit_ids) ? req.body.additional_unit_ids : [];
+  const id         = `call-${Date.now()}`;
+  const callNumber = nextCallNum++;
   const call = {
-    id: `call-${Date.now()}`,
-    call_number: nextCallNum++,
-    status: hasUnit ? 'dispatched' : 'pending',
-    received_at: new Date().toISOString(),
-    dispatched_at: hasUnit ? new Date().toISOString() : null,
-    acknowledged_at: null, en_route_at: null, on_scene_at: null,
-    patient_contact_at: null, transporting_at: null, arrived_first_aid_at: null,
-    cleared_at: null, available_at: null,
-    closed_at: null, disposition: null, close_notes: null,
-    comments: [],
     ...req.body,
-    additional_unit_ids: additionalIds  // override body value; always a proper array
+    // Protected fields — never overrideable by the client
+    id,
+    call_number:          callNumber,
+    status:               hasUnit ? 'dispatched' : 'pending',
+    received_at:          new Date().toISOString(),
+    dispatched_at:        hasUnit ? new Date().toISOString() : null,
+    acknowledged_at:      null, en_route_at: null, on_scene_at: null,
+    patient_contact_at:   null, transporting_at: null, arrived_first_aid_at: null,
+    cleared_at:           null, available_at: null,
+    closed_at:            null, disposition: null, close_notes: null,
+    comments:             [],
+    additional_unit_ids:  additionalIds
   };
   calls.unshift(call);
   await saveCall(call).catch(console.error);
@@ -493,6 +504,16 @@ app.patch('/api/calls/:id/status', verifyToken, async (req, res) => {
   const call = calls.find(c => c.id === req.params.id);
   if (!call) return res.status(404).json({ error: 'Not found' });
 
+  if (req.user.role === 'crew') {
+    const allIds = [call.assigned_unit_id, ...(call.additional_unit_ids || [])];
+    if (!allIds.includes(req.user.unit_id))
+      return res.status(403).json({ error: 'Forbidden' });
+    // Crew can only advance status, not close or set arbitrary values
+    const CREW_ALLOWED = ['acknowledged','en_route','on_scene','patient_contact','transporting','cleared','available'];
+    if (!CREW_ALLOWED.includes(req.body.status))
+      return res.status(403).json({ error: 'Forbidden' });
+  }
+
   const TS_MAP = {
     en_route: 'en_route_at', on_scene: 'on_scene_at',
     patient_contact: 'patient_contact_at', cleared: 'cleared_at', available: 'available_at'
@@ -532,10 +553,12 @@ app.patch('/api/calls/:id/status', verifyToken, async (req, res) => {
 app.post('/api/calls/:id/comments', verifyToken, async (req, res) => {
   const call = calls.find(c => c.id === req.params.id);
   if (!call) return res.status(404).json({ error: 'Not found' });
+  if (!req.body.text?.trim()) return res.status(400).json({ error: 'text required' });
+  const author = req.user.role === 'crew' ? (req.user.unit_number || 'Crew') : 'Dispatcher';
   const comment = {
     id: `cmt-${Date.now()}`,
-    text: req.body.text,
-    author: req.body.author || (req.user.role === 'crew' ? req.user.unit_number : 'Dispatcher'),
+    text: req.body.text.trim(),
+    author,
     created_at: new Date().toISOString()
   };
   call.comments.push(comment);
@@ -633,6 +656,9 @@ app.post('/api/shift/end', verifyToken, async (req, res) => {
     calls:                shiftCalls
   };
 
+  // Capture unit IDs before clearing so we can notify crew sockets
+  const endedUnitIds = units.map(u => u.id);
+
   // Clear live state so the next shift starts fresh
   calls = [];
   for (const u of [...units]) {
@@ -642,6 +668,7 @@ app.post('/api/shift/end', verifyToken, async (req, res) => {
 
   currentShift = null;
   io.to('dispatchers').emit('shift:ended', { ...summary, units: [] });
+  endedUnitIds.forEach(uid => io.to(`crew:${uid}`).emit('shift:ended', { units: [] }));
   res.json(summary);
 });
 
@@ -685,9 +712,12 @@ function handleUnknownDevice(device_id) {
 }
 
 // ── GPS webhook (Tracki / generic hardware tracker) ───────────────
-// Configure your tracker to POST to: https://<your-domain>/api/gps/webhook
+// Configure your tracker to POST to: https://<your-domain>/api/gps/webhook?secret=GPS_WEBHOOK_SECRET
 // Set the unit's GPS Device ID to match the tracker's IMEI or device ID.
 app.post('/api/gps/webhook', (req, res) => {
+  const secret = process.env.GPS_WEBHOOK_SECRET;
+  if (secret && req.query.secret !== secret)
+    return res.status(401).json({ error: 'Unauthorized' });
   const body = req.body;
   console.log('[gps] incoming ping:', JSON.stringify(body));
 
@@ -709,7 +739,7 @@ app.post('/api/gps/webhook', (req, res) => {
 });
 
 // ── Locations ─────────────────────────────────────────────────────
-app.get('/api/locations', (req, res) => {
+app.get('/api/locations', verifyToken, (req, res) => {
   res.json(locations);
 });
 
@@ -775,6 +805,12 @@ app.delete('/api/calls/:id/mutual-aid/:entryId', verifyToken, async (req, res) =
 app.patch('/api/calls/:id/timestamps', verifyToken, async (req, res) => {
   const call = calls.find(c => c.id === req.params.id);
   if (!call) return res.status(404).json({ error: 'Not found' });
+
+  if (req.user.role === 'crew') {
+    const allIds = [call.assigned_unit_id, ...(call.additional_unit_ids || [])];
+    if (!allIds.includes(req.user.unit_id))
+      return res.status(403).json({ error: 'Forbidden' });
+  }
   const ALLOWED = ['received_at','dispatched_at','acknowledged_at','en_route_at',
                    'on_scene_at','patient_contact_at','arrived_first_aid_at','transporting_at',
                    'cleared_at','available_at','closed_at'];
@@ -788,6 +824,12 @@ app.patch('/api/calls/:id/timestamps', verifyToken, async (req, res) => {
 app.patch('/api/calls/:id/narrative', verifyToken, async (req, res) => {
   const call = calls.find(c => c.id === req.params.id);
   if (!call) return res.status(404).json({ error: 'Not found' });
+
+  if (req.user.role === 'crew') {
+    const allIds = [call.assigned_unit_id, ...(call.additional_unit_ids || [])];
+    if (!allIds.includes(req.user.unit_id))
+      return res.status(403).json({ error: 'Forbidden' });
+  }
   call.narrative = req.body.narrative ?? null;
   saveCall(call).catch(console.error);
   if (call.assigned_unit_id) io.to(`crew:${call.assigned_unit_id}`).emit('call:updated', { call_id: call.id, changes: { narrative: call.narrative } });

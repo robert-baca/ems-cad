@@ -8,11 +8,12 @@ export function useLocations() {
 
   // Load permanent locations from DB on mount
   useEffect(() => {
-    fetch('/api/locations')
+    if (!user?.token) return;
+    fetch('/api/locations', { headers: { Authorization: `Bearer ${user.token}` } })
       .then(r => r.json())
       .then(data => { if (Array.isArray(data)) setPermanent(data); })
       .catch(() => {});
-  }, []);
+  }, [user?.token]);
 
   const locations = [
     ...permanent.map(l => ({ ...l, locationType: 'permanent' })),

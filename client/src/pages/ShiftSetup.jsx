@@ -20,7 +20,7 @@ export default function ShiftSetup({ token, onShiftStarted }) {
   const [addSaving,   setAddSaving]   = useState(false);
 
   useEffect(() => {
-    fetch('/api/units')
+    fetch('/api/units', { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.json())
       .then(data => {
         if (!Array.isArray(data)) return;
@@ -32,7 +32,6 @@ export default function ShiftSetup({ token, onShiftStarted }) {
         setStaffing(initial);
       })
       .catch(() => {});
-
   }, [token]);
 
   const handleDeviceChange = async (unit_id, device_id) => {
