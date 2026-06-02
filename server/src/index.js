@@ -919,15 +919,16 @@ app.post('/api/display/auth', (req, res) => {
 });
 
 // ── Trackimo GPS polling ──────────────────────────────────────────
-// Uses the internal session-cookie API (no OAuth2 needed)
-const TRACKIMO_BASE = 'https://app.trackimo.com';
+// Login via app.trackimo.com; poll locations via plus.trackimo.com v4
+const TRACKIMO_APP  = 'https://app.trackimo.com';
+const TRACKIMO_PLUS = 'https://plus.trackimo.com';
 let trackimoCookie    = null;
 let trackimoAccountId = null;
 
 async function trackimoLogin() {
   const { TRACKIMO_USERNAME, TRACKIMO_PASSWORD } = process.env;
 
-  const loginRes = await fetch(`${TRACKIMO_BASE}/api/internal/v2/user/login`, {
+  const loginRes = await fetch(`${TRACKIMO_APP}/api/internal/v2/user/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username: TRACKIMO_USERNAME, password: TRACKIMO_PASSWORD })
@@ -953,30 +954,29 @@ async function trackimoLogin() {
   if (!trackimoAccountId)
     trackimoAccountId = loginData.account_id ?? loginData.accountId ?? loginData.id ?? null;
 
-  // Browser-like headers required to avoid 403 on Trackimo's API
+  // Browser-like headers to avoid 403
   const browserHeaders = {
     Cookie: trackimoCookie,
-    Origin: TRACKIMO_BASE,
-    Referer: `${TRACKIMO_BASE}/`,
+    Origin: TRACKIMO_PLUS,
+    Referer: `${TRACKIMO_PLUS}/`,
     'X-Requested-With': 'XMLHttpRequest',
     'User-Agent': 'Mozilla/5.0'
   };
 
-  // 3. Try /api/v3/user with browser headers
+  // 3. Try plus.trackimo.com v4 user endpoint
   if (!trackimoAccountId) {
-    const r = await fetch(`${TRACKIMO_BASE}/api/v3/user`, { headers: browserHeaders });
+    const r = await fetch(`${TRACKIMO_PLUS}/api/v4/user`, { headers: browserHeaders });
     const d = await r.json().catch(() => ({}));
-    console.log(`[tracki] /api/v3/user (${r.status}): ${JSON.stringify(d).slice(0, 300)}`);
+    console.log(`[tracki] /api/v4/user (${r.status}): ${JSON.stringify(d).slice(0, 300)}`);
     trackimoAccountId = d.account_id ?? d.accountId ?? d.id ?? null;
   }
 
-  // 4. Try /api/internal/v3/accounts with browser headers
+  // 4. Try app.trackimo.com v3 user endpoint
   if (!trackimoAccountId) {
-    const r = await fetch(`${TRACKIMO_BASE}/api/internal/v3/accounts`, { headers: browserHeaders });
+    const r = await fetch(`${TRACKIMO_APP}/api/v3/user`, { headers: { ...browserHeaders, Origin: TRACKIMO_APP, Referer: `${TRACKIMO_APP}/` } });
     const d = await r.json().catch(() => ({}));
-    console.log(`[tracki] /api/internal/v3/accounts (${r.status}): ${JSON.stringify(d).slice(0, 300)}`);
-    const list = Array.isArray(d) ? d : (d.accounts || d.data || []);
-    trackimoAccountId = list[0]?.account_id ?? list[0]?.id ?? null;
+    console.log(`[tracki] /api/v3/user (${r.status}): ${JSON.stringify(d).slice(0, 300)}`);
+    trackimoAccountId = d.account_id ?? d.accountId ?? d.id ?? null;
   }
 
   if (!trackimoAccountId) throw new Error('could not determine account_id — set TRACKIMO_ACCOUNT_ID env var');
@@ -987,14 +987,22 @@ async function pollTrackimoLocations() {
   const trackedUnits = units.filter(u => u.tracki_device_id);
   if (trackedUnits.length === 0 || !trackimoCookie || !trackimoAccountId) return;
 
-  const deviceIds = trackedUnits.map(u => Number(u.tracki_device_id));
+  const deviceIds = trackedUnits.map(u => u.tracki_device_id);
   try {
+    const params = new URLSearchParams({
+      comm_stat: '1',
+      device_ids: deviceIds.join(','),
+      fetch_is_fast_tracking_enabled: 'true'
+    });
     const res = await fetch(
-      `${TRACKIMO_BASE}/api/v3/accounts/${trackimoAccountId}/locations/filter?limit=${deviceIds.length}`,
+      `${TRACKIMO_PLUS}/api/v4/accounts/${trackimoAccountId}/locations/filter?${params}`,
       {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Cookie: trackimoCookie },
-        body: JSON.stringify({ device_ids: deviceIds })
+        headers: {
+          Cookie: trackimoCookie,
+          Origin: TRACKIMO_PLUS,
+          Referer: `${TRACKIMO_PLUS}/`,
+          'User-Agent': 'Mozilla/5.0'
+        }
       }
     );
 
@@ -1006,7 +1014,7 @@ async function pollTrackimoLocations() {
     }
 
     const payload = await res.json();
-    console.log(`[tracki] poll (${res.status}): ${JSON.stringify(payload).slice(0, 300)}`);
+    console.log(`[tracki] poll (${res.status}): ${JSON.stringify(payload).slice(0, 400)}`);
     const results = Array.isArray(payload) ? payload : (payload.locations || payload.data || []);
 
     for (const loc of results) {
