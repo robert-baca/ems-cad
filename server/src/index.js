@@ -996,9 +996,23 @@ async function trackimoAutoLogin() {
   });
   const rawCookies = (loginRes.headers.getSetCookie?.() || [loginRes.headers.get('set-cookie') || ''])
     .filter(Boolean).map(c => c.split(';')[0]);
+  const loginBody = await loginRes.text().catch(() => '');
   if (!loginRes.ok || rawCookies.length === 0) {
-    console.error(`[tracki] login failed (${loginRes.status})`);
+    console.error(`[tracki] login failed (${loginRes.status}): ${loginBody.slice(0, 200)}`);
     return false;
+  }
+  console.log(`[tracki] login body: ${loginBody.slice(0, 400)}`);
+  // Check if login response itself contains a token
+  let loginToken = null;
+  try {
+    const ld = JSON.parse(loginBody);
+    loginToken = ld.token ?? ld.access_token ?? ld.bearer ?? ld.apiKey ?? ld.api_key ?? null;
+  } catch {}
+  if (loginToken) {
+    trackimoBearer = loginToken.startsWith('Bearer ') ? loginToken.slice(7) : loginToken;
+    await saveTrackimoToken('access_token', trackimoBearer).catch(console.error);
+    console.log('[tracki] token found directly in login response');
+    return true;
   }
   const sessionCookie = rawCookies.join('; ');
   console.log(`[tracki] login OK — ${rawCookies.map(c => c.split('=')[0]).join(', ')}`);
@@ -1085,24 +1099,37 @@ async function trackimoAutoLogin() {
     } catch {}
   }
 
-  // Step 4: Try exchanging CODE2 (from redirect body) at the token endpoint
+  // Step 4: Try exchanging CODE2 at many possible endpoints
   if (!rawToken && redirectParsed.code) {
     const code2 = redirectParsed.code;
     const allCookies = [...rawCookies, ...redirectCookies].filter(Boolean).join('; ');
+    const xhrHeaders = { 'X-Requested-With': 'XMLHttpRequest', Cookie: allCookies, Origin: TRACKIMO_PLUS, Referer: `${TRACKIMO_PLUS}/` };
     console.log(`[tracki] step 4 — exchanging CODE2 for token`);
-    for (const [label, url, body] of [
-      ['plus-v3/form',   `${TRACKIMO_PLUS}/api/v3/oauth2/token`,
-        new URLSearchParams({ grant_type: 'authorization_code', client_id: TRACKI_INTERNAL_CLIENT, code: code2, redirect_uri: TRACKI_INTERNAL_REDIRECT }).toString()],
-      ['app-v3/form',    `${TRACKIMO_APP}/api/v3/oauth2/token`,
-        new URLSearchParams({ grant_type: 'authorization_code', client_id: TRACKI_INTERNAL_CLIENT, code: code2, redirect_uri: TRACKI_INTERNAL_REDIRECT }).toString()],
-    ]) {
+    const step4Attempts = [
+      // Internal-specific token endpoints (not standard oauth2)
+      ['internal-v1-auth/form',    `${TRACKIMO_PLUS}/api/internal/v1/auth`,
+        new URLSearchParams({ code: code2 }).toString(), 'application/x-www-form-urlencoded'],
+      ['internal-v1-auth/json',    `${TRACKIMO_PLUS}/api/internal/v1/auth`,
+        JSON.stringify({ code: code2 }), 'application/json'],
+      ['internal-v1-exchange/form',`${TRACKIMO_PLUS}/api/internal/v1/exchange`,
+        new URLSearchParams({ code: code2, client_id: TRACKI_INTERNAL_CLIENT }).toString(), 'application/x-www-form-urlencoded'],
+      // v4 token/auth endpoints
+      ['v4-token/form',            `${TRACKIMO_PLUS}/api/v4/token`,
+        new URLSearchParams({ code: code2, grant_type: 'authorization_code' }).toString(), 'application/x-www-form-urlencoded'],
+      ['v4-auth/form',             `${TRACKIMO_PLUS}/api/v4/auth`,
+        new URLSearchParams({ code: code2 }).toString(), 'application/x-www-form-urlencoded'],
+      // v3 with XHR header (in case server checks it)
+      ['plus-v3-xhr/form',         `${TRACKIMO_PLUS}/api/v3/oauth2/token`,
+        new URLSearchParams({ grant_type: 'authorization_code', client_id: TRACKI_INTERNAL_CLIENT, code: code2, redirect_uri: TRACKI_INTERNAL_REDIRECT }).toString(), 'application/x-www-form-urlencoded'],
+    ];
+    for (const [label, url, body, ct] of step4Attempts) {
       const tokRes = await fetch(url, {
         method: 'POST', redirect: 'manual',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: allCookies, Origin: TRACKIMO_PLUS, Referer: `${TRACKIMO_PLUS}/` },
+        headers: { ...xhrHeaders, 'Content-Type': ct },
         body
       });
       const tokBody = await tokRes.text().catch(() => '');
-      console.log(`[tracki] step4 ${label} (${tokRes.status}): ${tokBody.slice(0, 200)}`);
+      console.log(`[tracki] step4 ${label} (${tokRes.status}): ${tokBody.slice(0, 180)}`);
       let tokData = {};
       try { tokData = JSON.parse(tokBody); } catch {}
       rawToken = tokData.token ?? tokData.access_token ?? tokData.bearer_token ?? tokData.bearer ?? null;
@@ -1110,7 +1137,24 @@ async function trackimoAutoLogin() {
     }
   }
 
-  if (!rawToken) { console.error('[tracki] all token exchange attempts failed'); return false; }
+  if (!rawToken) {
+    // Last resort: scrape the plus.trackimo.com JS bundle to find the token exchange endpoint
+    console.log('[tracki] scraping plus.trackimo.com JS to find token endpoint...');
+    try {
+      const html = await fetch(`${TRACKIMO_PLUS}/`, { headers: { 'User-Agent': 'Mozilla/5.0' } }).then(r => r.text());
+      const scripts = [...html.matchAll(/src="([^"]+\.js[^"]*)"/g)].map(m => m[1]).filter(s => s.includes('chunk') || s.includes('main') || s.includes('app'));
+      console.log(`[tracki] found ${scripts.length} script(s): ${scripts.slice(0,3).join(', ')}`);
+      for (const src of scripts.slice(0, 2)) {
+        const url = src.startsWith('http') ? src : `${TRACKIMO_PLUS}${src}`;
+        const js = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }).then(r => r.text()).catch(() => '');
+        const matches = [...js.matchAll(/oauth_redirect|\/token|exchange|authCode|auth_code/gi)];
+        const snippets = matches.slice(0, 5).map(m => js.slice(Math.max(0, m.index-40), m.index+80));
+        if (snippets.length) console.log(`[tracki] JS snippets:\n${snippets.join('\n---\n')}`);
+      }
+    } catch (e) { console.log(`[tracki] JS scrape failed: ${e.message}`); }
+    console.error('[tracki] all token exchange attempts failed');
+    return false;
+  }
 
   trackimoBearer = rawToken.startsWith('Bearer ') ? rawToken.slice(7) : rawToken;
   await saveTrackimoToken('access_token', trackimoBearer).catch(console.error);
