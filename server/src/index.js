@@ -128,6 +128,14 @@ async function initDb() {
     )
   `);
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS trackimo_tokens (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT
+    )
+  `);
+
   const unitsRes = await pool.query('SELECT * FROM units ORDER BY unit_number');
   units = unitsRes.rows;
 
@@ -919,89 +927,89 @@ app.post('/api/display/auth', (req, res) => {
 });
 
 // ── Trackimo GPS polling ──────────────────────────────────────────
-// plus.trackimo.com v4 API uses Bearer token auth
+// plus.trackimo.com v4 API — Bearer token auth, stored in DB
 const TRACKIMO_APP  = 'https://app.trackimo.com';
 const TRACKIMO_PLUS = 'https://plus.trackimo.com';
 let trackimoBearer    = null;
-let trackimoCookie    = null;
 let trackimoAccountId = null;
 
-async function trackimoLogin() {
-  const { TRACKIMO_USERNAME, TRACKIMO_PASSWORD } = process.env;
+async function saveTrackimoToken(key, value) {
+  await pool.query(`
+    INSERT INTO trackimo_tokens (key, value, updated_at) VALUES ($1,$2,$3)
+    ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=EXCLUDED.updated_at
+  `, [key, value, new Date().toISOString()]);
+}
 
-  // TRACKIMO_BEARER_TOKEN env var = immediate manual override (paste from browser DevTools)
+async function loadTrackimoTokens() {
+  const res = await pool.query('SELECT key, value FROM trackimo_tokens');
+  const map = {};
+  res.rows.forEach(r => { map[r.key] = r.value; });
+  return map;
+}
+
+// Try refresh token → new access token; returns true on success
+async function tryRefreshToken() {
+  const stored = await loadTrackimoTokens().catch(() => ({}));
+  const refreshToken = stored.refresh_token;
+  if (!refreshToken || !process.env.TRACKIMO_CLIENT_ID) return false;
+  for (const base of [TRACKIMO_PLUS, TRACKIMO_APP]) {
+    for (const ver of ['v4', 'v3']) {
+      try {
+        const res  = await fetch(`${base}/api/${ver}/oauth2/token`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            client_id:     process.env.TRACKIMO_CLIENT_ID,
+            client_secret: process.env.TRACKIMO_CLIENT_SECRET,
+            grant_type:    'refresh_token',
+            refresh_token: refreshToken
+          })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (data.access_token) {
+          trackimoBearer = data.access_token;
+          await saveTrackimoToken('access_token', data.access_token);
+          if (data.refresh_token) await saveTrackimoToken('refresh_token', data.refresh_token);
+          console.log('[tracki] token refreshed via refresh_token');
+          return true;
+        }
+      } catch {}
+    }
+  }
+  return false;
+}
+
+async function trackimoStartup() {
+  trackimoAccountId = process.env.TRACKIMO_ACCOUNT_ID || null;
+
+  // 1. Manual env var override
   if (process.env.TRACKIMO_BEARER_TOKEN) {
-    trackimoBearer    = process.env.TRACKIMO_BEARER_TOKEN;
-    trackimoAccountId = process.env.TRACKIMO_ACCOUNT_ID || null;
-    if (!trackimoAccountId) throw new Error('set TRACKIMO_ACCOUNT_ID env var alongside TRACKIMO_BEARER_TOKEN');
-    console.log(`[tracki] using manual Bearer token — account_id=${trackimoAccountId}`);
+    trackimoBearer = process.env.TRACKIMO_BEARER_TOKEN;
+    if (!trackimoAccountId) { console.error('[tracki] also set TRACKIMO_ACCOUNT_ID'); return; }
+    console.log(`[tracki] using env Bearer token — account_id=${trackimoAccountId}`);
     return;
   }
 
-  // Try login on plus.trackimo.com (v4 — the API we're polling)
-  const loginAttempts = [
-    { url: `${TRACKIMO_PLUS}/api/v4/user/login`,           label: 'plus/v4'  },
-    { url: `${TRACKIMO_PLUS}/api/internal/v2/user/login`,  label: 'plus/int' },
-    { url: `${TRACKIMO_APP}/api/internal/v2/user/login`,   label: 'app/int'  }
-  ];
-
-  for (const { url, label } of loginAttempts) {
-    const base = url.startsWith(TRACKIMO_PLUS) ? TRACKIMO_PLUS : TRACKIMO_APP;
-    const res  = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Origin: base, Referer: `${base}/` },
-      body: JSON.stringify({ username: TRACKIMO_USERNAME, password: TRACKIMO_PASSWORD })
-    });
-    const rawCookies = (res.headers.getSetCookie?.() || [res.headers.get('set-cookie') || ''])
-      .filter(Boolean).map(c => c.split(';')[0]);
-    const data = await res.json().catch(() => ({}));
-    console.log(`[tracki] login ${label} (${res.status}) cookies=[${rawCookies.map(c => c.split('=')[0]).join(',')}] body=${JSON.stringify(data).slice(0, 250)}`);
-
-    if (res.ok) {
-      if (rawCookies.length && !trackimoCookie) trackimoCookie = rawCookies.join('; ');
-      const tok = data.access_token ?? data.token ?? data.jwt ?? data.bearer_token ?? null;
-      if (tok && !trackimoBearer) trackimoBearer = tok;
-      const aid = data.account_id ?? data.accountId ?? data.id ?? null;
-      if (aid && !trackimoAccountId) trackimoAccountId = String(aid);
-    }
-    if (trackimoBearer) break;
+  // 2. Load persisted tokens from DB
+  const stored = await loadTrackimoTokens().catch(() => ({}));
+  if (stored.access_token) {
+    trackimoBearer    = stored.access_token;
+    if (!trackimoAccountId && stored.account_id) trackimoAccountId = stored.account_id;
+    console.log(`[tracki] loaded Bearer token from DB — account_id=${trackimoAccountId}`);
+    return;
   }
 
-  // If no Bearer token yet, try OAuth2 code flow on plus.trackimo.com
-  if (!trackimoBearer && trackimoCookie && process.env.TRACKIMO_CLIENT_ID) {
-    const { TRACKIMO_CLIENT_ID, TRACKIMO_CLIENT_SECRET } = process.env;
-    const redirectUri = process.env.TRACKIMO_REDIRECT_URI || 'https://ems-cad-production.up.railway.app/api/tracki/callback';
-    const authParams  = new URLSearchParams({ client_id: TRACKIMO_CLIENT_ID, redirect_uri: redirectUri, response_type: 'code', scope: 'locations,devices' });
-
-    for (const base of [TRACKIMO_PLUS, TRACKIMO_APP]) {
-      for (const ver of ['v4', 'v3']) {
-        const authRes = await fetch(`${base}/api/${ver}/oauth2/auth?${authParams}`, {
-          redirect: 'manual',
-          headers: { Cookie: trackimoCookie, Origin: base, Referer: `${base}/` }
-        });
-        const loc  = authRes.headers.get('location') || '';
-        console.log(`[tracki] oauth2 ${base}/api/${ver} (${authRes.status}) → ${loc.slice(0, 100)}`);
-        const code = loc ? new URL(loc, base).searchParams.get('code') : null;
-        if (code) {
-          const tokRes  = await fetch(`${base}/api/${ver}/oauth2/token`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ client_id: TRACKIMO_CLIENT_ID, client_secret: TRACKIMO_CLIENT_SECRET, code })
-          });
-          const tokData = await tokRes.json().catch(() => ({}));
-          console.log(`[tracki] token exchange (${tokRes.status}): ${JSON.stringify(tokData).slice(0, 200)}`);
-          if (tokData.access_token) { trackimoBearer = tokData.access_token; break; }
-        }
-        if (trackimoBearer) break;
-      }
-      if (trackimoBearer) break;
-    }
+  // 3. Try refresh token if we have one but no access token
+  if (stored.refresh_token) {
+    const ok = await tryRefreshToken();
+    if (ok) { console.log('[tracki] refreshed token on startup'); return; }
   }
 
-  // account_id env var is authoritative fallback
-  if (!trackimoAccountId) trackimoAccountId = process.env.TRACKIMO_ACCOUNT_ID || null;
-  if (!trackimoAccountId) throw new Error('set TRACKIMO_ACCOUNT_ID env var (found in browser DevTools request URL)');
+  if (!trackimoAccountId) {
+    console.log('[tracki] no token available — visit /api/tracki/auth to authorize');
+    return;
+  }
 
-  console.log(`[tracki] auth complete — account_id=${trackimoAccountId} hasBearer=${!!trackimoBearer} hasCookie=${!!trackimoCookie}`);
+  console.log('[tracki] no token — visit /api/tracki/auth as a dispatcher to connect GPS');
 }
 
 async function pollTrackimoLocations() {
@@ -1033,11 +1041,12 @@ async function pollTrackimoLocations() {
         console.error('[tracki] manual Bearer token rejected — update TRACKIMO_BEARER_TOKEN in Railway');
         return;
       }
-      console.log(`[tracki] auth expired (${res.status}) — re-logging in`);
+      console.log(`[tracki] token expired (${res.status}) — attempting refresh`);
       trackimoBearer = null;
-      trackimoCookie = null;
-      await trackimoLogin();
-      return pollTrackimoLocations();
+      const refreshed = await tryRefreshToken();
+      if (refreshed) return pollTrackimoLocations();
+      console.error('[tracki] token expired and refresh failed — visit /api/tracki/auth to re-authorize');
+      return;
     }
 
     const payload = await res.json();
@@ -1065,16 +1074,69 @@ async function pollTrackimoLocations() {
 }
 
 async function startTrackimoPolling() {
-  if (!process.env.TRACKIMO_USERNAME || !process.env.TRACKIMO_PASSWORD) return;
-  try {
-    await trackimoLogin();
-    await pollTrackimoLocations();
-    setInterval(pollTrackimoLocations, 15000);
-    console.log('[tracki] polling started — 15 s interval');
-  } catch (err) {
-    console.error('[tracki] startup failed:', err.message);
-  }
+  if (!process.env.TRACKIMO_ACCOUNT_ID && !process.env.TRACKIMO_BEARER_TOKEN && !process.env.TRACKIMO_CLIENT_ID) return;
+  await trackimoStartup();
+  setInterval(pollTrackimoLocations, 15000);
+  await pollTrackimoLocations();
+  console.log('[tracki] polling started — 15 s interval');
 }
+
+// ── Trackimo OAuth2 setup endpoints ──────────────────────────────
+// Dispatcher visits /api/tracki/auth once to connect GPS permanently.
+const TRACKI_REDIRECT = process.env.TRACKIMO_REDIRECT_URI || 'https://ems-cad-production.up.railway.app/api/tracki/callback';
+
+app.get('/api/tracki/auth', verifyToken, (req, res) => {
+  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
+  const clientId = process.env.TRACKIMO_CLIENT_ID;
+  if (!clientId) return res.status(400).send('Set TRACKIMO_CLIENT_ID env var first');
+  const params = new URLSearchParams({
+    client_id: clientId, redirect_uri: TRACKI_REDIRECT,
+    response_type: 'code', scope: 'locations,devices'
+  });
+  // Try plus first (v4), fall back to app (v3)
+  res.redirect(`${TRACKIMO_PLUS}/api/v4/oauth2/auth?${params}`);
+});
+
+app.get('/api/tracki/callback', async (req, res) => {
+  const { code, error } = req.query;
+  if (error) return res.status(400).send(`Trackimo auth error: ${error}`);
+  if (!code)  return res.status(400).send('No auth code — authorization may have failed');
+
+  const clientId     = process.env.TRACKIMO_CLIENT_ID;
+  const clientSecret = process.env.TRACKIMO_CLIENT_SECRET;
+  let success = false;
+
+  for (const base of [TRACKIMO_PLUS, TRACKIMO_APP]) {
+    for (const ver of ['v4', 'v3']) {
+      try {
+        const tokRes  = await fetch(`${base}/api/${ver}/oauth2/token`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, code, redirect_uri: TRACKI_REDIRECT })
+        });
+        const tokData = await tokRes.json().catch(() => ({}));
+        console.log(`[tracki] callback token exchange ${base}/api/${ver} (${tokRes.status}): ${JSON.stringify(tokData).slice(0, 200)}`);
+        if (tokData.access_token) {
+          trackimoBearer = tokData.access_token;
+          await saveTrackimoToken('access_token', tokData.access_token);
+          if (tokData.refresh_token) await saveTrackimoToken('refresh_token', tokData.refresh_token);
+          const aid = tokData.account_id ?? tokData.accountId ?? trackimoAccountId ?? process.env.TRACKIMO_ACCOUNT_ID;
+          if (aid) { trackimoAccountId = String(aid); await saveTrackimoToken('account_id', trackimoAccountId); }
+          console.log('[tracki] OAuth2 authorized — GPS polling active');
+          success = true;
+          break;
+        }
+      } catch (err) { console.error(`[tracki] callback error ${base}:`, err.message); }
+    }
+    if (success) break;
+  }
+
+  if (success) {
+    return res.send(`<html><body style="background:#111;color:#fff;font-family:sans-serif;padding:40px;text-align:center">
+      <h2>✅ GPS Connected!</h2><p>Trackimo is now linked. GPS will update every 15 seconds.</p>
+      <p>You can close this tab.</p></body></html>`);
+  }
+  res.status(500).send('Token exchange failed — the OAuth2 endpoint may need adjustment. Check Railway logs.');
+});
 
 // ── Health ────────────────────────────────────────────────────────
 app.get('/api/health', (req, res) => res.json({ status: 'ok', ts: new Date().toISOString() }));
