@@ -918,6 +918,116 @@ app.post('/api/display/auth', (req, res) => {
   res.json({ token });
 });
 
+// ── Trackimo GPS polling ──────────────────────────────────────────
+const TRACKIMO_BASE = 'https://app.trackimo.com';
+let trackimoToken     = null;
+let trackimoAccountId = null;
+
+async function trackimoAuth() {
+  const { TRACKIMO_USERNAME, TRACKIMO_PASSWORD, TRACKIMO_CLIENT_ID, TRACKIMO_CLIENT_SECRET } = process.env;
+  const redirectUri = process.env.TRACKIMO_REDIRECT_URI || 'https://ems-cad-production.up.railway.app/api/tracki/callback';
+
+  // Step 1: Login → session cookie
+  const loginRes = await fetch(`${TRACKIMO_BASE}/api/internal/v2/user/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: TRACKIMO_USERNAME, password: TRACKIMO_PASSWORD })
+  });
+  const cookieHeader = loginRes.headers.get('set-cookie');
+  if (!cookieHeader) throw new Error('no session cookie from login');
+
+  // Step 2: OAuth2 auth code (manual redirect so we can read the Location header)
+  const authParams = new URLSearchParams({
+    client_id: TRACKIMO_CLIENT_ID, redirect_uri: redirectUri,
+    response_type: 'code', scope: 'locations,devices'
+  });
+  const authRes = await fetch(`${TRACKIMO_BASE}/api/v3/oauth2/auth?${authParams}`, {
+    redirect: 'manual',
+    headers: { Cookie: cookieHeader }
+  });
+  const locationHdr = authRes.headers.get('location') || '';
+  const code = new URL(locationHdr, TRACKIMO_BASE).searchParams.get('code');
+  if (!code) throw new Error(`no auth code in redirect: ${locationHdr}`);
+
+  // Step 3: Exchange code → access token
+  const tokenRes  = await fetch(`${TRACKIMO_BASE}/api/v3/oauth2/token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ client_id: TRACKIMO_CLIENT_ID, client_secret: TRACKIMO_CLIENT_SECRET, code })
+  });
+  const tokenData = await tokenRes.json();
+  if (!tokenData.access_token) throw new Error(`token exchange failed: ${JSON.stringify(tokenData)}`);
+  trackimoToken = tokenData.access_token;
+
+  // Step 4: Get account_id
+  const userRes  = await fetch(`${TRACKIMO_BASE}/api/v3/user`, {
+    headers: { Authorization: `Bearer ${trackimoToken}` }
+  });
+  const userData = await userRes.json();
+  trackimoAccountId = userData.account_id;
+  if (!trackimoAccountId) throw new Error(`no account_id: ${JSON.stringify(userData)}`);
+
+  console.log(`[tracki] authenticated — account_id=${trackimoAccountId}`);
+}
+
+async function pollTrackimoLocations() {
+  const trackedUnits = units.filter(u => u.tracki_device_id);
+  if (trackedUnits.length === 0 || !trackimoToken || !trackimoAccountId) return;
+
+  const deviceIds = trackedUnits.map(u => Number(u.tracki_device_id));
+  try {
+    const res = await fetch(
+      `${TRACKIMO_BASE}/api/v3/accounts/${trackimoAccountId}/locations/filter?limit=${deviceIds.length}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${trackimoToken}` },
+        body: JSON.stringify({ device_ids: deviceIds })
+      }
+    );
+
+    if (res.status === 401) {
+      console.log('[tracki] token expired — re-authenticating');
+      trackimoToken = null;
+      await trackimoAuth();
+      return pollTrackimoLocations();
+    }
+
+    const payload = await res.json();
+    const results = Array.isArray(payload) ? payload : (payload.locations || payload.data || []);
+
+    for (const loc of results) {
+      const deviceId = String(loc.device_id ?? loc.id ?? loc.tracki_id ?? '');
+      const lat      = parseFloat(loc.lat ?? loc.latitude  ?? 0);
+      const lng      = parseFloat(loc.lng ?? loc.longitude ?? loc.lon ?? 0);
+      const ts       = loc.timestamp ?? loc.time ?? new Date().toISOString();
+      if (!lat || !lng) continue;
+
+      const unit = units.find(u => u.tracki_device_id && String(u.tracki_device_id) === deviceId);
+      if (unit) {
+        applyGpsUpdate(unit, lat, lng, ts);
+        console.log(`[tracki] ${unit.unit_number} → ${lat}, ${lng}`);
+      } else {
+        handleUnknownDevice(deviceId);
+      }
+    }
+  } catch (err) {
+    console.error('[tracki] poll error:', err.message);
+  }
+}
+
+async function startTrackimoPolling() {
+  const { TRACKIMO_USERNAME, TRACKIMO_CLIENT_ID } = process.env;
+  if (!TRACKIMO_USERNAME || !TRACKIMO_CLIENT_ID) return;
+  try {
+    await trackimoAuth();
+    await pollTrackimoLocations();
+    setInterval(pollTrackimoLocations, 15000);
+    console.log('[tracki] polling started — 15 s interval');
+  } catch (err) {
+    console.error('[tracki] startup auth failed:', err.message);
+  }
+}
+
 // ── Health ────────────────────────────────────────────────────────
 app.get('/api/health', (req, res) => res.json({ status: 'ok', ts: new Date().toISOString() }));
 
@@ -1002,8 +1112,7 @@ initDb()
       console.log(`   Default login — dispatchers: "dispatch" / "ems2024"`);
       console.log(`   Default login — crews: "EMS-1" through "EMS-5" / "ems2024"\n`);
     });
-    // TODO: add Tracki API polling here once API credentials and docs are available
-    // if (process.env.TRACKI_API_KEY) { setInterval(pollTracki, 15000); }
+    startTrackimoPolling();
   })
   .catch(err => {
     console.error('[db] Failed to connect to database:', err.message);
