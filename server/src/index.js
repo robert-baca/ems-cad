@@ -967,6 +967,36 @@ async function trackimoLogin() {
     if (trackimoBearer) break;
   }
 
+  // If no Bearer token yet, try OAuth2 code flow on plus.trackimo.com
+  if (!trackimoBearer && trackimoCookie && process.env.TRACKIMO_CLIENT_ID) {
+    const { TRACKIMO_CLIENT_ID, TRACKIMO_CLIENT_SECRET } = process.env;
+    const redirectUri = process.env.TRACKIMO_REDIRECT_URI || 'https://ems-cad-production.up.railway.app/api/tracki/callback';
+    const authParams  = new URLSearchParams({ client_id: TRACKIMO_CLIENT_ID, redirect_uri: redirectUri, response_type: 'code', scope: 'locations,devices' });
+
+    for (const base of [TRACKIMO_PLUS, TRACKIMO_APP]) {
+      for (const ver of ['v4', 'v3']) {
+        const authRes = await fetch(`${base}/api/${ver}/oauth2/auth?${authParams}`, {
+          redirect: 'manual',
+          headers: { Cookie: trackimoCookie, Origin: base, Referer: `${base}/` }
+        });
+        const loc  = authRes.headers.get('location') || '';
+        console.log(`[tracki] oauth2 ${base}/api/${ver} (${authRes.status}) → ${loc.slice(0, 100)}`);
+        const code = loc ? new URL(loc, base).searchParams.get('code') : null;
+        if (code) {
+          const tokRes  = await fetch(`${base}/api/${ver}/oauth2/token`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ client_id: TRACKIMO_CLIENT_ID, client_secret: TRACKIMO_CLIENT_SECRET, code })
+          });
+          const tokData = await tokRes.json().catch(() => ({}));
+          console.log(`[tracki] token exchange (${tokRes.status}): ${JSON.stringify(tokData).slice(0, 200)}`);
+          if (tokData.access_token) { trackimoBearer = tokData.access_token; break; }
+        }
+        if (trackimoBearer) break;
+      }
+      if (trackimoBearer) break;
+    }
+  }
+
   // account_id env var is authoritative fallback
   if (!trackimoAccountId) trackimoAccountId = process.env.TRACKIMO_ACCOUNT_ID || null;
   if (!trackimoAccountId) throw new Error('set TRACKIMO_ACCOUNT_ID env var (found in browser DevTools request URL)');
@@ -976,7 +1006,7 @@ async function trackimoLogin() {
 
 async function pollTrackimoLocations() {
   const trackedUnits = units.filter(u => u.tracki_device_id);
-  if (trackedUnits.length === 0 || !trackimoCookie || !trackimoAccountId) return;
+  if (trackedUnits.length === 0 || (!trackimoBearer && !trackimoCookie) || !trackimoAccountId) return;
 
   const deviceIds = trackedUnits.map(u => u.tracki_device_id);
   try {
