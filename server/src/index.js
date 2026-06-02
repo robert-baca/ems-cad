@@ -919,67 +919,43 @@ app.post('/api/display/auth', (req, res) => {
 });
 
 // ── Trackimo GPS polling ──────────────────────────────────────────
+// Uses the internal session-cookie API (no OAuth2 needed)
 const TRACKIMO_BASE = 'https://app.trackimo.com';
-let trackimoToken     = null;
+let trackimoCookie    = null;
 let trackimoAccountId = null;
 
-async function trackimoAuth() {
-  const { TRACKIMO_USERNAME, TRACKIMO_PASSWORD, TRACKIMO_CLIENT_ID, TRACKIMO_CLIENT_SECRET } = process.env;
-  const redirectUri = process.env.TRACKIMO_REDIRECT_URI || 'https://ems-cad-production.up.railway.app/api/tracki/callback';
+async function trackimoLogin() {
+  const { TRACKIMO_USERNAME, TRACKIMO_PASSWORD } = process.env;
 
-  // Step 1: Login → session cookie
   const loginRes = await fetch(`${TRACKIMO_BASE}/api/internal/v2/user/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username: TRACKIMO_USERNAME, password: TRACKIMO_PASSWORD })
   });
   console.log(`[tracki] login status: ${loginRes.status}`);
-  // getSetCookie() returns each Set-Cookie header as a separate entry; strip attributes
+  if (!loginRes.ok) throw new Error(`login failed with status ${loginRes.status}`);
+
   const rawCookies = (loginRes.headers.getSetCookie?.() || [loginRes.headers.get('set-cookie') || ''])
-    .filter(Boolean)
-    .map(c => c.split(';')[0]);
+    .filter(Boolean).map(c => c.split(';')[0]);
   if (rawCookies.length === 0) throw new Error('no session cookie from login');
-  const cookieHeader = rawCookies.join('; ');
-  console.log(`[tracki] cookies: ${rawCookies.map(c => c.split('=')[0]).join(', ')}`);
+  trackimoCookie = rawCookies.join('; ');
+  console.log(`[tracki] session cookies: ${rawCookies.map(c => c.split('=')[0]).join(', ')}`);
 
-  // Step 2: OAuth2 auth code (manual redirect so we can read the Location header)
-  const authParams = new URLSearchParams({
-    client_id: TRACKIMO_CLIENT_ID, redirect_uri: redirectUri,
-    response_type: 'code', scope: 'locations,devices'
-  });
-  const authRes = await fetch(`${TRACKIMO_BASE}/api/v3/oauth2/auth?${authParams}`, {
-    redirect: 'manual',
-    headers: { Cookie: cookieHeader }
-  });
-  const locationHdr = authRes.headers.get('location') || '';
-  console.log(`[tracki] auth redirect status: ${authRes.status}, location: ${locationHdr.slice(0, 120)}`);
-  const code = new URL(locationHdr, TRACKIMO_BASE).searchParams.get('code');
-  if (!code) throw new Error(`no auth code in redirect: ${locationHdr}`);
-
-  // Step 3: Exchange code → access token
-  const tokenRes  = await fetch(`${TRACKIMO_BASE}/api/v3/oauth2/token`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ client_id: TRACKIMO_CLIENT_ID, client_secret: TRACKIMO_CLIENT_SECRET, code })
-  });
-  const tokenData = await tokenRes.json();
-  if (!tokenData.access_token) throw new Error(`token exchange failed: ${JSON.stringify(tokenData)}`);
-  trackimoToken = tokenData.access_token;
-
-  // Step 4: Get account_id
-  const userRes  = await fetch(`${TRACKIMO_BASE}/api/v3/user`, {
-    headers: { Authorization: `Bearer ${trackimoToken}` }
+  // Fetch account info using the session cookie
+  const userRes  = await fetch(`${TRACKIMO_BASE}/api/internal/v2/user`, {
+    headers: { Cookie: trackimoCookie }
   });
   const userData = await userRes.json();
-  trackimoAccountId = userData.account_id;
-  if (!trackimoAccountId) throw new Error(`no account_id: ${JSON.stringify(userData)}`);
+  console.log(`[tracki] user response (${userRes.status}): ${JSON.stringify(userData).slice(0, 300)}`);
+  trackimoAccountId = userData.account_id ?? userData.id ?? userData.accountId ?? null;
+  if (!trackimoAccountId) throw new Error(`no account_id in user response: ${JSON.stringify(userData).slice(0, 200)}`);
 
   console.log(`[tracki] authenticated — account_id=${trackimoAccountId}`);
 }
 
 async function pollTrackimoLocations() {
   const trackedUnits = units.filter(u => u.tracki_device_id);
-  if (trackedUnits.length === 0 || !trackimoToken || !trackimoAccountId) return;
+  if (trackedUnits.length === 0 || !trackimoCookie || !trackimoAccountId) return;
 
   const deviceIds = trackedUnits.map(u => Number(u.tracki_device_id));
   try {
@@ -987,19 +963,20 @@ async function pollTrackimoLocations() {
       `${TRACKIMO_BASE}/api/v3/accounts/${trackimoAccountId}/locations/filter?limit=${deviceIds.length}`,
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${trackimoToken}` },
+        headers: { 'Content-Type': 'application/json', Cookie: trackimoCookie },
         body: JSON.stringify({ device_ids: deviceIds })
       }
     );
 
-    if (res.status === 401) {
-      console.log('[tracki] token expired — re-authenticating');
-      trackimoToken = null;
-      await trackimoAuth();
+    if (res.status === 401 || res.status === 403) {
+      console.log(`[tracki] session expired (${res.status}) — re-logging in`);
+      trackimoCookie = null;
+      await trackimoLogin();
       return pollTrackimoLocations();
     }
 
     const payload = await res.json();
+    console.log(`[tracki] poll (${res.status}): ${JSON.stringify(payload).slice(0, 300)}`);
     const results = Array.isArray(payload) ? payload : (payload.locations || payload.data || []);
 
     for (const loc of results) {
@@ -1023,15 +1000,14 @@ async function pollTrackimoLocations() {
 }
 
 async function startTrackimoPolling() {
-  const { TRACKIMO_USERNAME, TRACKIMO_CLIENT_ID } = process.env;
-  if (!TRACKIMO_USERNAME || !TRACKIMO_CLIENT_ID) return;
+  if (!process.env.TRACKIMO_USERNAME || !process.env.TRACKIMO_PASSWORD) return;
   try {
-    await trackimoAuth();
+    await trackimoLogin();
     await pollTrackimoLocations();
     setInterval(pollTrackimoLocations, 15000);
     console.log('[tracki] polling started — 15 s interval');
   } catch (err) {
-    console.error('[tracki] startup auth failed:', err.message);
+    console.error('[tracki] startup failed:', err.message);
   }
 }
 
