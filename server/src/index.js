@@ -953,17 +953,26 @@ async function trackimoLogin() {
   if (!trackimoAccountId)
     trackimoAccountId = loginData.account_id ?? loginData.accountId ?? loginData.id ?? null;
 
-  // 3. Try /api/v3/user with session cookie
+  // Browser-like headers required to avoid 403 on Trackimo's API
+  const browserHeaders = {
+    Cookie: trackimoCookie,
+    Origin: TRACKIMO_BASE,
+    Referer: `${TRACKIMO_BASE}/`,
+    'X-Requested-With': 'XMLHttpRequest',
+    'User-Agent': 'Mozilla/5.0'
+  };
+
+  // 3. Try /api/v3/user with browser headers
   if (!trackimoAccountId) {
-    const r = await fetch(`${TRACKIMO_BASE}/api/v3/user`, { headers: { Cookie: trackimoCookie } });
+    const r = await fetch(`${TRACKIMO_BASE}/api/v3/user`, { headers: browserHeaders });
     const d = await r.json().catch(() => ({}));
     console.log(`[tracki] /api/v3/user (${r.status}): ${JSON.stringify(d).slice(0, 300)}`);
     trackimoAccountId = d.account_id ?? d.accountId ?? d.id ?? null;
   }
 
-  // 4. Try /api/internal/v3/accounts
+  // 4. Try /api/internal/v3/accounts with browser headers
   if (!trackimoAccountId) {
-    const r = await fetch(`${TRACKIMO_BASE}/api/internal/v3/accounts`, { headers: { Cookie: trackimoCookie } });
+    const r = await fetch(`${TRACKIMO_BASE}/api/internal/v3/accounts`, { headers: browserHeaders });
     const d = await r.json().catch(() => ({}));
     console.log(`[tracki] /api/internal/v3/accounts (${r.status}): ${JSON.stringify(d).slice(0, 300)}`);
     const list = Array.isArray(d) ? d : (d.accounts || d.data || []);
