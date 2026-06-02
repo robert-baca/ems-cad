@@ -1017,7 +1017,33 @@ async function trackimoAutoLogin() {
   const sessionCookie = rawCookies.join('; ');
   console.log(`[tracki] login OK — ${rawCookies.map(c => c.split('=')[0]).join(', ')}`);
 
-  // Step 1b: Try session cookie directly on the v4 location API (simplest path)
+  // Step 1b: probe user/token endpoints on app.trackimo.com and plus.trackimo.com
+  const probeHeaders = { Cookie: sessionCookie, Origin: TRACKIMO_APP, Referer: `${TRACKIMO_APP}/`, 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' };
+  for (const url of [
+    `${TRACKIMO_APP}/api/internal/v2/user`,
+    `${TRACKIMO_APP}/api/internal/v2/user/me`,
+    `${TRACKIMO_APP}/api/internal/v2/user/token`,
+    `${TRACKIMO_APP}/api/v2/user`,
+    `${TRACKIMO_APP}/api/v4/user`,
+    `${TRACKIMO_PLUS}/api/v4/user`,
+    `${TRACKIMO_PLUS}/api/internal/v2/user`,
+  ]) {
+    const pr = await fetch(url, { headers: probeHeaders }).catch(() => null);
+    if (!pr) continue;
+    const pb = await pr.text().catch(() => '');
+    console.log(`[tracki] probe ${url.replace(/https?:\/\/[^/]+/, '')} (${pr.status}): ${pb.slice(0, 300)}`);
+    let pd = {};
+    try { pd = JSON.parse(pb); } catch {}
+    const tok = pd.token ?? pd.access_token ?? pd.bearer ?? pd.apiKey ?? pd.api_key ?? pd.accessToken ?? null;
+    if (tok) {
+      trackimoBearer = tok.startsWith('Bearer ') ? tok.slice(7) : tok;
+      await saveTrackimoToken('access_token', trackimoBearer).catch(console.error);
+      console.log(`[tracki] token found in probe response from ${url}`);
+      return true;
+    }
+  }
+
+  // Step 1c: Try session cookie directly on the v4 location API (simplest path)
   if (trackimoAccountId) {
     const testRes = await fetch(
       `${TRACKIMO_PLUS}/api/v4/accounts/${trackimoAccountId}/locations/filter?comm_stat=1&device_ids=0`,
