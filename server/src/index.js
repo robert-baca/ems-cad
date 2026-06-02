@@ -978,38 +978,99 @@ async function tryRefreshToken() {
   return false;
 }
 
+// Full server-side OAuth2 flow using Trackimo's internal client
+// (discovered by inspecting plus.trackimo.com network traffic)
+const TRACKI_INTERNAL_CLIENT   = '9092cd94-a728-47b7-86da-e15c9a3d4cdb';
+const TRACKI_INTERNAL_REDIRECT = `${TRACKIMO_PLUS}/api/internal/v1/oauth_redirect`;
+
+async function trackimoAutoLogin() {
+  const { TRACKIMO_USERNAME, TRACKIMO_PASSWORD } = process.env;
+  if (!TRACKIMO_USERNAME || !TRACKIMO_PASSWORD) return false;
+
+  // Step 1: Login → JSESSIONID
+  const loginRes = await fetch(`${TRACKIMO_APP}/api/internal/v2/user/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: TRACKIMO_APP, Referer: `${TRACKIMO_APP}/` },
+    body: JSON.stringify({ username: TRACKIMO_USERNAME, password: TRACKIMO_PASSWORD })
+  });
+  const rawCookies = (loginRes.headers.getSetCookie?.() || [loginRes.headers.get('set-cookie') || ''])
+    .filter(Boolean).map(c => c.split(';')[0]);
+  if (!loginRes.ok || rawCookies.length === 0) {
+    console.error(`[tracki] login failed (${loginRes.status})`);
+    return false;
+  }
+  const sessionCookie = rawCookies.join('; ');
+  console.log(`[tracki] login OK — ${rawCookies.map(c => c.split('=')[0]).join(', ')}`);
+
+  // Step 2: OAuth2 auth code via plus.trackimo.com/api/v3 using internal client
+  const authParams = new URLSearchParams({
+    client_id:     TRACKI_INTERNAL_CLIENT,
+    redirect_uri:  TRACKI_INTERNAL_REDIRECT,
+    response_type: 'code',
+    scope:         'locations,notifications,devices,accounts,settings,geozones'
+  });
+  const authRes = await fetch(`${TRACKIMO_PLUS}/api/v3/oauth2/auth?${authParams}`, {
+    redirect: 'manual',
+    headers: { Cookie: sessionCookie, Origin: TRACKIMO_PLUS, Referer: `${TRACKIMO_PLUS}/` }
+  });
+  const locationHdr = authRes.headers.get('location') || '';
+  const code = locationHdr ? new URL(locationHdr, TRACKIMO_PLUS).searchParams.get('code') : null;
+  console.log(`[tracki] oauth2/auth (${authRes.status}) code=${code ? 'ok' : 'missing'}`);
+  if (!code) { console.error(`[tracki] no auth code — location: ${locationHdr}`); return false; }
+
+  // Step 3: Follow internal redirect to exchange code for token
+  const redirectRes  = await fetch(`${TRACKI_INTERNAL_REDIRECT}?code=${code}`, {
+    redirect: 'manual',
+    headers: { Cookie: sessionCookie, Origin: TRACKIMO_PLUS, Referer: `${TRACKIMO_PLUS}/` }
+  });
+  const redirectBody     = await redirectRes.text().catch(() => '');
+  const redirectLocation = redirectRes.headers.get('location') || '';
+  const redirectCookies  = (redirectRes.headers.getSetCookie?.() || [redirectRes.headers.get('set-cookie') || ''])
+    .filter(Boolean).map(c => c.split(';')[0]);
+  console.log(`[tracki] oauth_redirect (${redirectRes.status}) loc=${redirectLocation.slice(0,120)} cookies=[${redirectCookies.map(c=>c.split('=')[0]).join(',')}] body=${redirectBody.slice(0,300)}`);
+
+  // Extract token from body, cookies, or redirect location
+  let rawToken = null;
+  try {
+    const parsed = JSON.parse(redirectBody);
+    rawToken = parsed.token ?? parsed.access_token ?? parsed.bearer_token ?? null;
+  } catch {}
+  if (!rawToken) rawToken = redirectCookies.find(c => /^token=/i.test(c))?.split('=').slice(1).join('=') || null;
+  if (!rawToken && redirectLocation) {
+    const u = new URL(redirectLocation, TRACKIMO_PLUS);
+    rawToken = u.searchParams.get('token') ?? u.searchParams.get('access_token') ?? null;
+  }
+
+  if (!rawToken) { console.error('[tracki] token not found in redirect response — see body/cookies above'); return false; }
+
+  // localStorage stores "Bearer <token>"; strip prefix so we control it
+  trackimoBearer = rawToken.startsWith('Bearer ') ? rawToken.slice(7) : rawToken;
+  await saveTrackimoToken('access_token', trackimoBearer).catch(console.error);
+  console.log('[tracki] token acquired via server-side OAuth2 flow');
+  return true;
+}
+
 async function trackimoStartup() {
   trackimoAccountId = process.env.TRACKIMO_ACCOUNT_ID || null;
+  if (!trackimoAccountId) { console.log('[tracki] set TRACKIMO_ACCOUNT_ID env var'); return; }
 
   // 1. Manual env var override
   if (process.env.TRACKIMO_BEARER_TOKEN) {
     trackimoBearer = process.env.TRACKIMO_BEARER_TOKEN;
-    if (!trackimoAccountId) { console.error('[tracki] also set TRACKIMO_ACCOUNT_ID'); return; }
     console.log(`[tracki] using env Bearer token — account_id=${trackimoAccountId}`);
     return;
   }
 
-  // 2. Load persisted tokens from DB
+  // 2. Load persisted token from DB
   const stored = await loadTrackimoTokens().catch(() => ({}));
   if (stored.access_token) {
-    trackimoBearer    = stored.access_token;
-    if (!trackimoAccountId && stored.account_id) trackimoAccountId = stored.account_id;
-    console.log(`[tracki] loaded Bearer token from DB — account_id=${trackimoAccountId}`);
+    trackimoBearer = stored.access_token;
+    console.log(`[tracki] loaded token from DB — account_id=${trackimoAccountId}`);
     return;
   }
 
-  // 3. Try refresh token if we have one but no access token
-  if (stored.refresh_token) {
-    const ok = await tryRefreshToken();
-    if (ok) { console.log('[tracki] refreshed token on startup'); return; }
-  }
-
-  if (!trackimoAccountId) {
-    console.log('[tracki] no token available — visit /api/tracki/auth to authorize');
-    return;
-  }
-
-  console.log('[tracki] no token — visit /api/tracki/auth as a dispatcher to connect GPS');
+  // 3. Auto-login with username/password → OAuth2 flow
+  await trackimoAutoLogin();
 }
 
 async function pollTrackimoLocations() {
@@ -1041,11 +1102,12 @@ async function pollTrackimoLocations() {
         console.error('[tracki] manual Bearer token rejected — update TRACKIMO_BEARER_TOKEN in Railway');
         return;
       }
-      console.log(`[tracki] token expired (${res.status}) — attempting refresh`);
+      console.log(`[tracki] token expired (${res.status}) — re-authenticating`);
       trackimoBearer = null;
-      const refreshed = await tryRefreshToken();
-      if (refreshed) return pollTrackimoLocations();
-      console.error('[tracki] token expired and refresh failed — visit /api/tracki/auth to re-authorize');
+      await pool.query("DELETE FROM trackimo_tokens WHERE key='access_token'").catch(() => {});
+      const ok = await trackimoAutoLogin();
+      if (ok) return pollTrackimoLocations();
+      console.error('[tracki] re-auth failed — will retry next poll cycle');
       return;
     }
 
@@ -1074,7 +1136,7 @@ async function pollTrackimoLocations() {
 }
 
 async function startTrackimoPolling() {
-  if (!process.env.TRACKIMO_ACCOUNT_ID && !process.env.TRACKIMO_BEARER_TOKEN && !process.env.TRACKIMO_CLIENT_ID) return;
+  if (!process.env.TRACKIMO_ACCOUNT_ID && !process.env.TRACKIMO_BEARER_TOKEN && !process.env.TRACKIMO_USERNAME) return;
   await trackimoStartup();
   setInterval(pollTrackimoLocations, 15000);
   await pollTrackimoLocations();
