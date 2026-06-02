@@ -1031,14 +1031,49 @@ async function trackimoAutoLogin() {
 
   // Extract token from body, cookies, or redirect location
   let rawToken = null;
+  let redirectParsed = {};
   try {
-    const parsed = JSON.parse(redirectBody);
-    rawToken = parsed.token ?? parsed.access_token ?? parsed.bearer_token ?? null;
+    redirectParsed = JSON.parse(redirectBody);
+    rawToken = redirectParsed.token ?? redirectParsed.access_token ?? redirectParsed.bearer_token ?? null;
   } catch {}
   if (!rawToken) rawToken = redirectCookies.find(c => /^token=/i.test(c))?.split('=').slice(1).join('=') || null;
   if (!rawToken && redirectLocation) {
     const u = new URL(redirectLocation, TRACKIMO_PLUS);
     rawToken = u.searchParams.get('token') ?? u.searchParams.get('access_token') ?? null;
+  }
+
+  // Step 4: If the redirect returned {"code":"STEP2_CODE"}, exchange it for the bearer token
+  if (!rawToken && redirectParsed.code) {
+    const step2Code = redirectParsed.code;
+    console.log(`[tracki] step 4 — exchanging second code for token`);
+    const allCookies = [...rawCookies, ...redirectCookies].filter(Boolean).join('; ');
+    for (const [bodyFmt, bodyContent] of [
+      ['json',  JSON.stringify({ client_id: TRACKI_INTERNAL_CLIENT, code: step2Code, redirect_uri: TRACKI_INTERNAL_REDIRECT })],
+      ['form',  new URLSearchParams({ client_id: TRACKI_INTERNAL_CLIENT, code: step2Code, redirect_uri: TRACKI_INTERNAL_REDIRECT }).toString()]
+    ]) {
+      const tokRes  = await fetch(`${TRACKIMO_PLUS}/api/v3/oauth2/token`, {
+        method: 'POST',
+        redirect: 'manual',
+        headers: {
+          'Content-Type': bodyFmt === 'json' ? 'application/json' : 'application/x-www-form-urlencoded',
+          Cookie: allCookies,
+          Origin: TRACKIMO_PLUS,
+          Referer: `${TRACKIMO_PLUS}/`
+        },
+        body: bodyContent
+      });
+      const tokBody = await tokRes.text().catch(() => '');
+      console.log(`[tracki] token exchange ${bodyFmt} (${tokRes.status}): ${tokBody.slice(0, 300)}`);
+      let tokData = {};
+      try { tokData = JSON.parse(tokBody); } catch {}
+      rawToken = tokData.token ?? tokData.access_token ?? tokData.bearer_token ?? tokData.bearer ?? null;
+      if (!rawToken && tokRes.headers) {
+        const tokCookies = (tokRes.headers.getSetCookie?.() || [tokRes.headers.get('set-cookie') || ''])
+          .filter(Boolean).map(c => c.split(';')[0]);
+        rawToken = tokCookies.find(c => /^token=/i.test(c))?.split('=').slice(1).join('=') || null;
+      }
+      if (rawToken) break;
+    }
   }
 
   if (!rawToken) { console.error('[tracki] token not found in redirect response — see body/cookies above'); return false; }
@@ -1075,7 +1110,7 @@ async function trackimoStartup() {
 
 async function pollTrackimoLocations() {
   const trackedUnits = units.filter(u => u.tracki_device_id);
-  if (trackedUnits.length === 0 || (!trackimoBearer && !trackimoCookie) || !trackimoAccountId) return;
+  if (trackedUnits.length === 0 || !trackimoBearer || !trackimoAccountId) return;
 
   const deviceIds = trackedUnits.map(u => u.tracki_device_id);
   try {
@@ -1090,7 +1125,6 @@ async function pollTrackimoLocations() {
       'User-Agent': 'Mozilla/5.0'
     };
     if (trackimoBearer)  pollHeaders['Authorization'] = `Bearer ${trackimoBearer}`;
-    if (trackimoCookie)  pollHeaders['Cookie']        = trackimoCookie;
 
     const res = await fetch(
       `${TRACKIMO_PLUS}/api/v4/accounts/${trackimoAccountId}/locations/filter?${params}`,
