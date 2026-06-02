@@ -935,21 +935,42 @@ async function trackimoLogin() {
   console.log(`[tracki] login status: ${loginRes.status}`);
   if (!loginRes.ok) throw new Error(`login failed with status ${loginRes.status}`);
 
+  // Read cookies from headers
   const rawCookies = (loginRes.headers.getSetCookie?.() || [loginRes.headers.get('set-cookie') || ''])
     .filter(Boolean).map(c => c.split(';')[0]);
   if (rawCookies.length === 0) throw new Error('no session cookie from login');
   trackimoCookie = rawCookies.join('; ');
   console.log(`[tracki] session cookies: ${rawCookies.map(c => c.split('=')[0]).join(', ')}`);
 
-  // Fetch account info using the session cookie
-  const userRes  = await fetch(`${TRACKIMO_BASE}/api/internal/v2/user`, {
-    headers: { Cookie: trackimoCookie }
-  });
-  const userData = await userRes.json();
-  console.log(`[tracki] user response (${userRes.status}): ${JSON.stringify(userData).slice(0, 300)}`);
-  trackimoAccountId = userData.account_id ?? userData.id ?? userData.accountId ?? null;
-  if (!trackimoAccountId) throw new Error(`no account_id in user response: ${JSON.stringify(userData).slice(0, 200)}`);
+  // Log login body — it often contains account_id
+  const loginData = await loginRes.json().catch(() => ({}));
+  console.log(`[tracki] login body: ${JSON.stringify(loginData).slice(0, 400)}`);
 
+  // 1. Try env var override (set TRACKIMO_ACCOUNT_ID in Railway to skip lookup)
+  trackimoAccountId = process.env.TRACKIMO_ACCOUNT_ID || null;
+
+  // 2. Try login response body
+  if (!trackimoAccountId)
+    trackimoAccountId = loginData.account_id ?? loginData.accountId ?? loginData.id ?? null;
+
+  // 3. Try /api/v3/user with session cookie
+  if (!trackimoAccountId) {
+    const r = await fetch(`${TRACKIMO_BASE}/api/v3/user`, { headers: { Cookie: trackimoCookie } });
+    const d = await r.json().catch(() => ({}));
+    console.log(`[tracki] /api/v3/user (${r.status}): ${JSON.stringify(d).slice(0, 300)}`);
+    trackimoAccountId = d.account_id ?? d.accountId ?? d.id ?? null;
+  }
+
+  // 4. Try /api/internal/v3/accounts
+  if (!trackimoAccountId) {
+    const r = await fetch(`${TRACKIMO_BASE}/api/internal/v3/accounts`, { headers: { Cookie: trackimoCookie } });
+    const d = await r.json().catch(() => ({}));
+    console.log(`[tracki] /api/internal/v3/accounts (${r.status}): ${JSON.stringify(d).slice(0, 300)}`);
+    const list = Array.isArray(d) ? d : (d.accounts || d.data || []);
+    trackimoAccountId = list[0]?.account_id ?? list[0]?.id ?? null;
+  }
+
+  if (!trackimoAccountId) throw new Error('could not determine account_id — set TRACKIMO_ACCOUNT_ID env var');
   console.log(`[tracki] authenticated — account_id=${trackimoAccountId}`);
 }
 
