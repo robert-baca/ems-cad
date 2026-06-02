@@ -1022,7 +1022,16 @@ async function trackimoAutoLogin() {
     }
   }
 
-  // Step 2: OAuth2 auth code using our plus.trackimo.com session
+  // Probe API docs to find any documented token endpoint
+  for (const docsUrl of [`${TRACKIMO_PLUS}/api/v3/swagger.json`, `${TRACKIMO_PLUS}/v3/api-docs`, `${TRACKIMO_PLUS}/api-docs`]) {
+    const dr = await fetch(docsUrl, { headers: { Cookie: sessionCookie, Accept: 'application/json', 'User-Agent': 'Mozilla/5.0' } }).catch(() => null);
+    if (dr?.ok) {
+      const dt = await dr.text().catch(() => '');
+      console.log(`[tracki] api-docs ${docsUrl.replace(/https?:\/\/[^/]+/, '')} (${dr.status}): ${dt.slice(0, 400)}`);
+    }
+  }
+
+  // Step 2: OAuth2 auth code — capture cookies from auth response too
   const authParams = new URLSearchParams({
     client_id:     TRACKI_INTERNAL_CLIENT,
     redirect_uri:  TRACKI_INTERNAL_REDIRECT,
@@ -1033,25 +1042,30 @@ async function trackimoAutoLogin() {
     redirect: 'manual',
     headers: { Cookie: sessionCookie, Origin: TRACKIMO_PLUS, Referer: `${TRACKIMO_PLUS}/` }
   });
+  const authCookies = (authRes.headers.getSetCookie?.() || [authRes.headers.get('set-cookie') || ''])
+    .filter(Boolean).map(c => c.split(';')[0]);
   const locationHdr = authRes.headers.get('location') || '';
   const authCode = locationHdr ? new URL(locationHdr, TRACKIMO_PLUS).searchParams.get('code') : null;
-  console.log(`[tracki] oauth2/auth (${authRes.status}) code=${authCode ? 'ok' : 'missing'}`);
+  // Merge any new cookies from auth response into session
+  const mergedSession = [...rawCookies, ...authCookies].filter(Boolean).join('; ');
+  console.log(`[tracki] oauth2/auth (${authRes.status}) code=${authCode ? 'ok' : 'missing'} new-cookies=[${authCookies.map(c=>c.split('=')[0]).join(',')}]`);
   if (!authCode) { console.error(`[tracki] no auth code — location: ${locationHdr}`); return false; }
 
-  // Step 3: Exchange auth code using plus.trackimo.com session (not app.trackimo.com!)
+  // Step 3: Exchange auth code — try with merged session (includes any cookies from auth response)
   let rawToken = null;
-  for (const [label, body] of [
-    ['authcode/form', new URLSearchParams({ grant_type: 'authorization_code', client_id: TRACKI_INTERNAL_CLIENT, code: authCode, redirect_uri: TRACKI_INTERNAL_REDIRECT }).toString()],
-    ['authcode/json', JSON.stringify({ grant_type: 'authorization_code', client_id: TRACKI_INTERNAL_CLIENT, code: authCode, redirect_uri: TRACKI_INTERNAL_REDIRECT })],
+  for (const [label, body, cookie] of [
+    ['authcode/merged-form', new URLSearchParams({ grant_type: 'authorization_code', client_id: TRACKI_INTERNAL_CLIENT, code: authCode, redirect_uri: TRACKI_INTERNAL_REDIRECT }).toString(), mergedSession],
+    ['authcode/session-form', new URLSearchParams({ grant_type: 'authorization_code', client_id: TRACKI_INTERNAL_CLIENT, code: authCode, redirect_uri: TRACKI_INTERNAL_REDIRECT }).toString(), sessionCookie],
+    ['authcode/session-json', JSON.stringify({ grant_type: 'authorization_code', client_id: TRACKI_INTERNAL_CLIENT, code: authCode, redirect_uri: TRACKI_INTERNAL_REDIRECT }), sessionCookie],
   ]) {
     const ct = label.endsWith('/json') ? 'application/json' : 'application/x-www-form-urlencoded';
     const tokRes = await fetch(`${TRACKIMO_PLUS}/api/v3/oauth2/token`, {
       method: 'POST', redirect: 'manual',
-      headers: { 'Content-Type': ct, Cookie: sessionCookie, Origin: TRACKIMO_PLUS, Referer: `${TRACKIMO_PLUS}/` },
+      headers: { 'Content-Type': ct, Cookie: cookie, Origin: TRACKIMO_PLUS, Referer: `${TRACKIMO_PLUS}/` },
       body
     });
     const tokBody = await tokRes.text().catch(() => '');
-    console.log(`[tracki] token exchange ${label} (${tokRes.status}): ${tokBody.slice(0, 300)}`);
+    console.log(`[tracki] token exchange ${label} (${tokRes.status}): ${tokBody.slice(0, 200)}`);
     let tokData = {};
     try { tokData = JSON.parse(tokBody); } catch {}
     rawToken = tokData.token ?? tokData.access_token ?? tokData.bearer_token ?? tokData.bearer ?? null;
