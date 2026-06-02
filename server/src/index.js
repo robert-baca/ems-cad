@@ -919,68 +919,59 @@ app.post('/api/display/auth', (req, res) => {
 });
 
 // ── Trackimo GPS polling ──────────────────────────────────────────
-// Login via app.trackimo.com; poll locations via plus.trackimo.com v4
+// plus.trackimo.com v4 API uses Bearer token auth
 const TRACKIMO_APP  = 'https://app.trackimo.com';
 const TRACKIMO_PLUS = 'https://plus.trackimo.com';
+let trackimoBearer    = null;
 let trackimoCookie    = null;
 let trackimoAccountId = null;
 
 async function trackimoLogin() {
   const { TRACKIMO_USERNAME, TRACKIMO_PASSWORD } = process.env;
 
-  const loginRes = await fetch(`${TRACKIMO_APP}/api/internal/v2/user/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: TRACKIMO_USERNAME, password: TRACKIMO_PASSWORD })
-  });
-  console.log(`[tracki] login status: ${loginRes.status}`);
-  if (!loginRes.ok) throw new Error(`login failed with status ${loginRes.status}`);
-
-  // Read cookies from headers
-  const rawCookies = (loginRes.headers.getSetCookie?.() || [loginRes.headers.get('set-cookie') || ''])
-    .filter(Boolean).map(c => c.split(';')[0]);
-  if (rawCookies.length === 0) throw new Error('no session cookie from login');
-  trackimoCookie = rawCookies.join('; ');
-  console.log(`[tracki] session cookies: ${rawCookies.map(c => c.split('=')[0]).join(', ')}`);
-
-  // Log login body — it often contains account_id
-  const loginData = await loginRes.json().catch(() => ({}));
-  console.log(`[tracki] login body: ${JSON.stringify(loginData).slice(0, 400)}`);
-
-  // 1. Try env var override (set TRACKIMO_ACCOUNT_ID in Railway to skip lookup)
-  trackimoAccountId = process.env.TRACKIMO_ACCOUNT_ID || null;
-
-  // 2. Try login response body
-  if (!trackimoAccountId)
-    trackimoAccountId = loginData.account_id ?? loginData.accountId ?? loginData.id ?? null;
-
-  // Browser-like headers to avoid 403
-  const browserHeaders = {
-    Cookie: trackimoCookie,
-    Origin: TRACKIMO_PLUS,
-    Referer: `${TRACKIMO_PLUS}/`,
-    'X-Requested-With': 'XMLHttpRequest',
-    'User-Agent': 'Mozilla/5.0'
-  };
-
-  // 3. Try plus.trackimo.com v4 user endpoint
-  if (!trackimoAccountId) {
-    const r = await fetch(`${TRACKIMO_PLUS}/api/v4/user`, { headers: browserHeaders });
-    const d = await r.json().catch(() => ({}));
-    console.log(`[tracki] /api/v4/user (${r.status}): ${JSON.stringify(d).slice(0, 300)}`);
-    trackimoAccountId = d.account_id ?? d.accountId ?? d.id ?? null;
+  // TRACKIMO_BEARER_TOKEN env var = immediate manual override (paste from browser DevTools)
+  if (process.env.TRACKIMO_BEARER_TOKEN) {
+    trackimoBearer    = process.env.TRACKIMO_BEARER_TOKEN;
+    trackimoAccountId = process.env.TRACKIMO_ACCOUNT_ID || null;
+    if (!trackimoAccountId) throw new Error('set TRACKIMO_ACCOUNT_ID env var alongside TRACKIMO_BEARER_TOKEN');
+    console.log(`[tracki] using manual Bearer token — account_id=${trackimoAccountId}`);
+    return;
   }
 
-  // 4. Try app.trackimo.com v3 user endpoint
-  if (!trackimoAccountId) {
-    const r = await fetch(`${TRACKIMO_APP}/api/v3/user`, { headers: { ...browserHeaders, Origin: TRACKIMO_APP, Referer: `${TRACKIMO_APP}/` } });
-    const d = await r.json().catch(() => ({}));
-    console.log(`[tracki] /api/v3/user (${r.status}): ${JSON.stringify(d).slice(0, 300)}`);
-    trackimoAccountId = d.account_id ?? d.accountId ?? d.id ?? null;
+  // Try login on plus.trackimo.com (v4 — the API we're polling)
+  const loginAttempts = [
+    { url: `${TRACKIMO_PLUS}/api/v4/user/login`,           label: 'plus/v4'  },
+    { url: `${TRACKIMO_PLUS}/api/internal/v2/user/login`,  label: 'plus/int' },
+    { url: `${TRACKIMO_APP}/api/internal/v2/user/login`,   label: 'app/int'  }
+  ];
+
+  for (const { url, label } of loginAttempts) {
+    const base = url.startsWith(TRACKIMO_PLUS) ? TRACKIMO_PLUS : TRACKIMO_APP;
+    const res  = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: base, Referer: `${base}/` },
+      body: JSON.stringify({ username: TRACKIMO_USERNAME, password: TRACKIMO_PASSWORD })
+    });
+    const rawCookies = (res.headers.getSetCookie?.() || [res.headers.get('set-cookie') || ''])
+      .filter(Boolean).map(c => c.split(';')[0]);
+    const data = await res.json().catch(() => ({}));
+    console.log(`[tracki] login ${label} (${res.status}) cookies=[${rawCookies.map(c => c.split('=')[0]).join(',')}] body=${JSON.stringify(data).slice(0, 250)}`);
+
+    if (res.ok) {
+      if (rawCookies.length && !trackimoCookie) trackimoCookie = rawCookies.join('; ');
+      const tok = data.access_token ?? data.token ?? data.jwt ?? data.bearer_token ?? null;
+      if (tok && !trackimoBearer) trackimoBearer = tok;
+      const aid = data.account_id ?? data.accountId ?? data.id ?? null;
+      if (aid && !trackimoAccountId) trackimoAccountId = String(aid);
+    }
+    if (trackimoBearer) break;
   }
 
-  if (!trackimoAccountId) throw new Error('could not determine account_id — set TRACKIMO_ACCOUNT_ID env var');
-  console.log(`[tracki] authenticated — account_id=${trackimoAccountId}`);
+  // account_id env var is authoritative fallback
+  if (!trackimoAccountId) trackimoAccountId = process.env.TRACKIMO_ACCOUNT_ID || null;
+  if (!trackimoAccountId) throw new Error('set TRACKIMO_ACCOUNT_ID env var (found in browser DevTools request URL)');
+
+  console.log(`[tracki] auth complete — account_id=${trackimoAccountId} hasBearer=${!!trackimoBearer} hasCookie=${!!trackimoCookie}`);
 }
 
 async function pollTrackimoLocations() {
@@ -994,20 +985,26 @@ async function pollTrackimoLocations() {
       device_ids: deviceIds.join(','),
       fetch_is_fast_tracking_enabled: 'true'
     });
+    const pollHeaders = {
+      Origin: TRACKIMO_PLUS,
+      Referer: `${TRACKIMO_PLUS}/`,
+      'User-Agent': 'Mozilla/5.0'
+    };
+    if (trackimoBearer)  pollHeaders['Authorization'] = `Bearer ${trackimoBearer}`;
+    if (trackimoCookie)  pollHeaders['Cookie']        = trackimoCookie;
+
     const res = await fetch(
       `${TRACKIMO_PLUS}/api/v4/accounts/${trackimoAccountId}/locations/filter?${params}`,
-      {
-        headers: {
-          Cookie: trackimoCookie,
-          Origin: TRACKIMO_PLUS,
-          Referer: `${TRACKIMO_PLUS}/`,
-          'User-Agent': 'Mozilla/5.0'
-        }
-      }
+      { headers: pollHeaders }
     );
 
     if (res.status === 401 || res.status === 403) {
-      console.log(`[tracki] session expired (${res.status}) — re-logging in`);
+      if (process.env.TRACKIMO_BEARER_TOKEN) {
+        console.error('[tracki] manual Bearer token rejected — update TRACKIMO_BEARER_TOKEN in Railway');
+        return;
+      }
+      console.log(`[tracki] auth expired (${res.status}) — re-logging in`);
+      trackimoBearer = null;
       trackimoCookie = null;
       await trackimoLogin();
       return pollTrackimoLocations();
