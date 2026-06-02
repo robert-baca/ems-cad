@@ -1047,27 +1047,37 @@ async function trackimoAutoLogin() {
     const step2Code = redirectParsed.code;
     console.log(`[tracki] step 4 — exchanging second code for token`);
     const allCookies = [...rawCookies, ...redirectCookies].filter(Boolean).join('; ');
-    for (const [bodyFmt, bodyContent] of [
-      ['json',  JSON.stringify({ client_id: TRACKI_INTERNAL_CLIENT, code: step2Code, redirect_uri: TRACKI_INTERNAL_REDIRECT })],
-      ['form',  new URLSearchParams({ client_id: TRACKI_INTERNAL_CLIENT, code: step2Code, redirect_uri: TRACKI_INTERNAL_REDIRECT }).toString()]
-    ]) {
-      const tokRes  = await fetch(`${TRACKIMO_PLUS}/api/v3/oauth2/token`, {
-        method: 'POST',
-        redirect: 'manual',
-        headers: {
-          'Content-Type': bodyFmt === 'json' ? 'application/json' : 'application/x-www-form-urlencoded',
-          Cookie: allCookies,
-          Origin: TRACKIMO_PLUS,
-          Referer: `${TRACKIMO_PLUS}/`
-        },
-        body: bodyContent
+
+    // Try multiple endpoint/body combinations — 500 usually means missing grant_type
+    const attempts = [
+      // v3 with grant_type, with redirect_uri
+      ['v3+grant+redir/json',  'POST', `${TRACKIMO_PLUS}/api/v3/oauth2/token`, 'application/json',
+        JSON.stringify({ grant_type: 'authorization_code', client_id: TRACKI_INTERNAL_CLIENT, code: step2Code, redirect_uri: TRACKI_INTERNAL_REDIRECT })],
+      ['v3+grant+redir/form',  'POST', `${TRACKIMO_PLUS}/api/v3/oauth2/token`, 'application/x-www-form-urlencoded',
+        new URLSearchParams({ grant_type: 'authorization_code', client_id: TRACKI_INTERNAL_CLIENT, code: step2Code, redirect_uri: TRACKI_INTERNAL_REDIRECT }).toString()],
+      // v3 without redirect_uri
+      ['v3+grant/form',        'POST', `${TRACKIMO_PLUS}/api/v3/oauth2/token`, 'application/x-www-form-urlencoded',
+        new URLSearchParams({ grant_type: 'authorization_code', client_id: TRACKI_INTERNAL_CLIENT, code: step2Code }).toString()],
+      // v4 with grant_type
+      ['v4+grant+redir/form',  'POST', `${TRACKIMO_PLUS}/api/v4/oauth2/token`, 'application/x-www-form-urlencoded',
+        new URLSearchParams({ grant_type: 'authorization_code', client_id: TRACKI_INTERNAL_CLIENT, code: step2Code, redirect_uri: TRACKI_INTERNAL_REDIRECT }).toString()],
+      // Internal token endpoint (no grant_type)
+      ['internal/form',        'POST', `${TRACKIMO_PLUS}/api/internal/v1/token`, 'application/x-www-form-urlencoded',
+        new URLSearchParams({ client_id: TRACKI_INTERNAL_CLIENT, code: step2Code }).toString()],
+    ];
+
+    for (const [label, method, url, ct, body] of attempts) {
+      const tokRes = await fetch(url, {
+        method, redirect: 'manual',
+        headers: { 'Content-Type': ct, Cookie: allCookies, Origin: TRACKIMO_PLUS, Referer: `${TRACKIMO_PLUS}/` },
+        body
       });
       const tokBody = await tokRes.text().catch(() => '');
-      console.log(`[tracki] token exchange ${bodyFmt} (${tokRes.status}): ${tokBody.slice(0, 300)}`);
+      console.log(`[tracki] step4 ${label} (${tokRes.status}): ${tokBody.slice(0, 200)}`);
       let tokData = {};
       try { tokData = JSON.parse(tokBody); } catch {}
       rawToken = tokData.token ?? tokData.access_token ?? tokData.bearer_token ?? tokData.bearer ?? null;
-      if (!rawToken && tokRes.headers) {
+      if (!rawToken) {
         const tokCookies = (tokRes.headers.getSetCookie?.() || [tokRes.headers.get('set-cookie') || ''])
           .filter(Boolean).map(c => c.split(';')[0]);
         rawToken = tokCookies.find(c => /^token=/i.test(c))?.split('=').slice(1).join('=') || null;
