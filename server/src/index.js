@@ -1084,11 +1084,7 @@ async function pollTrackimoLocations() {
       device_ids: deviceIds.join(','),
       fetch_is_fast_tracking_enabled: 'true'
     });
-    const pollHeaders = {
-      Origin: TRACKIMO_PLUS,
-      Referer: `${TRACKIMO_PLUS}/`,
-      'User-Agent': 'Mozilla/5.0'
-    };
+    const pollHeaders = { Accept: 'application/json' };
     if (trackimoBearer)        pollHeaders['Authorization'] = `Bearer ${trackimoBearer}`;
     if (trackimoSessionCookie) pollHeaders['Cookie']        = trackimoSessionCookie;
 
