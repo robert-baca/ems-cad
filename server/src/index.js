@@ -1043,13 +1043,48 @@ async function trackimoAutoLogin() {
     }
   }
 
-  // Step 1c: Try session cookie directly on the v4 location API (simplest path)
+  // Step 1c: Try logging in directly to plus.trackimo.com — may issue its own Bearer token
+  for (const plusLoginUrl of [
+    `${TRACKIMO_PLUS}/api/internal/v2/user/login`,
+    `${TRACKIMO_PLUS}/api/v3/auth/login`,
+    `${TRACKIMO_PLUS}/api/v4/auth/login`,
+  ]) {
+    const plRes = await fetch(plusLoginUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: TRACKIMO_PLUS, Referer: `${TRACKIMO_PLUS}/`, 'User-Agent': 'Mozilla/5.0' },
+      body: JSON.stringify({ username: TRACKIMO_USERNAME, password: TRACKIMO_PASSWORD })
+    }).catch(() => null);
+    if (!plRes) continue;
+    const plBody = await plRes.text().catch(() => '');
+    const plCookies = (plRes.headers.getSetCookie?.() || [plRes.headers.get('set-cookie') || ''])
+      .filter(Boolean).map(c => c.split(';')[0]);
+    console.log(`[tracki] plus-login ${plusLoginUrl.replace(/https?:\/\/[^/]+/, '')} (${plRes.status}) cookies=[${plCookies.map(c=>c.split('=')[0]).join(',')}]: ${plBody.slice(0,300)}`);
+    let pd = {};
+    try { pd = JSON.parse(plBody); } catch {}
+    const tok = pd.token ?? pd.access_token ?? pd.bearer ?? pd.apiKey ?? null;
+    if (tok) {
+      trackimoBearer = tok.startsWith('Bearer ') ? tok.slice(7) : tok;
+      await saveTrackimoToken('access_token', trackimoBearer).catch(console.error);
+      console.log(`[tracki] token from direct plus.trackimo.com login`);
+      return true;
+    }
+    // If plus.trackimo.com sets its own session cookie, use it for OAuth
+    if (plCookies.some(c => c.startsWith('JSESSIONID='))) {
+      const plusSession = plCookies.join('; ');
+      console.log(`[tracki] plus.trackimo.com issued its own session — retrying auth with it`);
+      // Will be used in step 2 below if we store it
+    }
+  }
+
+  // Step 1d: Session cookie test with real device id and log response body
   if (trackimoAccountId) {
+    const deviceId = process.env.TRACKIMO_DEVICE_ID || '0';
     const testRes = await fetch(
-      `${TRACKIMO_PLUS}/api/v4/accounts/${trackimoAccountId}/locations/filter?comm_stat=1&device_ids=0`,
+      `${TRACKIMO_PLUS}/api/v4/accounts/${trackimoAccountId}/locations/filter?comm_stat=1&device_ids=${deviceId}`,
       { headers: { Cookie: sessionCookie, Origin: TRACKIMO_PLUS, Referer: `${TRACKIMO_PLUS}/`, 'User-Agent': 'Mozilla/5.0' } }
     );
-    console.log(`[tracki] session-cookie test (${testRes.status})`);
+    const testBody = await testRes.text().catch(() => '');
+    console.log(`[tracki] session-cookie test (${testRes.status}): ${testBody.slice(0, 200)}`);
     if (testRes.status !== 401 && testRes.status !== 403) {
       trackimoSessionCookie = sessionCookie;
       await saveTrackimoToken('session_cookie', sessionCookie).catch(console.error);
