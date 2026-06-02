@@ -933,8 +933,14 @@ async function trackimoAuth() {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username: TRACKIMO_USERNAME, password: TRACKIMO_PASSWORD })
   });
-  const cookieHeader = loginRes.headers.get('set-cookie');
-  if (!cookieHeader) throw new Error('no session cookie from login');
+  console.log(`[tracki] login status: ${loginRes.status}`);
+  // getSetCookie() returns each Set-Cookie header as a separate entry; strip attributes
+  const rawCookies = (loginRes.headers.getSetCookie?.() || [loginRes.headers.get('set-cookie') || ''])
+    .filter(Boolean)
+    .map(c => c.split(';')[0]);
+  if (rawCookies.length === 0) throw new Error('no session cookie from login');
+  const cookieHeader = rawCookies.join('; ');
+  console.log(`[tracki] cookies: ${rawCookies.map(c => c.split('=')[0]).join(', ')}`);
 
   // Step 2: OAuth2 auth code (manual redirect so we can read the Location header)
   const authParams = new URLSearchParams({
@@ -946,6 +952,7 @@ async function trackimoAuth() {
     headers: { Cookie: cookieHeader }
   });
   const locationHdr = authRes.headers.get('location') || '';
+  console.log(`[tracki] auth redirect status: ${authRes.status}, location: ${locationHdr.slice(0, 120)}`);
   const code = new URL(locationHdr, TRACKIMO_BASE).searchParams.get('code');
   if (!code) throw new Error(`no auth code in redirect: ${locationHdr}`);
 
