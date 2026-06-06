@@ -51,9 +51,9 @@ export default function ParkMap({
       map.addLayer({
         id: 'units-circle', type: 'circle', source: 'units',
         paint: {
-          'circle-radius': 13,
+          'circle-radius': 8,
           'circle-color': ['get', 'color'],
-          'circle-stroke-width': 2.5,
+          'circle-stroke-width': 2,
           'circle-stroke-color': ['get', 'stroke_color'],
           'circle-opacity': ['get', 'opacity']
         }

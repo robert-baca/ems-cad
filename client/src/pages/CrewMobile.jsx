@@ -191,8 +191,6 @@ export default function CrewMobile() {
           call={myCall}
           myUnit={myUnit}
           units={units}
-          backupRequested={backupRequested}
-          onRequestBackup={handleRequestBackup}
         />
 
         {myUnit && (
@@ -203,6 +201,22 @@ export default function CrewMobile() {
           />
         )}
       </div>
+
+      {/* SOS button — fixed to bottom, only when on an active call */}
+      {myCall && (
+        <div className="flex-shrink-0 p-3 border-t border-gray-700 bg-gray-900">
+          <button
+            onClick={handleRequestBackup}
+            className={`w-full py-4 rounded-xl font-black text-base tracking-wide transition-all active:scale-95
+              ${backupRequested
+                ? 'bg-green-800 border border-green-600 text-green-300'
+                : 'bg-red-600 hover:bg-red-500 text-white shadow-lg shadow-red-900/50'
+              }`}
+          >
+            {backupRequested ? '✓ Backup Requested — Tap to Cancel' : '🆘 Request Backup'}
+          </button>
+        </div>
+      )}
 
       {/* Profile modal */}
       {showProfile && (

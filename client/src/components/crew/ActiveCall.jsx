@@ -8,7 +8,7 @@ function formatTime(iso) {
   return new Date(iso).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 }
 
-export default function ActiveCall({ call, myUnit, units = [], backupRequested, onRequestBackup }) {
+export default function ActiveCall({ call, myUnit, units = [] }) {
   if (!call) {
     return (
       <div className="bg-gray-800 rounded-2xl p-6 text-center border border-gray-700">
@@ -90,18 +90,6 @@ export default function ActiveCall({ call, myUnit, units = [], backupRequested, 
             </div>
           </div>
         )}
-
-        {/* Request Backup button */}
-        <button
-          onClick={onRequestBackup}
-          className={`w-full py-4 rounded-xl font-bold text-base transition-all active:scale-95
-            ${backupRequested
-              ? 'bg-green-800 border border-green-600 text-green-300'
-              : 'bg-red-600 hover:bg-red-500 text-white shadow-lg shadow-red-900/40'
-            }`}
-        >
-          {backupRequested ? '✓ Backup Requested — Tap to Cancel' : '🆘 Request Backup'}
-        </button>
 
         {/* Recent comments from dispatch */}
         {recentComments.length > 0 && (
