@@ -3,6 +3,7 @@ import { useAuth } from './context/AuthContext';
 import Login from './pages/Login';
 import DispatcherDashboard from './pages/DispatcherDashboard';
 import DisplayBoard from './pages/DisplayBoard';
+import CrewMobile from './pages/CrewMobile';
 
 function ProtectedRoute({ children }) {
   const { user } = useAuth();
@@ -19,6 +20,14 @@ export default function App() {
         element={
           <ProtectedRoute>
             <DispatcherDashboard />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/crew"
+        element={
+          <ProtectedRoute>
+            <CrewMobile />
           </ProtectedRoute>
         }
       />
