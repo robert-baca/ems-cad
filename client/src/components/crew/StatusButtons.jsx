@@ -2,14 +2,16 @@ import { STATUS_LABELS, STATUS_COLORS } from '../../data/mockData';
 
 // Buttons the crew can tap, in logical call flow order
 const BUTTONS = [
-  { status: 'en_route',        label: 'En Route',        icon: '🔵' },
-  { status: 'on_scene',        label: 'On Scene',        icon: '🟠' },
+  { status: 'acknowledged',   label: 'Acknowledged',   icon: '👁️' },
+  { status: 'en_route',       label: 'En Route',        icon: '🔵' },
+  { status: 'on_scene',       label: 'On Scene',        icon: '🟠' },
   { status: 'patient_contact', label: 'Patient Contact', icon: '🔴' },
-  { status: 'cleared',         label: 'Cleared',         icon: '⚪' },
-  { status: 'available',       label: 'Available',       icon: '🟢' }
+  { status: 'transporting',   label: 'Transporting',   icon: '🏥' },
+  { status: 'cleared',        label: 'Cleared',         icon: '⚪' },
+  { status: 'available',      label: 'Available',       icon: '🟢' }
 ];
 
-const SEQUENCE = ['dispatched', 'en_route', 'on_scene', 'patient_contact', 'cleared', 'available'];
+const SEQUENCE = ['dispatched', 'acknowledged', 'en_route', 'on_scene', 'patient_contact', 'transporting', 'cleared', 'available'];
 
 export default function StatusButtons({ currentStatus, onStatusChange, loading }) {
   const currentIdx = SEQUENCE.indexOf(currentStatus);

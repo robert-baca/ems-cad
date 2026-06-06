@@ -65,6 +65,7 @@ export default function DispatcherDashboard() {
   const [showOptions,       setShowOptions]          = useState(false);
   const [leftOpen,          setLeftOpen]             = useState(true);
   const [rightOpen,         setRightOpen]            = useState(true);
+  const [sosAlerts,         setSosAlerts]            = useState([]);
 
   // Load current shift on mount
   useEffect(() => {
@@ -86,7 +87,18 @@ export default function DispatcherDashboard() {
     'call:updated':        handleCallUpdated,
     'call:status_change':  handleCallStatusChange,
     'call:assigned':       handleCallAssigned,
-    'call:comment_added':  handleCommentAdded,
+    'call:comment_added':  ({ call_id, comment }) => {
+      handleCommentAdded({ call_id, comment });
+      if (comment.text?.startsWith('🆘 BACKUP REQUESTED')) {
+        setSosAlerts(prev => prev.some(a => a.call_id === call_id)
+          ? prev
+          : [...prev, { id: comment.id, call_id, author: comment.author, time: comment.created_at }]
+        );
+      }
+      if (comment.text?.startsWith('✅ Backup no longer needed')) {
+        setSosAlerts(prev => prev.filter(a => a.call_id !== call_id));
+      }
+    },
     'shift:started':       ({ shift, units: u }) => { setCurrentShift(shift); if (setUnits) setUnits(u); },
     'shift:ended':         ({ units: u, ...summary }) => { setShiftSummary(summary); setCurrentShift(null); setCalls([]); setSelectedCallId(null); if (u) setUnits(u); },
     'gps:unknown_device':  ({ device_id }) => setUnknownGpsDevice(device_id)
@@ -187,6 +199,40 @@ export default function DispatcherDashboard() {
       className="flex flex-col h-screen bg-gray-900 text-white overflow-hidden"
       onClick={() => contextMenu && setContextMenu(null)}
     >
+      {/* ── SOS backup alerts ─────────────────────────────────── */}
+      {sosAlerts.map(alert => {
+        const alertCall = calls.find(c => c.id === alert.call_id);
+        return (
+          <div key={alert.id}
+            className="flex items-center gap-3 px-4 py-3 bg-red-600 border-b-2 border-red-400 flex-shrink-0 animate-pulse"
+          >
+            <span className="text-2xl flex-shrink-0">🆘</span>
+            <div className="flex-1 min-w-0">
+              <div className="text-white font-black text-sm tracking-wide">BACKUP REQUESTED</div>
+              <div className="text-red-100 text-xs font-medium">
+                {alert.author}
+                {alertCall ? ` · Case #${alertCall.call_number} — ${alertCall.call_type}` : ''}
+              </div>
+            </div>
+            {alertCall && (
+              <button
+                onClick={() => { setSelectedCallId(alert.call_id); setShowHistory(false); setRightOpen(true); }}
+                className="flex-shrink-0 px-3 py-1.5 bg-white text-red-700 font-bold text-xs rounded-lg hover:bg-red-50 transition-colors"
+              >
+                View Call
+              </button>
+            )}
+            <button
+              onClick={() => setSosAlerts(prev => prev.filter(a => a.id !== alert.id))}
+              className="flex-shrink-0 text-red-200 hover:text-white text-xl font-bold leading-none px-1"
+              title="Dismiss"
+            >
+              ×
+            </button>
+          </div>
+        );
+      })}
+
       {/* ── Header ────────────────────────────────────────────── */}
       <header className="flex items-center justify-between px-4 py-2.5 bg-gray-800 border-b border-gray-700 flex-shrink-0">
         <div className="flex items-center gap-3">

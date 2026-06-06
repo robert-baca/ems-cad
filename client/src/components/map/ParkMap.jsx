@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
 import { STATUS_COLORS } from '../../data/mockData';
 
@@ -13,12 +13,13 @@ export default function ParkMap({
   onMapClick, onMapRightClick, onRemoveLocation,
   newCallPin, flyToTarget
 }) {
-  const containerRef      = useRef(null);
-  const mapRef            = useRef(null);
-  const callMarkersRef    = useRef({});
+  const containerRef       = useRef(null);
+  const mapRef             = useRef(null);
+  const callMarkersRef     = useRef({});
   const locationMarkersRef = useRef({});
-  const newPinRef         = useRef(null);
-  const mapReadyRef       = useRef(false);
+  const newPinRef          = useRef(null);
+  const mapReadyRef        = useRef(false);
+  const [mapLoaded, setMapLoaded] = useState(false);
 
   // Resize map whenever its container changes dimensions (e.g. panel collapse)
   useEffect(() => {
@@ -96,12 +97,13 @@ export default function ParkMap({
       });
 
       mapReadyRef.current = true;
+      setMapLoaded(true); // triggers units/calls effects if data arrived before map loaded
     });
 
     return () => { map.remove(); mapRef.current = null; mapReadyRef.current = false; };
   }, []);
 
-  // Update unit dots
+  // Update unit dots — mapLoaded in deps ensures this re-runs after map style loads
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReadyRef.current) return;
@@ -125,7 +127,7 @@ export default function ParkMap({
         };
       });
     source.setData({ type: 'FeatureCollection', features });
-  }, [units]);
+  }, [units, mapLoaded]);
 
   // Update call pin markers
   useEffect(() => {

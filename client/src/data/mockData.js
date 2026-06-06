@@ -2,9 +2,11 @@ export const STATUS_COLORS = {
   pending:         '#6366f1',
   available:       '#22c55e',
   dispatched:      '#eab308',
+  acknowledged:    '#a78bfa',
   en_route:        '#3b82f6',
   on_scene:        '#f97316',
   patient_contact: '#ef4444',
+  transporting:    '#f472b6',
   cleared:         '#9ca3af',
   out_of_service:  '#6b7280'
 };
@@ -13,9 +15,11 @@ export const STATUS_LABELS = {
   pending:         'Pending',
   available:       'Available',
   dispatched:      'Dispatched',
+  acknowledged:    'Acknowledged',
   en_route:        'En Route',
   on_scene:        'On Scene',
   patient_contact: 'Patient Contact',
+  transporting:    'Transporting',
   cleared:         'Cleared',
   out_of_service:  'Out of Service'
 };
