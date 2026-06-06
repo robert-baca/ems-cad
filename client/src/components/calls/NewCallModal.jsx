@@ -23,6 +23,7 @@ export default function NewCallModal({ pin, units, onDispatch, onClose, parentCa
   const [selectedUnitIds, setSelectedUnitIds] = useState([]);  // all assigned units
   const [selectedCartId,  setSelectedCartId]  = useState('');  // cart picked when response_mode=cart
   const [loading, setLoading] = useState(false);
+  const [error,   setError]   = useState('');
 
   const set = (field, val) => setForm(f => ({ ...f, [field]: val }));
 
@@ -54,7 +55,8 @@ export default function NewCallModal({ pin, units, onDispatch, onClose, parentCa
     }
 
     setLoading(true);
-    await onDispatch({
+    setError('');
+    const result = await onDispatch({
       ...form,
       assigned_unit_id,
       additional_unit_ids,
@@ -63,6 +65,7 @@ export default function NewCallModal({ pin, units, onDispatch, onClose, parentCa
       priority:     Number(form.priority)
     });
     setLoading(false);
+    if (result === null) { setError('Failed to dispatch — check connection and try again.'); return; }
     onClose();
   };
 
@@ -269,6 +272,8 @@ export default function NewCallModal({ pin, units, onDispatch, onClose, parentCa
               </p>
             )}
           </div>
+
+          {error && <p className="text-red-400 text-sm text-center">{error}</p>}
 
           {/* Submit */}
           <button type="submit" disabled={loading || !form.call_type}

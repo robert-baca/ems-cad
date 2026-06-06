@@ -162,7 +162,7 @@ export default function ParkMap({
           <div style="background:#1f2937;color:#fff;padding:8px 10px;border-radius:8px;font-family:sans-serif;min-width:160px">
             <div style="font-weight:bold;font-size:13px">#${call.call_number} — ${call.call_type}</div>
             <div style="font-size:11px;color:#9ca3af;margin-top:2px">P${call.priority} · ${isPending ? 'PENDING — no unit' : call.status}</div>
-            <div style="font-size:11px;color:#d1d5db;margin-top:4px">${call.location_name || ''}</div>
+            <div style="font-size:11px;color:#d1d5db;margin-top:4px">${call.park_zone ? `<span style="color:#60a5fa">${call.park_zone} · </span>` : ''}${call.location_name || ''}</div>
           </div>
         `);
 

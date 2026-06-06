@@ -7,6 +7,7 @@ const STATUS_TS_MAP = {
   en_route:        'en_route_at',
   on_scene:        'on_scene_at',
   patient_contact: 'patient_contact_at',
+  transporting:    'transporting_at',
   cleared:         'cleared_at',
   available:       'available_at'
 };

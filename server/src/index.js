@@ -525,8 +525,9 @@ app.patch('/api/calls/:id/status', verifyToken, async (req, res) => {
   }
 
   const TS_MAP = {
-    en_route: 'en_route_at', on_scene: 'on_scene_at',
-    patient_contact: 'patient_contact_at', cleared: 'cleared_at', available: 'available_at'
+    acknowledged: 'acknowledged_at', en_route: 'en_route_at', on_scene: 'on_scene_at',
+    patient_contact: 'patient_contact_at', transporting: 'transporting_at',
+    cleared: 'cleared_at', available: 'available_at'
   };
   call.status = req.body.status;
   if (req.body.disposition) call.disposition = req.body.disposition;
@@ -1205,6 +1206,38 @@ app.get('/api/tracki/callback', async (req, res) => {
   res.status(500).send('Token exchange failed — the OAuth2 endpoint may need adjustment. Check Railway logs.');
 });
 
+// ── GPS / Trackimo diagnostics ────────────────────────────────────
+app.get('/api/tracki/status', verifyToken, (req, res) => {
+  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
+  const trackedUnits = units.filter(u => u.tracki_device_id).map(u => ({
+    unit_number: u.unit_number,
+    device_id:   u.tracki_device_id,
+    last_lat:    u.last_lat,
+    last_lng:    u.last_lng,
+    last_gps_at: u.last_gps_at
+  }));
+  res.json({
+    polling_active:     !!(trackimoBearer || trackimoSessionCookie),
+    has_bearer:         !!trackimoBearer,
+    has_session_cookie: !!trackimoSessionCookie,
+    account_id:         trackimoAccountId,
+    env: {
+      TRACKIMO_ACCOUNT_ID:    !!process.env.TRACKIMO_ACCOUNT_ID,
+      TRACKIMO_BEARER_TOKEN:  !!process.env.TRACKIMO_BEARER_TOKEN,
+      TRACKIMO_USERNAME:      !!process.env.TRACKIMO_USERNAME,
+      GPS_WEBHOOK_SECRET:     !!process.env.GPS_WEBHOOK_SECRET
+    },
+    tracked_units: trackedUnits
+  });
+});
+
+// Manual poll trigger for testing
+app.post('/api/tracki/poll', verifyToken, async (req, res) => {
+  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
+  await pollTrackimoLocations();
+  res.json({ ok: true, message: 'Poll triggered — check Railway logs' });
+});
+
 // ── Health ────────────────────────────────────────────────────────
 app.get('/api/health', (req, res) => res.json({ status: 'ok', ts: new Date().toISOString() }));
 
@@ -1249,7 +1282,11 @@ io.on('connection', (socket) => {
       io.to('dispatchers').emit('unit:status_change', { unit_id, status });
       const activeCall = calls.find(c => c.assigned_unit_id === unit_id && c.status !== 'closed');
       if (activeCall) {
-        const TS_MAP = { en_route: 'en_route_at', on_scene: 'on_scene_at', patient_contact: 'patient_contact_at', cleared: 'cleared_at' };
+        const TS_MAP = {
+          acknowledged: 'acknowledged_at', en_route: 'en_route_at', on_scene: 'on_scene_at',
+          patient_contact: 'patient_contact_at', transporting: 'transporting_at',
+          cleared: 'cleared_at', available: 'available_at'
+        };
         activeCall.status = status;
         if (TS_MAP[status] && !activeCall[TS_MAP[status]]) activeCall[TS_MAP[status]] = new Date().toISOString();
         saveCall(activeCall).catch(console.error);

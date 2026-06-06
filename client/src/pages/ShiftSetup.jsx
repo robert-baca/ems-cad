@@ -60,7 +60,7 @@ export default function ShiftSetup({ token, onShiftStarted }) {
       const unit = await res.json();
       if (!res.ok) throw new Error(unit.error || 'Failed to add unit');
       setUnits(prev => [...prev, unit]);
-      setStaffing(prev => ({ ...prev, [unit.id]: { crew: '', unit_type: newType, in_service: true, station: '' } }));
+      setStaffing(prev => ({ ...prev, [unit.id]: { crew: '', unit_type: newType, in_service: true, station: '', tracki_device_id: '' } }));
       setNewNumber('');
       setNewType('ALS');
       setAddingUnit(false);
