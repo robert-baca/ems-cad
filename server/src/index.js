@@ -1125,7 +1125,11 @@ async function pollTrackimoLocations() {
       const deviceId = String(loc.device_id ?? loc.id ?? loc.tracki_id ?? '');
       const lat      = parseFloat(loc.lat ?? loc.latitude  ?? 0);
       const lng      = parseFloat(loc.lng ?? loc.longitude ?? loc.lon ?? 0);
-      const ts       = loc.timestamp ?? loc.time ?? new Date().toISOString();
+      // loc.time is Unix seconds — convert to ISO string so the client doesn't treat it as ms (Jan 1970)
+      const rawTs = loc.timestamp ?? loc.time ?? null;
+      const ts    = rawTs
+        ? (typeof rawTs === 'number' ? new Date(rawTs * 1000).toISOString() : rawTs)
+        : new Date().toISOString();
       if (!lat || !lng) continue;
 
       const unit = units.find(u => u.tracki_device_id && String(u.tracki_device_id) === deviceId);
