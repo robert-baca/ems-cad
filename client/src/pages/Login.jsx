@@ -13,10 +13,11 @@ const TYPE_COLORS = { ALS: 'text-red-400', BLS: 'text-blue-400', Cart: 'text-gre
 
 // ── Crew login sub-flow ───────────────────────────────────────────
 function CrewLogin({ onBack, onSuccess }) {
-  // step: pin → loading → pick | add
+  // step: pin → pick → confirm | add
   const [step,       setStep]      = useState('pin');
   const [pin,        setPin]       = useState('');
   const [shiftUnits, setShiftUnits] = useState([]);
+  const [selected,   setSelected]  = useState(null);
   const [newNumber,  setNewNumber] = useState('');
   const [newType,    setNewType]   = useState('ALS');
   const [error,      setError]     = useState('');
@@ -33,7 +34,6 @@ function CrewLogin({ onBack, onSuccess }) {
         body: JSON.stringify({ pin })
       });
       if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Invalid PIN'); }
-      // PIN valid — load shift units
       const units = await fetch('/api/shift/units').then(r => r.json()).catch(() => []);
       setShiftUnits(Array.isArray(units) ? units : []);
       setStep('pick');
@@ -41,13 +41,19 @@ function CrewLogin({ onBack, onSuccess }) {
     finally { setLoading(false); }
   };
 
-  const pickUnit = async (unit) => {
+  const pickUnit = (unit) => {
+    setSelected(unit);
+    setError('');
+    setStep('confirm');
+  };
+
+  const confirmUnit = async () => {
     setLoading(true); setError('');
     try {
       const res  = await fetch('/api/crew/select-unit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pin, unit_id: unit.id })
+        body: JSON.stringify({ pin, unit_id: selected.id })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Login failed');
@@ -153,6 +159,57 @@ function CrewLogin({ onBack, onSuccess }) {
           <button onClick={onBack}
             className="w-full py-2 text-gray-500 hover:text-gray-300 text-sm transition-colors">
             ← Back
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Confirm selected unit ──
+  if (step === 'confirm') {
+    const TYPE_BG = { ALS: 'bg-red-900/40 border-red-700 text-red-300', BLS: 'bg-blue-900/40 border-blue-700 text-blue-300', Cart: 'bg-green-900/40 border-green-700 text-green-300' };
+    return (
+      <div className="bg-gray-800 rounded-2xl border border-gray-700 overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-700">
+          <div className="text-white font-bold">Is this you?</div>
+          <div className="text-gray-500 text-xs mt-0.5">Confirm the unit dispatch assigned you</div>
+        </div>
+
+        <div className="p-5 space-y-4">
+          {/* Unit card */}
+          <div className="rounded-xl border border-gray-600 bg-gray-750 p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="text-white font-bold text-2xl">{selected.unit_number}</div>
+              <span className={`text-xs font-bold px-2.5 py-1 rounded-full border ${TYPE_BG[selected.unit_type] || 'bg-gray-700 border-gray-600 text-gray-300'}`}>
+                {selected.unit_type}
+              </span>
+            </div>
+            {selected.crew && (
+              <div>
+                <div className="text-gray-500 text-xs uppercase tracking-wider mb-0.5">Assigned Medic</div>
+                <div className="text-white font-semibold text-lg">{selected.crew}</div>
+              </div>
+            )}
+            {selected.station && (
+              <div>
+                <div className="text-gray-500 text-xs uppercase tracking-wider mb-0.5">Based out of</div>
+                <div className="text-gray-300 text-sm">{selected.station}</div>
+              </div>
+            )}
+            {!selected.crew && (
+              <div className="text-gray-500 text-sm italic">No medic name set by dispatch</div>
+            )}
+          </div>
+
+          {error && <p className="text-red-400 text-sm text-center">{error}</p>}
+
+          <button onClick={confirmUnit} disabled={loading}
+            className="w-full py-3.5 bg-green-700 hover:bg-green-600 disabled:bg-green-900 text-white font-bold text-base rounded-xl transition-colors">
+            {loading ? 'Signing in…' : "Yes, that's me — Sign In"}
+          </button>
+          <button onClick={() => { setStep('pick'); setError(''); }} disabled={loading}
+            className="w-full py-2.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded-xl transition-colors">
+            Not me — go back
           </button>
         </div>
       </div>
