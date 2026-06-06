@@ -50,10 +50,6 @@ export default function CrewMobile() {
     }
   }, [myUnit?.id, user?.unit_id, units.length]);
 
-  // Auto-open profile on first login if not set
-  useEffect(() => {
-    if (user && !profile) setShowProfile(true);
-  }, []);
 
   // Reset backup button when call changes
   useEffect(() => {
