@@ -13,7 +13,7 @@ export function useUnits() {
   const handleGpsUpdate = useCallback(({ unit_id, lat, lng, timestamp }) => {
     setUnits(prev =>
       prev.map(u => u.id === unit_id
-        ? { ...u, last_lat: lat, last_lng: lng, last_gps_at: timestamp || new Date().toISOString() }
+        ? { ...u, last_lat: lat ?? null, last_lng: lng ?? null, last_gps_at: (lat && timestamp) ? timestamp : (lat ? new Date().toISOString() : null) }
         : u)
     );
   }, []);

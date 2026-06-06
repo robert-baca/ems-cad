@@ -36,7 +36,8 @@ export default function DisplayBoard() {
       navigate('/login');
     });
 
-    socket.emit('join:dispatcher');
+    // Join on every connect so the room is re-joined after reconnects
+    socket.on('connect', () => socket.emit('join:dispatcher'));
 
     socket.on('init:state', ({ units: u, calls: c }) => {
       setUnits(u);

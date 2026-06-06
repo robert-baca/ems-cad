@@ -379,6 +379,8 @@ app.delete('/api/units/:id/gps', verifyToken, async (req, res) => {
   saveUnit(unit).catch(console.error);
   const sanitized = { ...unit, password_hash: undefined };
   io.to('dispatchers').emit('unit:updated', sanitized);
+  // Explicit null GPS update so ParkMap on display board removes the dot
+  io.to('dispatchers').emit('unit:gps_update', { unit_id: unit.id, unit_number: unit.unit_number, lat: null, lng: null, timestamp: null });
   res.json({ ok: true });
 });
 
