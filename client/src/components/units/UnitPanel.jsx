@@ -18,12 +18,7 @@ function sortUnits(units) {
   });
 }
 
-const CERT_COLORS = {
-  'Paramedic': '#f87171',
-  'AEMT': '#fb923c',
-  'EMT-B': '#60a5fa',
-  'First Responder': '#4ade80'
-};
+const TYPE_BADGE = { ALS: 'bg-red-900/50 text-red-300', BLS: 'bg-blue-900/50 text-blue-300', Cart: 'bg-green-900/50 text-green-300' };
 
 const ON_CALL_STATUSES = new Set(['dispatched', 'en_route', 'on_scene', 'patient_contact']);
 
@@ -50,11 +45,9 @@ function UnitCard({ unit, activeCall, isSelected, onClick, onHistory, onEdit, on
           <div className="flex items-center gap-2 mb-0.5">
             <span className="text-sm">{TYPE_ICONS[unit.unit_type] || '🚑'}</span>
             <span className="text-white font-bold text-sm">{unit.unit_number}</span>
-            {profile?.cert_level && (
-              <span className="text-xs font-bold" style={{ color: CERT_COLORS[profile.cert_level] || '#9ca3af' }}>
-                {profile.cert_level === 'First Responder' ? 'FR' : profile.cert_level}
-              </span>
-            )}
+            <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${TYPE_BADGE[unit.unit_type] || 'bg-gray-700 text-gray-400'}`}>
+              {unit.unit_type}
+            </span>
           </div>
           <div className="text-xs font-medium" style={{ color }}>
             {STATUS_LABELS[unit.status]}
@@ -77,15 +70,6 @@ function UnitCard({ unit, activeCall, isSelected, onClick, onHistory, onEdit, on
           {hasGps && gpsAgeMin !== null && (
             <div className={`text-xs mt-0.5 font-medium ${gpsStale ? 'text-orange-400' : 'text-gray-500'}`}>
               {gpsStale ? `GPS stale · ${gpsAgeMin}m ago` : `GPS · ${gpsAgeMin}m ago`}
-            </div>
-          )}
-          {profile?.certifications?.length > 0 && (
-            <div className="flex flex-wrap gap-0.5 mt-1">
-              {profile.certifications.map(c => (
-                <span key={c} className="text-xs bg-gray-600 text-gray-300 px-1 py-0.5 rounded font-bold leading-none">
-                  {c}
-                </span>
-              ))}
             </div>
           )}
         </button>
