@@ -889,10 +889,16 @@ app.patch('/api/calls/:id/timestamps', verifyToken, async (req, res) => {
   const ALLOWED = ['received_at','dispatched_at','acknowledged_at','en_route_at',
                    'on_scene_at','patient_contact_at','arrived_first_aid_at','transporting_at',
                    'cleared_at','available_at','closed_at'];
+  const changes = {};
   Object.entries(req.body).forEach(([k, v]) => {
-    if (ALLOWED.includes(k)) call[k] = v;
+    if (ALLOWED.includes(k)) { call[k] = v; changes[k] = v; }
   });
   saveCall(call).catch(console.error);
+  if (Object.keys(changes).length) {
+    io.to('dispatchers').emit('call:updated', { call_id: call.id, changes });
+    if (call.assigned_unit_id)
+      io.to(`crew:${call.assigned_unit_id}`).emit('call:updated', { call_id: call.id, changes });
+  }
   res.json({ ok: true });
 });
 

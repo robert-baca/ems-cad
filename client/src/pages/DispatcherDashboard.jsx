@@ -76,6 +76,23 @@ export default function DispatcherDashboard() {
       .catch(() => setCurrentShift(null));
   }, [user?.token]);
 
+  // N key → open new call modal (skip when typing in an input)
+  useEffect(() => {
+    const handler = (e) => {
+      const tag = e.target.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target.isContentEditable) return;
+      if ((e.key === 'n' || e.key === 'N') && currentShift && !showNewCallModal) {
+        setShowNewCallModal(true);
+      }
+      if (e.key === 'Escape') {
+        setShowNewCallModal(false);
+        setContextMenu(null);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [currentShift, showNewCallModal]);
+
   const { isConnected } = useSocket({
     'init:state':          ({ units: u, calls: c, locations: l }) => { setUnits(u); setCalls(c); if (l) setPermLocations(l); },
     'unit:gps_update':     handleGpsUpdate,

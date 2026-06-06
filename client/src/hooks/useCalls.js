@@ -14,9 +14,11 @@ const STATUS_TS_MAP = {
 // Reverse: timestamp field → call status (only fields that map directly to a status)
 const TS_STATUS_MAP = {
   dispatched_at:      'dispatched',
+  acknowledged_at:    'acknowledged',
   en_route_at:        'en_route',
   on_scene_at:        'on_scene',
   patient_contact_at: 'patient_contact',
+  transporting_at:    'transporting',
   cleared_at:         'cleared',
   available_at:       'available'
 };

@@ -47,6 +47,19 @@ export default function CallDetail({
   const [aidRole,       setAidRole]       = useState('');
   const clock = LiveClock();
 
+  // Reset all local state when the selected call changes
+  useEffect(() => {
+    setTab('detail');
+    setAssigningUnit(false);
+    setAddingUnit(false);
+    setSelectedUnitId('');
+    setAddUnitId('');
+    setShowCloseModal(false);
+    setNarrative(call.narrative || '');
+    setAddingAid(false);
+    setAidName(''); setAidUnit(''); setAidRole('');
+  }, [call.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleNarrativeBlur = useCallback(() => {
     updateCallNarrative(call.id, narrative).catch(() => {});
   }, [call.id, narrative]);

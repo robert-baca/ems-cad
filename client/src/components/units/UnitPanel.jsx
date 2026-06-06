@@ -209,22 +209,41 @@ export default function UnitPanel({ units, calls, selectedUnitId, onSelectUnit, 
           })}
         </div>
 
-        {/* Bulk clear unassigned GPS pins */}
-        {units.some(u => u.last_lat && u.last_lng && !ON_CALL_STATUSES.has(u.status)) && (
-          <div className="px-2 pb-2 flex-shrink-0 border-t border-gray-700 pt-2">
-            <button
-              onClick={() => {
-                units
-                  .filter(u => u.last_lat && u.last_lng && !ON_CALL_STATUSES.has(u.status))
-                  .forEach(u => onClearGps?.(u.id));
-              }}
-              className="w-full py-1.5 rounded-lg text-xs font-bold bg-gray-700 hover:bg-red-900 text-gray-500 hover:text-red-400 transition-colors"
-              title="Remove all GPS pins for units not on an active call"
-            >
-              🗑 Clear unassigned GPS
-            </button>
-          </div>
-        )}
+        {/* Bulk GPS clear buttons */}
+        {(() => {
+          const STALE_MS = 10 * 60 * 1000;
+          const now = Date.now();
+          const stale = units.filter(u =>
+            u.last_lat && u.last_lng && u.last_gps_at &&
+            (now - new Date(u.last_gps_at).getTime()) > STALE_MS
+          );
+          const unassigned = units.filter(u =>
+            u.last_lat && u.last_lng && !ON_CALL_STATUSES.has(u.status)
+          );
+          if (!stale.length && !unassigned.length) return null;
+          return (
+            <div className="px-2 pb-2 flex-shrink-0 border-t border-gray-700 pt-2 space-y-1">
+              {stale.length > 0 && (
+                <button
+                  onClick={() => stale.forEach(u => onClearGps?.(u.id))}
+                  className="w-full py-1.5 rounded-lg text-xs font-bold bg-gray-700 hover:bg-orange-900 text-gray-500 hover:text-orange-400 transition-colors"
+                  title="Clear GPS pins that haven't updated in 10+ minutes"
+                >
+                  🗑 Clear stale GPS ({stale.length})
+                </button>
+              )}
+              {unassigned.length > 0 && (
+                <button
+                  onClick={() => unassigned.forEach(u => onClearGps?.(u.id))}
+                  className="w-full py-1.5 rounded-lg text-xs font-bold bg-gray-700 hover:bg-red-900 text-gray-500 hover:text-red-400 transition-colors"
+                  title="Clear GPS pins for units not on an active call"
+                >
+                  🗑 Clear unassigned GPS ({unassigned.length})
+                </button>
+              )}
+            </div>
+          );
+        })()}
       </div>
 
       {editingUnit && (
