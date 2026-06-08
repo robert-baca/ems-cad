@@ -20,6 +20,12 @@ function fmtTime(iso) {
   });
 }
 
+function fmtTime24(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
 // Parse "HH:MM" or "HH:MM:SS" entered by user → ISO string (today's date)
 function parseManualTime(str) {
   const parts = str.trim().split(':').map(Number);
@@ -37,7 +43,7 @@ function TimeRow({ step, ts, isLast, onUpdate, onClear }) {
   const done = !!ts;
 
   const startEdit = () => {
-    setInputVal(ts ? fmtTime(ts).replace(/ AM| PM/i, '') : '');
+    setInputVal(ts ? fmtTime24(ts) : '');
     setEditing(true);
   };
 
@@ -85,7 +91,7 @@ function TimeRow({ step, ts, isLast, onUpdate, onClear }) {
               onChange={e => setInputVal(e.target.value)}
               onBlur={commit}
               onKeyDown={handleKey}
-              placeholder="HH:MM"
+              placeholder="HH:MM (24h)"
               className="w-20 bg-gray-700 text-white text-xs font-mono rounded px-1.5 py-0.5 outline-none focus:ring-1 focus:ring-blue-500 border border-blue-500"
             />
             <button onClick={commit}
