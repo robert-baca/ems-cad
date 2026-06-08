@@ -467,7 +467,11 @@ export default function DispatcherDashboard() {
 
       {/* Modals */}
       {showOptions && (
-        <OptionsModal onClose={() => setShowOptions(false)} />
+        <OptionsModal
+          onClose={() => setShowOptions(false)}
+          locations={locations}
+          onRemoveLocation={removeLocation}
+        />
       )}
 
       {showNewCallModal && (

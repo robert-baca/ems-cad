@@ -13,10 +13,10 @@ function saveQuickTypes(types) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(types));
 }
 
-export default function OptionsModal({ onClose }) {
+export default function OptionsModal({ onClose, locations = [], onRemoveLocation }) {
   const [quickTypes, setQuickTypes] = useState([]);
-  const [input, setInput] = useState('');
-  const [error, setError] = useState('');
+  const [input,      setInput]      = useState('');
+  const [error,      setError]      = useState('');
 
   useEffect(() => {
     setQuickTypes(loadQuickTypes());
@@ -48,10 +48,12 @@ export default function OptionsModal({ onClose }) {
     saveQuickTypes(updated);
   };
 
+  const permanentPins = locations.filter(l => l.locationType === 'permanent' || l.location_type === 'permanent');
+
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-      <div className="bg-gray-800 rounded-2xl w-full max-w-sm shadow-2xl border border-gray-700">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-700">
+      <div className="bg-gray-800 rounded-2xl w-full max-w-sm shadow-2xl border border-gray-700 max-h-[90vh] flex flex-col">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-700 flex-shrink-0">
           <div className="text-white font-bold">⚙ Options</div>
           <button onClick={onClose}
             className="text-gray-400 hover:text-white w-8 h-8 flex items-center justify-center rounded hover:bg-gray-700 text-xl">
@@ -59,7 +61,9 @@ export default function OptionsModal({ onClose }) {
           </button>
         </div>
 
-        <div className="p-5 space-y-5">
+        <div className="flex-1 overflow-y-auto p-5 space-y-6">
+
+          {/* ── Quick call type pills ── */}
           <div>
             <div className="text-gray-300 text-sm font-semibold mb-1">Quick Call Type Buttons</div>
             <div className="text-gray-500 text-xs mb-3">
@@ -100,9 +104,40 @@ export default function OptionsModal({ onClose }) {
             </div>
             {error && <p className="text-red-400 text-xs mt-1">{error}</p>}
           </div>
+
+          {/* ── Permanent map pins ── */}
+          <div>
+            <div className="text-gray-300 text-sm font-semibold mb-1">Permanent Map Pins</div>
+            <div className="text-gray-500 text-xs mb-3">
+              These pins stay on the map across all shifts.
+            </div>
+
+            {permanentPins.length === 0 ? (
+              <div className="text-gray-600 text-xs italic">
+                No permanent pins yet — right-click the map and choose "Add Permanent Location".
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                {permanentPins.map(loc => (
+                  <div key={loc.id} className="flex items-center gap-2.5 bg-gray-700 rounded-lg px-3 py-2">
+                    <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: loc.color || '#6366f1' }} />
+                    <span className="flex-1 text-white text-sm truncate">{loc.name}</span>
+                    <button
+                      onClick={() => onRemoveLocation?.(loc.id)}
+                      className="text-gray-600 hover:text-red-400 text-lg leading-none transition-colors"
+                      title="Remove pin"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
         </div>
 
-        <div className="px-5 py-4 border-t border-gray-700">
+        <div className="px-5 py-4 border-t border-gray-700 flex-shrink-0">
           <button onClick={onClose}
             className="w-full py-2.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded-lg transition-colors">
             Done
