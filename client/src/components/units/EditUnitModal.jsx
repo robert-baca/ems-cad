@@ -7,7 +7,6 @@ export default function EditUnitModal({ unit, onSave, onDelete, onClose }) {
   const [unitName,    setUnitName]   = useState(unit.unit_name);
   const [unitType,    setUnitType]   = useState(unit.unit_type);
   const [deviceId,    setDeviceId]   = useState(unit.tracki_device_id || '');
-  const [password,    setPassword]   = useState('');
   const [saving,      setSaving]     = useState(false);
   const [confirming,  setConfirming] = useState(false);
   const [error,       setError]      = useState('');
@@ -18,14 +17,12 @@ export default function EditUnitModal({ unit, onSave, onDelete, onClose }) {
     setSaving(true);
     setError('');
     try {
-      const data = {
+      await onSave(unit.id, {
         unit_number:      unitNumber.trim(),
         unit_name:        unitName.trim(),
         unit_type:        unitType,
-        tracki_device_id:  deviceId.trim() || null
-      };
-      if (password) data.password = password;
-      await onSave(unit.id, data);
+        tracki_device_id: deviceId.trim() || null
+      });
       onClose();
     } catch {
       setError('Failed to save. Try again.');
@@ -109,19 +106,6 @@ export default function EditUnitModal({ unit, onSave, onDelete, onClose }) {
                 {deviceId && (
                   <p className="text-green-400 text-xs mt-1">✓ GPS tracking enabled for this unit</p>
                 )}
-              </div>
-
-              <div>
-                <label className="block text-gray-400 text-xs uppercase tracking-wider mb-1.5">
-                  New Password <span className="text-gray-600 normal-case">(leave blank to keep current)</span>
-                </label>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={e => setPassword(e.target.value)}
-                  placeholder="••••••••"
-                  className="w-full bg-gray-700 text-white rounded-lg px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500"
-                />
               </div>
 
               {error && <p className="text-red-400 text-sm">{error}</p>}
