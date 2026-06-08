@@ -175,15 +175,31 @@ export default function ParkMap({
     });
   }, [calls]);
 
-  // Update custom location markers
+  // Keep onRemoveLocation in a ref so the click handler never goes stale
+  // and the effect doesn't re-run just because the callback changed reference
+  const onRemoveLocationRef = useRef(onRemoveLocation);
+  onRemoveLocationRef.current = onRemoveLocation;
+
+  // Update location markers incrementally — only add new, only remove deleted,
+  // never touch existing markers (avoids the remove+re-add that breaks positioning)
   useEffect(() => {
     const map = mapRef.current;
-    if (!map) return;
+    if (!map || !mapReadyRef.current) return;
 
-    Object.values(locationMarkersRef.current).forEach(m => m.remove());
-    locationMarkersRef.current = {};
+    const currentIds = new Set(locations.map(l => l.id));
 
+    // Remove markers for locations that were deleted
+    Object.keys(locationMarkersRef.current).forEach(id => {
+      if (!currentIds.has(id)) {
+        locationMarkersRef.current[id].remove();
+        delete locationMarkersRef.current[id];
+      }
+    });
+
+    // Add markers for locations that don't have one yet
     locations.forEach(loc => {
+      if (locationMarkersRef.current[loc.id]) return;
+
       const el = document.createElement('div');
       el.className = 'loc-marker-wrapper';
       const labelPrefix = loc.locationType === 'permanent' ? '📌 ' : '';
@@ -193,20 +209,16 @@ export default function ParkMap({
         <button class="loc-delete-btn" title="Remove location">×</button>
       `;
 
-      // Wire delete button
-      const btn = el.querySelector('.loc-delete-btn');
-      btn.addEventListener('click', (e) => {
+      el.querySelector('.loc-delete-btn').addEventListener('click', (e) => {
         e.stopPropagation();
-        onRemoveLocation?.(loc.id);
+        onRemoveLocationRef.current?.(loc.id);
       });
 
-      const marker = new mapboxgl.Marker({ element: el, anchor: 'top' })
+      locationMarkersRef.current[loc.id] = new mapboxgl.Marker({ element: el, anchor: 'top' })
         .setLngLat([loc.lng, loc.lat])
         .addTo(map);
-
-      locationMarkersRef.current[loc.id] = marker;
     });
-  }, [locations, onRemoveLocation]);
+  }, [locations, mapLoaded]);
 
   // New call drop pin
   useEffect(() => {
