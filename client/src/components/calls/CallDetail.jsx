@@ -3,7 +3,7 @@ import CallTimeline from './CallTimeline';
 import CallComments from './CallComments';
 import CloseCallModal from './CloseCallModal';
 import { STATUS_COLORS, STATUS_LABELS } from '../../data/mockData';
-import { updateCallNarrative } from '../../services/api';
+import { updateCallNarrative, updateCallLocation } from '../../services/api';
 
 const PRIORITY_COLORS = { 1: 'text-red-400', 2: 'text-orange-400', 3: 'text-blue-400' };
 
@@ -41,10 +41,13 @@ export default function CallDetail({
   const [addUnitId,      setAddUnitId]      = useState('');
   const [showCloseModal, setShowCloseModal] = useState(false);
   const [narrative, setNarrative]         = useState(call.narrative || '');
-  const [addingAid,     setAddingAid]     = useState(false);
-  const [aidName,       setAidName]       = useState('');
-  const [aidUnit,       setAidUnit]       = useState('');
-  const [aidRole,       setAidRole]       = useState('');
+  const [addingAid,       setAddingAid]       = useState(false);
+  const [aidName,         setAidName]         = useState('');
+  const [aidUnit,         setAidUnit]         = useState('');
+  const [aidRole,         setAidRole]         = useState('');
+  const [editingLocation, setEditingLocation] = useState(false);
+  const [locName,         setLocName]         = useState('');
+  const [locZone,         setLocZone]         = useState('');
   const clock = LiveClock();
 
   // Reset all local state when the selected call changes
@@ -58,6 +61,7 @@ export default function CallDetail({
     setNarrative(call.narrative || '');
     setAddingAid(false);
     setAidName(''); setAidUnit(''); setAidRole('');
+    setEditingLocation(false);
   }, [call.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleNarrativeBlur = useCallback(() => {
@@ -226,8 +230,62 @@ export default function CallDetail({
             <div className="bg-gray-700 rounded-xl p-3 space-y-2">
               <Row label="Type"      value={call.call_type} />
               <Row label="Complaint" value={call.chief_complaint || '—'} />
-              <Row label="Location"  value={call.location_name || '—'} />
-              <Row label="Zone"      value={call.park_zone || '—'} />
+              {editingLocation ? (
+                <div className="space-y-2 pt-1">
+                  <div className="flex gap-2">
+                    <div className="flex-1">
+                      <label className="block text-gray-500 text-xs mb-1">Location</label>
+                      <input
+                        autoFocus
+                        type="text"
+                        value={locName}
+                        onChange={e => setLocName(e.target.value)}
+                        className="w-full bg-gray-600 text-white rounded-lg px-2 py-1.5 text-sm outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+                    <div className="w-20">
+                      <label className="block text-gray-500 text-xs mb-1">Zone</label>
+                      <input
+                        type="text"
+                        value={locZone}
+                        onChange={e => setLocZone(e.target.value)}
+                        className="w-full bg-gray-600 text-white rounded-lg px-2 py-1.5 text-sm outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={async () => {
+                        await updateCallLocation(call.id, { location_name: locName, park_zone: locZone }).catch(() => {});
+                        setEditingLocation(false);
+                      }}
+                      className="flex-1 py-1.5 bg-blue-700 hover:bg-blue-600 text-white text-xs font-bold rounded-lg transition-colors"
+                    >
+                      Save
+                    </button>
+                    <button
+                      onClick={() => setEditingLocation(false)}
+                      className="flex-1 py-1.5 bg-gray-600 hover:bg-gray-500 text-gray-300 text-xs rounded-lg transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between">
+                  <div className="space-y-1">
+                    <Row label="Location" value={call.location_name || '—'} />
+                    <Row label="Zone"     value={call.park_zone || '—'} />
+                  </div>
+                  <button
+                    onClick={() => { setLocName(call.location_name || ''); setLocZone(call.park_zone || ''); setEditingLocation(true); }}
+                    className="text-gray-600 hover:text-blue-400 text-xs transition-colors ml-2 flex-shrink-0"
+                    title="Edit location"
+                  >
+                    ✏️
+                  </button>
+                </div>
+              )}
               {call.response_mode && <Row label="Response" value={call.response_mode === 'cart' ? '🛺 Cart' : '🚶 On Foot'} />}
               {call.notes && <Row label="Notes" value={call.notes} />}
             </div>

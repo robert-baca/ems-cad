@@ -840,6 +840,22 @@ app.delete('/api/locations/:id', verifyToken, async (req, res) => {
   res.json({ ok: true });
 });
 
+app.patch('/api/calls/:id/location', verifyToken, async (req, res) => {
+  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
+  const call = calls.find(c => c.id === req.params.id);
+  if (!call) return res.status(404).json({ error: 'Not found' });
+  const { location_name, park_zone, location_lat, location_lng } = req.body;
+  const changes = {};
+  if (location_name !== undefined) { call.location_name = location_name; changes.location_name = location_name; }
+  if (park_zone     !== undefined) { call.park_zone     = park_zone;     changes.park_zone     = park_zone;     }
+  if (location_lat  !== undefined) { call.location_lat  = location_lat;  changes.location_lat  = location_lat;  }
+  if (location_lng  !== undefined) { call.location_lng  = location_lng;  changes.location_lng  = location_lng;  }
+  saveCall(call).catch(console.error);
+  io.to('dispatchers').emit('call:updated', { call_id: call.id, changes });
+  if (call.assigned_unit_id) io.to(`crew:${call.assigned_unit_id}`).emit('call:updated', { call_id: call.id, changes });
+  res.json({ ok: true });
+});
+
 app.patch('/api/calls/:id/priority', verifyToken, async (req, res) => {
   if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
   const call = calls.find(c => c.id === req.params.id);

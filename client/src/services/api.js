@@ -38,6 +38,8 @@ export const updateCallTimestamps = (callId, fields) =>
   api.patch(`/calls/${callId}/timestamps`, fields);
 export const updateCallNarrative = (callId, narrative) =>
   api.patch(`/calls/${callId}/narrative`, { narrative });
+export const updateCallLocation = (callId, data) =>
+  api.patch(`/calls/${callId}/location`, data);
 export const addUnitToCall = (callId, unitId) =>
   api.post(`/calls/${callId}/add-unit`, { unit_id: unitId });
 export const removeUnitFromCall = (callId, unitId) =>

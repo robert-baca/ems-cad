@@ -31,7 +31,7 @@ function parseManualTime(str) {
   return d.toISOString();
 }
 
-function TimeRow({ step, ts, isLast, onUpdate }) {
+function TimeRow({ step, ts, isLast, onUpdate, onClear }) {
   const [editing, setEditing] = useState(false);
   const [inputVal, setInputVal] = useState('');
   const done = !!ts;
@@ -105,6 +105,15 @@ function TimeRow({ step, ts, isLast, onUpdate }) {
             >
               ✏️
             </button>
+            {done && (
+              <button
+                onClick={() => onClear?.(step.tsField)}
+                className="text-gray-700 hover:text-red-400 text-xs transition-colors leading-none"
+                title="Clear this timestamp"
+              >
+                ×
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -122,6 +131,7 @@ export default function CallTimeline({ call, onTimestampUpdate }) {
           ts={call[step.tsField]}
           isLast={i === STEPS.length - 1}
           onUpdate={(field, iso) => onTimestampUpdate?.(field, iso)}
+          onClear={(field) => onTimestampUpdate?.(field, null)}
         />
       ))}
     </div>
