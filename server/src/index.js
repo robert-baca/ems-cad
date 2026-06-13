@@ -578,13 +578,15 @@ app.patch('/api/calls/:id/status', verifyToken, async (req, res) => {
   io.to('dispatchers').emit('call:status_change', payload);
   io.to(`crew:${call.assigned_unit_id}`).emit('call:updated', { call_id: call.id, changes: { status: call.status } });
 
-  const newUnitStatus = req.body.status === 'closed' ? 'available' : req.body.status;
-  const allUnitIds = [
-    call.assigned_unit_id,
-    ...(call.additional_unit_ids || [])
-  ].filter(Boolean);
+  const isClose = req.body.status === 'closed';
+  const newUnitStatus = isClose ? 'available' : req.body.status;
+  // On close, all units on the call return to available.
+  // Otherwise, only update the primary unit — additional units track their own status independently.
+  const unitIdsToUpdate = isClose
+    ? [call.assigned_unit_id, ...(call.additional_unit_ids || [])].filter(Boolean)
+    : [call.assigned_unit_id].filter(Boolean);
 
-  allUnitIds.forEach(uid => {
+  unitIdsToUpdate.forEach(uid => {
     const unit = units.find(u => u.id === uid);
     if (unit) {
       unit.status = newUnitStatus;

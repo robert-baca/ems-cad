@@ -64,7 +64,11 @@ export default function CrewMobile() {
     setStatusLoading(true);
     try {
       await changeStatus(myUnit.id, status);
-      if (myCall) await advanceStatus(myCall.id, status);
+      // Only the primary assigned unit drives the call-level status.
+      // Additional units track their own status independently.
+      if (myCall && myCall.assigned_unit_id === myUnit.id) {
+        await advanceStatus(myCall.id, status);
+      }
     } finally {
       setStatusLoading(false);
     }

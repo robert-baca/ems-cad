@@ -1,6 +1,6 @@
 import { STATUS_LABELS, STATUS_COLORS } from '../../data/mockData';
 
-const SEQUENCE = ['dispatched', 'acknowledged', 'en_route', 'on_scene', 'patient_contact', 'transporting', 'cleared', 'available'];
+const SEQUENCE = ['dispatched', 'acknowledged', 'en_route', 'on_scene', 'patient_contact', 'transporting', 'cleared'];
 
 const ICONS = {
   acknowledged:    '👁️',
