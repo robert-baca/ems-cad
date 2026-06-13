@@ -160,6 +160,13 @@ export default function CrewMobile() {
             loading={statusLoading}
           />
         )}
+
+        <button
+          onClick={() => window.open('https://sfotems.com/protocols', '_blank')}
+          className="w-full py-3 rounded-2xl bg-gray-800 border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 text-sm font-medium transition-colors flex items-center justify-center gap-2"
+        >
+          📖 Protocols
+        </button>
       </div>
 
       {/* SOS button — fixed to bottom, only when on an active call */}

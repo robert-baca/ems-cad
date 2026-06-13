@@ -37,8 +37,8 @@ export function useCalls() {
   const handleCallCreated      = useCallback((call) => setCalls(prev => prev.some(c => c.id === call.id) ? prev : [call, ...prev]), []);
   const handleCallUpdated      = useCallback(({ call_id, changes }) =>
     setCalls(prev => prev.map(c => c.id === call_id ? { ...c, ...changes } : c)), []);
-  const handleCallStatusChange = useCallback(({ call_id, status }) =>
-    setCalls(prev => prev.map(c => c.id === call_id ? { ...c, status } : c)), []);
+  const handleCallStatusChange = useCallback(({ call_id, status, ...timestamps }) =>
+    setCalls(prev => prev.map(c => c.id === call_id ? { ...c, status, ...timestamps } : c)), []);
   const handleCallAssigned     = useCallback(({ call_id, unit_id }) =>
     setCalls(prev => prev.map(c => c.id === call_id ? { ...c, assigned_unit_id: unit_id } : c)), []);
 

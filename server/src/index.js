@@ -573,7 +573,8 @@ app.patch('/api/calls/:id/status', verifyToken, async (req, res) => {
 
   saveCall(call).catch(console.error);
 
-  const payload = { call_id: call.id, status: call.status, timestamp: new Date().toISOString() };
+  const tsField = TS_MAP[req.body.status];
+  const payload = { call_id: call.id, status: call.status, ...(tsField && call[tsField] ? { [tsField]: call[tsField] } : {}) };
   io.to('dispatchers').emit('call:status_change', payload);
   io.to(`crew:${call.assigned_unit_id}`).emit('call:updated', { call_id: call.id, changes: { status: call.status } });
 
