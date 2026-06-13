@@ -378,8 +378,22 @@ app.put('/api/units/:id', verifyToken, async (req, res) => {
   if (unit_number !== undefined)    unit.unit_number  = unit_number;
   if (unit_name   !== undefined)    unit.unit_name    = unit_name;
   if (unit_type   !== undefined)    unit.unit_type    = unit_type;
-  if ('tracker_name' in req.body)   unit.tracker_name = tracker_name || null;
   if (password)                     unit.password_hash = bcrypt.hashSync(password, 8);
+
+  if ('tracker_name' in req.body) {
+    const newTracker = tracker_name || null;
+    // Clear this tracker from any other unit that currently has it
+    if (newTracker) {
+      units.forEach(u => {
+        if (u.id !== unit.id && u.tracker_name === newTracker) {
+          u.tracker_name = null;
+          saveUnit(u).catch(console.error);
+          io.to('dispatchers').emit('unit:updated', { ...u, password_hash: undefined });
+        }
+      });
+    }
+    unit.tracker_name = newTracker;
+  }
 
   await saveUnit(unit).catch(console.error);
   const sanitized = { ...unit, password_hash: undefined };
@@ -881,9 +895,20 @@ app.put('/api/trackers/:id', verifyToken, async (req, res) => {
   if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
   const t = trackers.find(t => t.id === req.params.id);
   if (!t) return res.status(404).json({ error: 'Not found' });
+  const oldName = t.name;
   if (req.body.name !== undefined)  t.name      = req.body.name.trim();
   if ('device_id' in req.body)      t.device_id = req.body.device_id?.trim() || null;
   await saveTracker(t).catch(console.error);
+  // Keep units in sync when tracker is renamed
+  if (t.name !== oldName) {
+    units.forEach(u => {
+      if (u.tracker_name === oldName) {
+        u.tracker_name = t.name;
+        saveUnit(u).catch(console.error);
+        io.to('dispatchers').emit('unit:updated', { ...u, password_hash: undefined });
+      }
+    });
+  }
   res.json(t);
 });
 
@@ -891,8 +916,17 @@ app.delete('/api/trackers/:id', verifyToken, async (req, res) => {
   if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
   const idx = trackers.findIndex(t => t.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'Not found' });
+  const deletedName = trackers[idx].name;
   trackers.splice(idx, 1);
   deleteTrackerFromDb(req.params.id).catch(console.error);
+  // Clear tracker reference from any units that used this tracker
+  units.forEach(u => {
+    if (u.tracker_name === deletedName) {
+      u.tracker_name = null;
+      saveUnit(u).catch(console.error);
+      io.to('dispatchers').emit('unit:updated', { ...u, password_hash: undefined });
+    }
+  });
   res.json({ ok: true });
 });
 
