@@ -253,6 +253,7 @@ export default function UnitPanel({ units, calls, selectedUnitId, onSelectUnit, 
           onDelete={handleDelete}
           onClose={() => setEditingUnit(null)}
           trackers={trackers}
+          units={units}
         />
       )}
 
@@ -261,6 +262,7 @@ export default function UnitPanel({ units, calls, selectedUnitId, onSelectUnit, 
           onAdd={onAddUnit}
           onClose={() => setShowAddUnit(false)}
           trackers={trackers}
+          units={units}
         />
       )}
     </>

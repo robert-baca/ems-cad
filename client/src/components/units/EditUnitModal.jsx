@@ -2,7 +2,7 @@ import { useState } from 'react';
 
 const UNIT_TYPES = ['ALS', 'BLS', 'Cart'];
 
-export default function EditUnitModal({ unit, onSave, onDelete, onClose, trackers = [] }) {
+export default function EditUnitModal({ unit, onSave, onDelete, onClose, trackers = [], units = [] }) {
   const [unitNumber,   setUnitNumber]  = useState(unit.unit_number);
   const [unitName,     setUnitName]    = useState(unit.unit_name);
   const [unitType,     setUnitType]    = useState(unit.unit_type);
@@ -12,6 +12,11 @@ export default function EditUnitModal({ unit, onSave, onDelete, onClose, tracker
   const [error,        setError]       = useState('');
 
   const selectedTracker = trackers.find(t => t.name === trackerName);
+
+  // Map tracker name → unit number, excluding this unit's own current assignment
+  const assignedTo = {};
+  units.filter(u => u.id !== unit.id).forEach(u => { if (u.tracker_name) assignedTo[u.tracker_name] = u.unit_number; });
+  const conflict = trackerName && assignedTo[trackerName];
 
   const handleSave = async () => {
     if (!unitNumber.trim()) { setError('Unit number is required.'); return; }
@@ -106,16 +111,25 @@ export default function EditUnitModal({ unit, onSave, onDelete, onClose, tracker
                       className="w-full bg-gray-700 text-white rounded-lg px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500"
                     >
                       <option value="">None</option>
-                      {trackers.map(t => (
-                        <option key={t.id} value={t.name}>{t.name}</option>
-                      ))}
+                      {trackers.map(t => {
+                        const inUse = assignedTo[t.name];
+                        return (
+                          <option key={t.id} value={t.name}>
+                            {t.name}{inUse ? ` — in use by ${inUse}` : ''}
+                          </option>
+                        );
+                      })}
                     </select>
-                    {selectedTracker && (
+                    {conflict ? (
+                      <p className="text-yellow-400 text-xs mt-1">
+                        ⚠ {trackerName} is already assigned to {conflict}. Saving will move it to this unit.
+                      </p>
+                    ) : selectedTracker ? (
                       <p className="text-green-400 text-xs mt-1">
                         ✓ GPS tracking via {selectedTracker.name}
                         {selectedTracker.device_id ? ` (${selectedTracker.device_id})` : ' — no IMEI set yet'}
                       </p>
-                    )}
+                    ) : null}
                   </>
                 )}
               </div>

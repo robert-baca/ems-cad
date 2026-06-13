@@ -2,7 +2,7 @@ import { useState } from 'react';
 
 const UNIT_TYPES = ['ALS', 'BLS', 'Cart'];
 
-export default function AddUnitModal({ onAdd, onClose, trackers = [] }) {
+export default function AddUnitModal({ onAdd, onClose, trackers = [], units = [] }) {
   const [unitNumber,  setUnitNumber]  = useState('');
   const [unitName,    setUnitName]    = useState('');
   const [unitType,    setUnitType]    = useState('ALS');
@@ -11,6 +11,11 @@ export default function AddUnitModal({ onAdd, onClose, trackers = [] }) {
   const [error,       setError]       = useState('');
 
   const selectedTracker = trackers.find(t => t.name === trackerName);
+
+  // Map tracker name → unit number for any already-assigned trackers
+  const assignedTo = {};
+  units.forEach(u => { if (u.tracker_name) assignedTo[u.tracker_name] = u.unit_number; });
+  const conflict = trackerName && assignedTo[trackerName];
 
   const handleSave = async () => {
     if (!unitNumber.trim()) { setError('Unit number is required.'); return; }
@@ -95,16 +100,25 @@ export default function AddUnitModal({ onAdd, onClose, trackers = [] }) {
                   className="w-full bg-gray-700 text-white rounded-lg px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500"
                 >
                   <option value="">None</option>
-                  {trackers.map(t => (
-                    <option key={t.id} value={t.name}>{t.name}</option>
-                  ))}
+                  {trackers.map(t => {
+                    const inUse = assignedTo[t.name];
+                    return (
+                      <option key={t.id} value={t.name}>
+                        {t.name}{inUse ? ` — in use by ${inUse}` : ''}
+                      </option>
+                    );
+                  })}
                 </select>
-                {selectedTracker && (
+                {conflict ? (
+                  <p className="text-yellow-400 text-xs mt-1">
+                    ⚠ {trackerName} is already assigned to {conflict}. Saving will move it to this unit.
+                  </p>
+                ) : selectedTracker ? (
                   <p className="text-green-400 text-xs mt-1">
                     ✓ GPS tracking via {selectedTracker.name}
                     {selectedTracker.device_id ? ` (${selectedTracker.device_id})` : ' — no IMEI set yet'}
                   </p>
-                )}
+                ) : null}
               </>
             )}
           </div>
