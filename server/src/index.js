@@ -36,6 +36,7 @@ const dispatchers = [
 let units        = [];
 let calls        = [];
 let locations    = [];
+let trackers     = [];
 let currentShift = null;
 let nextCallNum  = 100;
 const unknownGpsDevices = new Set();
@@ -96,13 +97,14 @@ async function initDb() {
   await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS transporting_at TEXT`);
   await pool.query(`ALTER TABLE locations ADD COLUMN IF NOT EXISTS location_type TEXT DEFAULT 'permanent'`);
   await pool.query(`ALTER TABLE units ADD COLUMN IF NOT EXISTS tracki_device_id TEXT`);
-  // Migrate data from old tracki_device_id column if it still exists
+  await pool.query(`ALTER TABLE units ADD COLUMN IF NOT EXISTS tracker_name TEXT`);
+
   await pool.query(`
-    DO $$ BEGIN
-      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='units' AND column_name='tracki_device_id') THEN
-        UPDATE units SET tracki_device_id = tracki_device_id WHERE tracki_device_id IS NULL AND tracki_device_id IS NOT NULL;
-      END IF;
-    END $$
+    CREATE TABLE IF NOT EXISTS trackers (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      device_id TEXT
+    )
   `);
 
   await pool.query(`
@@ -159,21 +161,25 @@ async function initDb() {
   const locsRes = await pool.query("SELECT * FROM locations ORDER BY name");
   locations = locsRes.rows;
 
-  console.log(`[db] loaded ${units.length} units, ${calls.length} calls, ${locations.length} locations, shift: ${currentShift?.shift_label || 'none'}`);
+  const trackersRes = await pool.query('SELECT * FROM trackers ORDER BY name');
+  trackers = trackersRes.rows;
+
+  console.log(`[db] loaded ${units.length} units, ${calls.length} calls, ${locations.length} locations, ${trackers.length} trackers, shift: ${currentShift?.shift_label || 'none'}`);
 }
 
 async function saveUnit(unit) {
   await pool.query(`
     INSERT INTO units (id, unit_number, unit_name, unit_type, status, crew, station,
-      tracki_device_id, last_lat, last_lng, last_gps_at, password_hash, profile)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+      tracki_device_id, tracker_name, last_lat, last_lng, last_gps_at, password_hash, profile)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
     ON CONFLICT (id) DO UPDATE SET
       unit_number=EXCLUDED.unit_number, unit_name=EXCLUDED.unit_name, unit_type=EXCLUDED.unit_type,
       status=EXCLUDED.status, crew=EXCLUDED.crew, station=EXCLUDED.station,
-      tracki_device_id=EXCLUDED.tracki_device_id, last_lat=EXCLUDED.last_lat, last_lng=EXCLUDED.last_lng,
+      tracki_device_id=EXCLUDED.tracki_device_id, tracker_name=EXCLUDED.tracker_name,
+      last_lat=EXCLUDED.last_lat, last_lng=EXCLUDED.last_lng,
       last_gps_at=EXCLUDED.last_gps_at, password_hash=EXCLUDED.password_hash, profile=EXCLUDED.profile
   `, [unit.id, unit.unit_number, unit.unit_name, unit.unit_type, unit.status,
-      unit.crew, unit.station, unit.tracki_device_id, unit.last_lat, unit.last_lng,
+      unit.crew, unit.station, unit.tracki_device_id, unit.tracker_name || null, unit.last_lat, unit.last_lng,
       unit.last_gps_at, unit.password_hash, unit.profile ? JSON.stringify(unit.profile) : null]);
 }
 
@@ -225,6 +231,17 @@ async function saveLocation(loc) {
 
 async function deleteLocationFromDb(id) {
   await pool.query('DELETE FROM locations WHERE id=$1', [id]);
+}
+
+async function saveTracker(t) {
+  await pool.query(`
+    INSERT INTO trackers (id, name, device_id) VALUES ($1,$2,$3)
+    ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name, device_id=EXCLUDED.device_id
+  `, [t.id, t.name, t.device_id]);
+}
+
+async function deleteTrackerFromDb(id) {
+  await pool.query('DELETE FROM trackers WHERE id=$1', [id]);
 }
 
 async function saveShift(shift) {
@@ -327,7 +344,7 @@ app.put('/api/units/:id/profile', verifyToken, async (req, res) => {
 
 app.post('/api/units', verifyToken, async (req, res) => {
   if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
-  const { unit_number, unit_name, unit_type = 'ALS', tracki_device_id } = req.body;
+  const { unit_number, unit_name, unit_type = 'ALS', tracker_name } = req.body;
   if (!unit_number?.trim() || !unit_name?.trim())
     return res.status(400).json({ error: 'unit_number and unit_name are required' });
   const newUnit = {
@@ -338,7 +355,8 @@ app.post('/api/units', verifyToken, async (req, res) => {
     status:          'available',
     last_lat:        null,
     last_lng:        null,
-    tracki_device_id: tracki_device_id || null,
+    tracki_device_id: null,
+    tracker_name:    tracker_name || null,
     password_hash:   bcrypt.hashSync('ems2024', 8),
     profile:         null,
     crew:            null,
@@ -356,12 +374,12 @@ app.put('/api/units/:id', verifyToken, async (req, res) => {
   const unit = units.find(u => u.id === req.params.id);
   if (!unit) return res.status(404).json({ error: 'Not found' });
 
-  const { unit_number, unit_name, unit_type, password, tracki_device_id } = req.body;
-  if (unit_number !== undefined)     unit.unit_number      = unit_number;
-  if (unit_name   !== undefined)     unit.unit_name        = unit_name;
-  if (unit_type   !== undefined)     unit.unit_type        = unit_type;
-  if ('tracki_device_id' in req.body) unit.tracki_device_id  = tracki_device_id;
-  if (password)                      unit.password_hash    = bcrypt.hashSync(password, 8);
+  const { unit_number, unit_name, unit_type, password, tracker_name } = req.body;
+  if (unit_number !== undefined)    unit.unit_number  = unit_number;
+  if (unit_name   !== undefined)    unit.unit_name    = unit_name;
+  if (unit_type   !== undefined)    unit.unit_type    = unit_type;
+  if ('tracker_name' in req.body)   unit.tracker_name = tracker_name || null;
+  if (password)                     unit.password_hash = bcrypt.hashSync(password, 8);
 
   await saveUnit(unit).catch(console.error);
   const sanitized = { ...unit, password_hash: undefined };
@@ -794,12 +812,13 @@ app.post('/api/gps/webhook', (req, res) => {
   const lng       = parseFloat(body.lng ?? body.longitude ?? body.lon ?? 0);
   const timestamp = body.timestamp ?? body.gps_time ?? new Date().toISOString();
 
-  const unit = units.find(u => u.tracki_device_id && String(u.tracki_device_id) === String(device_id));
+  const tracker = trackers.find(t => t.device_id && String(t.device_id) === String(device_id));
+  const unit    = tracker ? units.find(u => u.tracker_name === tracker.name) : null;
   if (unit && lat && lng) {
     applyGpsUpdate(unit, lat, lng, timestamp);
-    console.log(`[gps] updated ${unit.unit_number} → ${lat}, ${lng}`);
-  } else if (!unit && device_id !== null) {
-    console.log(`[gps] unknown device_id: ${device_id} — set this in Edit Unit → GPS Device ID`);
+    console.log(`[gps] updated ${unit.unit_number} via ${tracker.name} → ${lat}, ${lng}`);
+  } else if (!tracker && device_id !== null) {
+    console.log(`[gps] unknown device_id: ${device_id} — configure in Settings → GPS Trackers`);
     handleUnknownDevice(device_id);
   }
 
@@ -839,6 +858,41 @@ app.delete('/api/locations/:id', verifyToken, async (req, res) => {
   if (idx === -1) return res.status(404).json({ error: 'Not found' });
   locations.splice(idx, 1);
   deleteLocationFromDb(req.params.id).catch(console.error);
+  res.json({ ok: true });
+});
+
+// ── Trackers ──────────────────────────────────────────────────────
+app.get('/api/trackers', verifyToken, (req, res) => {
+  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
+  res.json(trackers);
+});
+
+app.post('/api/trackers', verifyToken, async (req, res) => {
+  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
+  const { name, device_id } = req.body;
+  if (!name?.trim()) return res.status(400).json({ error: 'name required' });
+  const t = { id: `tracker-${Date.now()}`, name: name.trim(), device_id: device_id?.trim() || null };
+  trackers.push(t);
+  await saveTracker(t).catch(console.error);
+  res.status(201).json(t);
+});
+
+app.put('/api/trackers/:id', verifyToken, async (req, res) => {
+  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
+  const t = trackers.find(t => t.id === req.params.id);
+  if (!t) return res.status(404).json({ error: 'Not found' });
+  if (req.body.name !== undefined)  t.name      = req.body.name.trim();
+  if ('device_id' in req.body)      t.device_id = req.body.device_id?.trim() || null;
+  await saveTracker(t).catch(console.error);
+  res.json(t);
+});
+
+app.delete('/api/trackers/:id', verifyToken, async (req, res) => {
+  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
+  const idx = trackers.findIndex(t => t.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'Not found' });
+  trackers.splice(idx, 1);
+  deleteTrackerFromDb(req.params.id).catch(console.error);
   res.json({ ok: true });
 });
 
@@ -1101,10 +1155,10 @@ async function trackimoStartup() {
 }
 
 async function pollTrackimoLocations() {
-  const trackedUnits = units.filter(u => u.tracki_device_id);
-  if (trackedUnits.length === 0 || (!trackimoBearer && !trackimoSessionCookie) || !trackimoAccountId) return;
+  const assignedTrackers = trackers.filter(t => t.device_id && units.some(u => u.tracker_name === t.name));
+  if (assignedTrackers.length === 0 || (!trackimoBearer && !trackimoSessionCookie) || !trackimoAccountId) return;
 
-  const deviceIds = trackedUnits.map(u => u.tracki_device_id);
+  const deviceIds = assignedTrackers.map(t => t.device_id);
   try {
     const params = new URLSearchParams({
       comm_stat: '1',
@@ -1150,10 +1204,11 @@ async function pollTrackimoLocations() {
         : new Date().toISOString();
       if (!lat || !lng) continue;
 
-      const unit = units.find(u => u.tracki_device_id && String(u.tracki_device_id) === deviceId);
+      const trk  = trackers.find(t => t.device_id && String(t.device_id) === deviceId);
+      const unit = trk ? units.find(u => u.tracker_name === trk.name) : null;
       if (unit) {
         applyGpsUpdate(unit, lat, lng, ts);
-        console.log(`[tracki] ${unit.unit_number} → ${lat}, ${lng}`);
+        console.log(`[tracki] ${unit.unit_number} via ${trk.name} → ${lat}, ${lng}`);
       } else {
         handleUnknownDevice(deviceId);
       }
@@ -1231,13 +1286,19 @@ app.get('/api/tracki/callback', async (req, res) => {
 // ── GPS / Trackimo diagnostics ────────────────────────────────────
 app.get('/api/tracki/status', verifyToken, (req, res) => {
   if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
-  const trackedUnits = units.filter(u => u.tracki_device_id).map(u => ({
-    unit_number: u.unit_number,
-    device_id:   u.tracki_device_id,
-    last_lat:    u.last_lat,
-    last_lng:    u.last_lng,
-    last_gps_at: u.last_gps_at
-  }));
+  const trackedUnits = units
+    .filter(u => u.tracker_name)
+    .map(u => {
+      const t = trackers.find(t => t.name === u.tracker_name);
+      return {
+        unit_number:  u.unit_number,
+        tracker_name: u.tracker_name,
+        device_id:    t?.device_id || null,
+        last_lat:     u.last_lat,
+        last_lng:     u.last_lng,
+        last_gps_at:  u.last_gps_at
+      };
+    });
   res.json({
     polling_active:     !!(trackimoBearer || trackimoSessionCookie),
     has_bearer:         !!trackimoBearer,
@@ -1249,6 +1310,7 @@ app.get('/api/tracki/status', verifyToken, (req, res) => {
       TRACKIMO_USERNAME:      !!process.env.TRACKIMO_USERNAME,
       GPS_WEBHOOK_SECRET:     !!process.env.GPS_WEBHOOK_SECRET
     },
+    trackers,
     tracked_units: trackedUnits
   });
 });
@@ -1286,7 +1348,8 @@ io.on('connection', (socket) => {
     socket.emit('init:state', {
       units: units.map(u => ({ ...u, password_hash: undefined })),
       calls,
-      locations
+      locations,
+      trackers
     });
   });
 

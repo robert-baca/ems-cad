@@ -53,6 +53,12 @@ export const removeMutualAid = (callId, entryId) =>
 export const addCallComment = (callId, text, author) =>
   api.post(`/calls/${callId}/comments`, { text, author });
 
+// ── Trackers ───────────────────────────────────────────────────────
+export const getTrackers = () => api.get('/trackers');
+export const createTracker = (name, device_id) => api.post('/trackers', { name, device_id });
+export const updateTracker = (id, data) => api.put(`/trackers/${id}`, data);
+export const deleteTracker = (id) => api.delete(`/trackers/${id}`);
+
 // ── Auth ───────────────────────────────────────────────────────────
 export const loginDispatcher = (username, password) =>
   api.post('/auth/login', { username, password, role: 'dispatcher' });

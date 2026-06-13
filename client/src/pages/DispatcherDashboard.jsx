@@ -1,10 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { useUnits } from '../hooks/useUnits';
 import { useCalls } from '../hooks/useCalls';
 import { useLocations } from '../hooks/useLocations';
 import { useSocket } from '../hooks/useSocket';
+import { getTrackers, createTracker, updateTracker, deleteTracker } from '../services/api';
 import ParkMap from '../components/map/ParkMap';
 import MapContextMenu from '../components/map/MapContextMenu';
 import UnitPanel from '../components/units/UnitPanel';
@@ -66,6 +67,7 @@ export default function DispatcherDashboard() {
   const [leftOpen,          setLeftOpen]             = useState(true);
   const [rightOpen,         setRightOpen]            = useState(true);
   const [sosAlerts,         setSosAlerts]            = useState([]);
+  const [trackers,          setTrackers]             = useState([]);
 
   // Load current shift on mount
   useEffect(() => {
@@ -75,6 +77,27 @@ export default function DispatcherDashboard() {
       .then(data => setCurrentShift(data || null))
       .catch(() => setCurrentShift(null));
   }, [user?.token]);
+
+  // Load trackers on mount
+  useEffect(() => {
+    if (!user?.token) return;
+    getTrackers().then(r => setTrackers(r.data)).catch(() => {});
+  }, [user?.token]);
+
+  const handleAddTracker = useCallback(async (name, device_id) => {
+    const r = await createTracker(name, device_id);
+    setTrackers(prev => [...prev, r.data]);
+  }, []);
+
+  const handleUpdateTracker = useCallback(async (id, data) => {
+    const r = await updateTracker(id, data);
+    setTrackers(prev => prev.map(t => t.id === id ? r.data : t));
+  }, []);
+
+  const handleDeleteTracker = useCallback(async (id) => {
+    await deleteTracker(id);
+    setTrackers(prev => prev.filter(t => t.id !== id));
+  }, []);
 
   // N key → open new call modal (skip when typing in an input)
   useEffect(() => {
@@ -94,7 +117,7 @@ export default function DispatcherDashboard() {
   }, [currentShift, showNewCallModal]);
 
   const { isConnected } = useSocket({
-    'init:state':          ({ units: u, calls: c, locations: l }) => { setUnits(u); setCalls(c); if (l) setPermLocations(l); },
+    'init:state':          ({ units: u, calls: c, locations: l, trackers: tr }) => { setUnits(u); setCalls(c); if (l) setPermLocations(l); if (tr) setTrackers(tr); },
     'unit:gps_update':     handleGpsUpdate,
     'unit:status_change':  handleStatusChange,
     'unit:profile_update': handleProfileUpdate,
@@ -344,6 +367,7 @@ export default function DispatcherDashboard() {
             onStatusChange={changeStatus}
             onClearGps={clearGps}
             onFlyTo={(unit) => setFlyToTarget({ lat: unit.last_lat, lng: unit.last_lng, _t: Date.now() })}
+            trackers={trackers}
           />
         )}
 
@@ -471,6 +495,10 @@ export default function DispatcherDashboard() {
           onClose={() => setShowOptions(false)}
           locations={locations}
           onRemoveLocation={removeLocation}
+          trackers={trackers}
+          onAddTracker={handleAddTracker}
+          onUpdateTracker={handleUpdateTracker}
+          onDeleteTracker={handleDeleteTracker}
         />
       )}
 

@@ -2,14 +2,16 @@ import { useState } from 'react';
 
 const UNIT_TYPES = ['ALS', 'BLS', 'Cart'];
 
-export default function EditUnitModal({ unit, onSave, onDelete, onClose }) {
-  const [unitNumber,  setUnitNumber] = useState(unit.unit_number);
-  const [unitName,    setUnitName]   = useState(unit.unit_name);
-  const [unitType,    setUnitType]   = useState(unit.unit_type);
-  const [deviceId,    setDeviceId]   = useState(unit.tracki_device_id || '');
-  const [saving,      setSaving]     = useState(false);
-  const [confirming,  setConfirming] = useState(false);
-  const [error,       setError]      = useState('');
+export default function EditUnitModal({ unit, onSave, onDelete, onClose, trackers = [] }) {
+  const [unitNumber,   setUnitNumber]  = useState(unit.unit_number);
+  const [unitName,     setUnitName]    = useState(unit.unit_name);
+  const [unitType,     setUnitType]    = useState(unit.unit_type);
+  const [trackerName,  setTrackerName] = useState(unit.tracker_name || '');
+  const [saving,       setSaving]      = useState(false);
+  const [confirming,   setConfirming]  = useState(false);
+  const [error,        setError]       = useState('');
+
+  const selectedTracker = trackers.find(t => t.name === trackerName);
 
   const handleSave = async () => {
     if (!unitNumber.trim()) { setError('Unit number is required.'); return; }
@@ -18,10 +20,10 @@ export default function EditUnitModal({ unit, onSave, onDelete, onClose }) {
     setError('');
     try {
       await onSave(unit.id, {
-        unit_number:      unitNumber.trim(),
-        unit_name:        unitName.trim(),
-        unit_type:        unitType,
-        tracki_device_id: deviceId.trim() || null
+        unit_number:  unitNumber.trim(),
+        unit_name:    unitName.trim(),
+        unit_type:    unitType,
+        tracker_name: trackerName || null
       });
       onClose();
     } catch {
@@ -45,7 +47,6 @@ export default function EditUnitModal({ unit, onSave, onDelete, onClose }) {
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
       <div className="bg-gray-800 rounded-2xl w-full max-w-sm shadow-2xl border border-gray-700">
-        {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-700">
           <div className="text-white font-bold">Edit Unit</div>
           <button onClick={onClose}
@@ -54,7 +55,6 @@ export default function EditUnitModal({ unit, onSave, onDelete, onClose }) {
           </button>
         </div>
 
-        {/* Form */}
         {!confirming ? (
           <>
             <div className="p-5 space-y-4">
@@ -93,18 +93,30 @@ export default function EditUnitModal({ unit, onSave, onDelete, onClose }) {
               </div>
 
               <div>
-                <label className="block text-gray-400 text-xs uppercase tracking-wider mb-1.5">
-                  Tracki Device ID <span className="text-gray-600 normal-case">(GPS tracker IMEI or device ID)</span>
-                </label>
-                <input
-                  type="text"
-                  value={deviceId}
-                  onChange={e => setDeviceId(e.target.value)}
-                  placeholder="e.g. 352094081234567"
-                  className="w-full bg-gray-700 text-white rounded-lg px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500 font-mono"
-                />
-                {deviceId && (
-                  <p className="text-green-400 text-xs mt-1">✓ GPS tracking enabled for this unit</p>
+                <label className="block text-gray-400 text-xs uppercase tracking-wider mb-1.5">GPS Tracker</label>
+                {trackers.length === 0 ? (
+                  <div className="text-gray-500 text-xs bg-gray-700 rounded-lg px-3 py-2.5">
+                    No trackers configured — add them in Settings ⚙
+                  </div>
+                ) : (
+                  <>
+                    <select
+                      value={trackerName}
+                      onChange={e => setTrackerName(e.target.value)}
+                      className="w-full bg-gray-700 text-white rounded-lg px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="">None</option>
+                      {trackers.map(t => (
+                        <option key={t.id} value={t.name}>{t.name}</option>
+                      ))}
+                    </select>
+                    {selectedTracker && (
+                      <p className="text-green-400 text-xs mt-1">
+                        ✓ GPS tracking via {selectedTracker.name}
+                        {selectedTracker.device_id ? ` (${selectedTracker.device_id})` : ' — no IMEI set yet'}
+                      </p>
+                    )}
+                  </>
                 )}
               </div>
 
@@ -129,7 +141,6 @@ export default function EditUnitModal({ unit, onSave, onDelete, onClose }) {
             </div>
           </>
         ) : (
-          /* Confirm delete */
           <div className="p-5 space-y-4">
             <div className="text-center">
               <div className="text-3xl mb-3">⚠️</div>
