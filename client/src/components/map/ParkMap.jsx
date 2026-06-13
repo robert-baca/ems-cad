@@ -201,7 +201,7 @@ export default function ParkMap({
       if (locationMarkersRef.current[loc.id]) return;
 
       const el = document.createElement('div');
-      el.className = 'loc-marker-wrapper';
+      el.className = 'loc-marker-anchor';
       const labelPrefix = loc.locationType === 'permanent' ? '📌 ' : '';
       el.innerHTML = `
         <div class="loc-marker-diamond" style="background:${loc.color}"></div>
@@ -214,7 +214,7 @@ export default function ParkMap({
         onRemoveLocationRef.current?.(loc.id);
       });
 
-      locationMarkersRef.current[loc.id] = new mapboxgl.Marker({ element: el, anchor: 'top' })
+      locationMarkersRef.current[loc.id] = new mapboxgl.Marker({ element: el, anchor: 'center' })
         .setLngLat([loc.lng, loc.lat])
         .addTo(map);
     });

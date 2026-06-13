@@ -66,12 +66,11 @@
 }
 
 /* Custom map location markers */
-.loc-marker-wrapper {
+.loc-marker-anchor {
   position: relative;
+  width: 14px;
+  height: 14px;
   cursor: pointer;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
 }
 
 .loc-marker-diamond {
@@ -81,11 +80,13 @@
   border: 2.5px solid rgba(255,255,255,0.9);
   border-radius: 2px;
   box-shadow: 0 2px 6px rgba(0,0,0,0.6);
-  flex-shrink: 0;
 }
 
 .loc-marker-label {
-  margin-top: 6px;
+  position: absolute;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
   white-space: nowrap;
   font-size: 10px;
   font-weight: 700;
@@ -116,7 +117,7 @@
   transition: opacity 0.15s;
 }
 
-.loc-marker-wrapper:hover .loc-delete-btn {
+.loc-marker-anchor:hover .loc-delete-btn {
   opacity: 1;
 }
 
