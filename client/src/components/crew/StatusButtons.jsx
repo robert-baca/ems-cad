@@ -34,21 +34,18 @@ export default function StatusButtons({ currentStatus, onStatusChange, loading }
           const idx = SEQUENCE.indexOf(status);
           const isCurrent = status === currentStatus;
           const isNext = idx === currentIdx + 1;
-          const isPast = idx <= currentIdx && !isCurrent;
 
           return (
             <button
               key={status}
-              disabled={isPast || loading}
-              onClick={() => !isPast && !isCurrent && onStatusChange(status)}
+              disabled={isCurrent || loading}
+              onClick={() => !isCurrent && onStatusChange(status)}
               className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition-all font-medium
                 ${isCurrent
                   ? 'border-2 cursor-default opacity-100'
                   : isNext
                     ? 'text-white shadow-lg scale-[1.01]'
-                    : isPast
-                      ? 'opacity-30 cursor-not-allowed bg-gray-700 text-gray-500'
-                      : 'bg-gray-700 hover:bg-gray-600 text-gray-300 border border-gray-600'
+                    : 'bg-gray-700 hover:bg-gray-600 text-gray-300 border border-gray-600'
                 }`}
               style={
                 isCurrent

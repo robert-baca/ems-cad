@@ -435,6 +435,7 @@ app.post('/api/calls', verifyToken, async (req, res) => {
       unit.status = 'dispatched';
       saveUnit(unit).catch(console.error);
       io.to('dispatchers').emit('unit:status_change', { unit_id: unit.id, status: 'dispatched' });
+      io.to(`crew:${unit.id}`).emit('unit:status_change', { unit_id: unit.id, status: 'dispatched' });
     }
   }
   additionalIds.forEach(uid => {
@@ -443,6 +444,7 @@ app.post('/api/calls', verifyToken, async (req, res) => {
       u.status = 'dispatched';
       saveUnit(u).catch(console.error);
       io.to('dispatchers').emit('unit:status_change', { unit_id: u.id, status: 'dispatched' });
+      io.to(`crew:${uid}`).emit('unit:status_change', { unit_id: u.id, status: 'dispatched' });
       io.to(`crew:${uid}`).emit('call:assigned_to_me', call);
     }
   });
