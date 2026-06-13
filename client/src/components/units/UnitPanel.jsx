@@ -218,7 +218,7 @@ export default function UnitPanel({ units, calls, selectedUnitId, onSelectUnit, 
             (now - new Date(u.last_gps_at).getTime()) > STALE_MS
           );
           const unassigned = units.filter(u =>
-            u.last_lat && u.last_lng && !ON_CALL_STATUSES.has(u.status)
+            u.last_lat && u.last_lng && !ON_CALL_STATUSES.has(u.status) && !u.tracker_name
           );
           if (!stale.length && !unassigned.length) return null;
           return (
