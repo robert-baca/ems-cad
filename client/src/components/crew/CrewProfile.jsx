@@ -1,7 +1,7 @@
 import { useState } from 'react';
 
 const CERT_LEVELS = ['First Responder', 'EMT-B', 'AEMT', 'Paramedic'];
-const EXTRA_CERTS = ['ACLS', 'BLS', 'PALS', 'ITLS', 'PHTLS', 'CPR-I', 'Basic VOP', 'Advanced VOP', 'Restricted/Danger Zone', 'LOTO'];
+const EXTRA_CERTS = ['ACLS', 'BLS', 'PALS', 'ITLS', 'PHTLS', 'CPR-I'];
 
 export default function CrewProfile({ unit, currentProfile, token, onSave, onClose }) {
   const [name, setName] = useState(currentProfile?.name || '');
