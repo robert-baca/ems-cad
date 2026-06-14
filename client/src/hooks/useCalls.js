@@ -68,12 +68,22 @@ export function useCalls() {
 
   const advanceStatus = useCallback(async (callId, status) => {
     const tsField = STATUS_TS_MAP[status];
-    setCalls(prev => prev.map(c =>
-      c.id === callId
-        ? { ...c, status, ...(tsField ? { [tsField]: new Date().toISOString() } : {}) }
-        : c
-    ));
-    try { await updateCallStatus(callId, status); } catch {}
+    let snapshot = null;
+    setCalls(prev => {
+      snapshot = prev.find(c => c.id === callId) || null;
+      return prev.map(c =>
+        c.id === callId
+          ? { ...c, status, ...(tsField ? { [tsField]: new Date().toISOString() } : {}) }
+          : c
+      );
+    });
+    try {
+      await updateCallStatus(callId, status);
+      return null;
+    } catch (err) {
+      if (snapshot) setCalls(prev => prev.map(c => c.id === callId ? snapshot : c));
+      return err?.response?.data?.error || 'Status update failed';
+    }
   }, []);
 
   const updateTimestamp = useCallback((callId, field, isoValue) => {
@@ -102,12 +112,22 @@ export function useCalls() {
   }, []);
 
   const closeCall = useCallback(async (callId, disposition, close_notes) => {
-    setCalls(prev => prev.map(c =>
-      c.id === callId
-        ? { ...c, status: 'closed', disposition, close_notes, closed_at: new Date().toISOString() }
-        : c
-    ));
-    try { await apiCloseCall(callId, disposition, close_notes); } catch {}
+    let snapshot = null;
+    setCalls(prev => {
+      snapshot = prev.find(c => c.id === callId) || null;
+      return prev.map(c =>
+        c.id === callId
+          ? { ...c, status: 'closed', disposition, close_notes, closed_at: new Date().toISOString() }
+          : c
+      );
+    });
+    try {
+      await apiCloseCall(callId, disposition, close_notes);
+      return null;
+    } catch (err) {
+      if (snapshot) setCalls(prev => prev.map(c => c.id === callId ? snapshot : c));
+      return err?.response?.data?.error || 'Failed to close call';
+    }
   }, []);
 
   const addUnitToCall = useCallback(async (callId, unitId) => {

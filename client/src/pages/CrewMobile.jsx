@@ -91,7 +91,7 @@ function CrewChat({ call, myUnit, onSend }) {
 
   const submit = () => {
     const trimmed = text.trim();
-    if (!trimmed || isCompleted) return;
+    if (!trimmed) return;
     onSend(trimmed);
     setText('');
   };
@@ -128,25 +128,23 @@ function CrewChat({ call, myUnit, onSend }) {
         )}
       </div>
 
-      {!isCompleted && (
-        <div className="px-3 pb-3 flex gap-2">
-          <input
-            type="text"
-            value={text}
-            onChange={e => setText(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && submit()}
-            placeholder="Message dispatch…"
-            className="flex-1 bg-gray-700 text-white rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500"
-          />
-          <button
-            onClick={submit}
-            disabled={!text.trim()}
-            className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-600 text-white text-sm rounded-xl transition-colors font-semibold"
-          >
-            Send
-          </button>
-        </div>
-      )}
+      <div className="px-3 pb-3 flex gap-2">
+        <input
+          type="text"
+          value={text}
+          onChange={e => setText(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && submit()}
+          placeholder={isCompleted ? 'Add late note…' : 'Message dispatch…'}
+          className="flex-1 bg-gray-700 text-white rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500"
+        />
+        <button
+          onClick={submit}
+          disabled={!text.trim()}
+          className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-600 text-white text-sm rounded-xl transition-colors font-semibold"
+        >
+          Send
+        </button>
+      </div>
     </div>
   );
 }
@@ -163,6 +161,7 @@ export default function CrewMobile() {
   } = useCalls();
 
   const [statusLoading,    setStatusLoading]    = useState(false);
+  const [statusError,      setStatusError]      = useState(null);
   const [backupRequested,  setBackupRequested]  = useState(false);
   const [lastActiveCallId, setLastActiveCallId] = useState(null);
   const [dismissedCallId,  setDismissedCallId]  = useState(null);
@@ -231,12 +230,16 @@ export default function CrewMobile() {
   const handleStatusTap = async (status) => {
     if (!myUnit) return;
     setStatusLoading(true);
+    setStatusError(null);
     try {
       await changeStatus(myUnit.id, status);
       // Only the primary assigned unit drives the call-level status.
       if (myActiveCall && myActiveCall.assigned_unit_id === myUnit.id) {
-        await advanceStatus(myActiveCall.id, status);
+        const err = await advanceStatus(myActiveCall.id, status);
+        if (err) setStatusError(err);
       }
+    } catch {
+      setStatusError('Status update failed — try again');
     } finally {
       setStatusLoading(false);
     }
@@ -323,6 +326,14 @@ export default function CrewMobile() {
 
       {/* Body */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {statusError && (
+          <div className="px-3 py-2 rounded-xl bg-red-900/60 border border-red-700 text-red-200 text-sm flex items-center gap-2">
+            <span>⚠️</span>
+            <span className="flex-1">{statusError}</span>
+            <button onClick={() => setStatusError(null)} className="text-red-400 hover:text-white text-lg leading-none">×</button>
+          </div>
+        )}
+
         <ActiveCall
           call={myCall}
           myUnit={myUnit}
@@ -370,7 +381,8 @@ export default function CrewMobile() {
           call={myActiveCall}
           onClose={() => setShowDisposition(false)}
           onConfirm={async (callId, disposition, notes) => {
-            await closeCall(callId, disposition, notes);
+            const err = await closeCall(callId, disposition, notes);
+            if (err) { setStatusError(err); return; }
             setShowDisposition(false);
           }}
         />

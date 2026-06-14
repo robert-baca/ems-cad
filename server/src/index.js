@@ -439,6 +439,11 @@ app.post('/api/calls', verifyToken, async (req, res) => {
   if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
   const hasUnit        = !!req.body.assigned_unit_id;
   const additionalIds  = Array.isArray(req.body.additional_unit_ids) ? req.body.additional_unit_ids : [];
+
+  if (hasUnit) {
+    const conflict = getUnitActiveCall(req.body.assigned_unit_id);
+    if (conflict) return res.status(409).json({ error: `Unit already on call #${conflict.call_number}` });
+  }
   const id         = `call-${Date.now()}`;
   const callNumber = nextCallNum++;
   const call = {
@@ -489,6 +494,9 @@ app.patch('/api/calls/:id/assign', verifyToken, async (req, res) => {
   const call = calls.find(c => c.id === req.params.id);
   if (!call) return res.status(404).json({ error: 'Not found' });
 
+  const conflict = getUnitActiveCall(req.body.unit_id, req.params.id);
+  if (conflict) return res.status(409).json({ error: `Unit already on call #${conflict.call_number}` });
+
   call.assigned_unit_id = req.body.unit_id;
   call.status           = 'dispatched';
   call.dispatched_at    = call.dispatched_at || new Date().toISOString();
@@ -512,6 +520,10 @@ app.post('/api/calls/:id/add-unit', verifyToken, async (req, res) => {
   if (!call) return res.status(404).json({ error: 'Not found' });
   const { unit_id } = req.body;
   if (!unit_id) return res.status(400).json({ error: 'unit_id required' });
+
+  const conflict = getUnitActiveCall(unit_id, req.params.id);
+  if (conflict) return res.status(409).json({ error: `Unit already on call #${conflict.call_number}` });
+
   if (!call.additional_unit_ids) call.additional_unit_ids = [];
   if (!call.additional_unit_ids.includes(unit_id) && call.assigned_unit_id !== unit_id) {
     call.additional_unit_ids.push(unit_id);
@@ -794,6 +806,15 @@ app.patch('/api/shift/units/:unit_id', verifyToken, async (req, res) => {
   io.to('dispatchers').emit('unit:updated', sanitized);
   res.json(sanitized);
 });
+
+// Returns the first active (non-closed) call a unit is on, optionally ignoring one call ID.
+function getUnitActiveCall(unitId, excludeCallId = null) {
+  return calls.find(c =>
+    c.id !== excludeCallId &&
+    c.status !== 'closed' &&
+    (c.assigned_unit_id === unitId || (c.additional_unit_ids || []).includes(unitId))
+  ) || null;
+}
 
 // ── GPS helpers ───────────────────────────────────────────────────
 function applyGpsUpdate(unit, lat, lng, timestamp) {

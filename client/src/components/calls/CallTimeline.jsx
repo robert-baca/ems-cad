@@ -37,20 +37,30 @@ function parseManualTime(str) {
   return d.toISOString();
 }
 
-function TimeRow({ step, ts, isLast, onUpdate, onClear }) {
+function TimeRow({ step, ts, isLast, prevTs, nextTs, onUpdate, onClear }) {
   const [editing, setEditing] = useState(false);
   const [inputVal, setInputVal] = useState('');
+  const [timeError, setTimeError] = useState('');
   const done = !!ts;
 
   const startEdit = () => {
     setInputVal(ts ? fmtTime24(ts) : '');
+    setTimeError('');
     setEditing(true);
   };
 
   const commit = () => {
     if (inputVal.trim()) {
       const iso = parseManualTime(inputVal);
-      if (iso) onUpdate(step.tsField, iso);
+      if (!iso) { setTimeError('Invalid time (HH:MM)'); return; }
+      if (prevTs && new Date(iso) < new Date(prevTs)) {
+        setTimeError(`Must be after ${fmtTime24(prevTs)}`); return;
+      }
+      if (nextTs && new Date(iso) > new Date(nextTs)) {
+        setTimeError(`Must be before ${fmtTime24(nextTs)}`); return;
+      }
+      setTimeError('');
+      onUpdate(step.tsField, iso);
     }
     setEditing(false);
   };
@@ -77,50 +87,55 @@ function TimeRow({ step, ts, isLast, onUpdate, onClear }) {
       </div>
 
       {/* Label + time */}
-      <div className="flex justify-between items-center w-full pb-1 min-w-0">
-        <span className={`text-sm ${done ? 'text-gray-200' : 'text-gray-500'}`}>
-          {step.label}
-        </span>
+      <div className="flex flex-col w-full pb-1 min-w-0">
+        <div className="flex justify-between items-center w-full">
+          <span className={`text-sm ${done ? 'text-gray-200' : 'text-gray-500'}`}>
+            {step.label}
+          </span>
 
-        {editing ? (
-          <div className="flex items-center gap-1">
-            <input
-              autoFocus
-              type="text"
-              value={inputVal}
-              onChange={e => setInputVal(e.target.value)}
-              onBlur={commit}
-              onKeyDown={handleKey}
-              placeholder="HH:MM (24h)"
-              className="w-20 bg-gray-700 text-white text-xs font-mono rounded px-1.5 py-0.5 outline-none focus:ring-1 focus:ring-blue-500 border border-blue-500"
-            />
-            <button onClick={commit}
-              className="text-green-400 hover:text-green-300 text-xs">✓</button>
-            <button onClick={() => setEditing(false)}
-              className="text-gray-500 hover:text-gray-300 text-xs">✕</button>
-          </div>
-        ) : (
-          <div className="flex items-center gap-1.5">
-            <span className={`text-xs font-mono ${done ? 'text-green-400' : 'text-gray-600'}`}>
-              {ts ? fmtTime(ts) : '—'}
-            </span>
-            <button
-              onClick={startEdit}
-              className="text-gray-600 hover:text-blue-400 text-xs transition-colors"
-              title="Edit time"
-            >
-              ✏️
-            </button>
-            {done && (
+          {editing ? (
+            <div className="flex items-center gap-1">
+              <input
+                autoFocus
+                type="text"
+                value={inputVal}
+                onChange={e => { setInputVal(e.target.value); setTimeError(''); }}
+                onBlur={commit}
+                onKeyDown={handleKey}
+                placeholder="HH:MM (24h)"
+                className={`w-20 bg-gray-700 text-white text-xs font-mono rounded px-1.5 py-0.5 outline-none focus:ring-1 border ${timeError ? 'border-red-500 focus:ring-red-500' : 'border-blue-500 focus:ring-blue-500'}`}
+              />
+              <button onClick={commit}
+                className="text-green-400 hover:text-green-300 text-xs">✓</button>
+              <button onClick={() => { setEditing(false); setTimeError(''); }}
+                className="text-gray-500 hover:text-gray-300 text-xs">✕</button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5">
+              <span className={`text-xs font-mono ${done ? 'text-green-400' : 'text-gray-600'}`}>
+                {ts ? fmtTime(ts) : '—'}
+              </span>
               <button
-                onClick={() => onClear?.(step.tsField)}
-                className="text-gray-700 hover:text-red-400 text-xs transition-colors leading-none"
-                title="Clear this timestamp"
+                onClick={startEdit}
+                className="text-gray-600 hover:text-blue-400 text-xs transition-colors"
+                title="Edit time"
               >
-                ×
+                ✏️
               </button>
-            )}
-          </div>
+              {done && (
+                <button
+                  onClick={() => onClear?.(step.tsField)}
+                  className="text-gray-700 hover:text-red-400 text-xs transition-colors leading-none"
+                  title="Clear this timestamp"
+                >
+                  ×
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+        {timeError && (
+          <div className="text-red-400 text-xs mt-0.5 text-right">{timeError}</div>
         )}
       </div>
     </div>
@@ -136,6 +151,8 @@ export default function CallTimeline({ call, onTimestampUpdate }) {
           step={step}
           ts={call[step.tsField]}
           isLast={i === STEPS.length - 1}
+          prevTs={i > 0 ? call[STEPS[i - 1].tsField] : null}
+          nextTs={i < STEPS.length - 1 ? call[STEPS[i + 1].tsField] : null}
           onUpdate={(field, iso) => onTimestampUpdate?.(field, iso)}
           onClear={(field) => onTimestampUpdate?.(field, null)}
         />
