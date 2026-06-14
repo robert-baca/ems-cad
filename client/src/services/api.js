@@ -7,7 +7,7 @@ const api = axios.create({
 
 // Attach JWT to every request
 api.interceptors.request.use((config) => {
-  const stored = sessionStorage.getItem('cad_user');
+  const stored = localStorage.getItem('cad_user');
   if (stored) {
     const { token } = JSON.parse(stored);
     if (token) config.headers.Authorization = `Bearer ${token}`;
@@ -71,7 +71,7 @@ api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      sessionStorage.removeItem('cad_user');
+      localStorage.removeItem('cad_user');
       window.location.href = '/login';
     }
     return Promise.reject(error);
