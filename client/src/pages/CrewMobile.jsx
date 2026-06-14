@@ -273,6 +273,7 @@ export default function CrewMobile() {
             currentStatus={myUnit.status}
             onStatusChange={handleStatusTap}
             loading={statusLoading}
+            hasCall={!!myActiveCall}
           />
         )}
 

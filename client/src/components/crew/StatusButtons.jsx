@@ -12,10 +12,11 @@ const ICONS = {
   available:       '🟢',
 };
 
-export default function StatusButtons({ currentStatus, onStatusChange, loading }) {
-  const isOos     = currentStatus === 'out_of_service';
+export default function StatusButtons({ currentStatus, onStatusChange, loading, hasCall }) {
+  const isOos      = currentStatus === 'out_of_service';
   const currentIdx = SEQUENCE.indexOf(currentStatus);
-  const nextStatus = SEQUENCE[currentIdx + 1] ?? null;
+  // Only show the next sequential button when the unit is actually on a call
+  const nextStatus = hasCall ? (SEQUENCE[currentIdx + 1] ?? null) : null;
 
   return (
     <div className="bg-gray-800 rounded-2xl border border-gray-700 p-3 space-y-2">

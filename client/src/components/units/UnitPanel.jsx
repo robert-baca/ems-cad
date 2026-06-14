@@ -87,15 +87,21 @@ function UnitCard({ unit, activeCall, isSelected, onClick, onHistory, onEdit, on
       {/* Expanded action row when selected */}
       {isSelected && (
         <div className="px-2 pb-2 flex gap-1.5 flex-wrap">
-          {!ON_CALL_STATUSES.has(unit.status) && (
+          {(!ON_CALL_STATUSES.has(unit.status) || !activeCall) && (
             <button
               onClick={(e) => { e.stopPropagation(); onToggleOos(unit); }}
               className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-colors
                 ${unit.status === 'out_of_service'
                   ? 'bg-green-800 hover:bg-green-700 text-green-300'
-                  : 'bg-gray-700 hover:bg-yellow-900 text-gray-400 hover:text-yellow-300'}`}
+                  : ON_CALL_STATUSES.has(unit.status)
+                    ? 'bg-gray-700 hover:bg-green-900 text-gray-400 hover:text-green-300'
+                    : 'bg-gray-700 hover:bg-yellow-900 text-gray-400 hover:text-yellow-300'}`}
             >
-              {unit.status === 'out_of_service' ? '✓ Back In Service' : 'Mark OOS'}
+              {unit.status === 'out_of_service'
+                ? '✓ Back In Service'
+                : ON_CALL_STATUSES.has(unit.status)
+                  ? 'Force Available'
+                  : 'Mark OOS'}
             </button>
           )}
           {unit.last_lat && unit.last_lng ? (
@@ -201,7 +207,10 @@ export default function UnitPanel({ units, calls, selectedUnitId, onSelectUnit, 
                 onClick={() => onSelectUnit?.(unit.id === selectedUnitId ? null : unit.id)}
                 onHistory={onUnitHistory}
                 onEdit={setEditingUnit}
-                onToggleOos={(u) => onStatusChange?.(u.id, u.status === 'out_of_service' ? 'available' : 'out_of_service')}
+                onToggleOos={(u) => {
+                  const goAvailable = u.status === 'out_of_service' || ON_CALL_STATUSES.has(u.status);
+                  onStatusChange?.(u.id, goAvailable ? 'available' : 'out_of_service');
+                }}
                 onFlyTo={(u) => onFlyTo?.(u)}
                 onClearGps={(id) => onClearGps?.(id)}
               />
