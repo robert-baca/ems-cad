@@ -16,7 +16,7 @@ function parseJwtExp(token) {
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(() => {
-    const stored = sessionStorage.getItem('cad_user');
+    const stored = localStorage.getItem('cad_user');
     return stored ? JSON.parse(stored) : null;
   });
   const refreshTimerRef = useRef(null);
@@ -25,7 +25,7 @@ export function AuthProvider({ children }) {
     setUser(prev => {
       if (!prev) return prev;
       const updated = { ...prev, token };
-      sessionStorage.setItem('cad_user', JSON.stringify(updated));
+      localStorage.setItem('cad_user', JSON.stringify(updated));
       return updated;
     });
   };
@@ -33,7 +33,7 @@ export function AuthProvider({ children }) {
   // Proactive token refresh: runs every 30 min, refreshes if < 4h remain
   useEffect(() => {
     const tryRefresh = async () => {
-      const stored = sessionStorage.getItem('cad_user');
+      const stored = localStorage.getItem('cad_user');
       if (!stored) return;
       const { token } = JSON.parse(stored);
       if (!token) return;
@@ -58,14 +58,14 @@ export function AuthProvider({ children }) {
   }, [user?.token]);
 
   const login = (userData) => {
-    sessionStorage.setItem('cad_user', JSON.stringify(userData));
+    localStorage.setItem('cad_user', JSON.stringify(userData));
     setUser(userData);
   };
 
   const updateName = (name) => {
     setUser(prev => {
       const updated = { ...prev, name };
-      sessionStorage.setItem('cad_user', JSON.stringify(updated));
+      localStorage.setItem('cad_user', JSON.stringify(updated));
       return updated;
     });
   };
@@ -73,13 +73,13 @@ export function AuthProvider({ children }) {
   const updateProfile = (profile) => {
     setUser(prev => {
       const updated = { ...prev, profile, name: profile.name || prev.name };
-      sessionStorage.setItem('cad_user', JSON.stringify(updated));
+      localStorage.setItem('cad_user', JSON.stringify(updated));
       return updated;
     });
   };
 
   const logout = () => {
-    sessionStorage.removeItem('cad_user');
+    localStorage.removeItem('cad_user');
     clearInterval(refreshTimerRef.current);
     setUser(null);
   };

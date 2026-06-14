@@ -552,9 +552,9 @@ app.patch('/api/calls/:id/status', verifyToken, async (req, res) => {
     const allIds = [call.assigned_unit_id, ...(call.additional_unit_ids || [])];
     if (!allIds.includes(req.user.unit_id))
       return res.status(403).json({ error: 'Forbidden' });
-    // Crew can only advance status, not close or set arbitrary values
     const CREW_ALLOWED = ['acknowledged','en_route','on_scene','patient_contact','transporting','cleared','available'];
-    if (!CREW_ALLOWED.includes(req.body.status))
+    const closingWithDisposition = req.body.status === 'closed' && req.body.disposition;
+    if (!CREW_ALLOWED.includes(req.body.status) && !closingWithDisposition)
       return res.status(403).json({ error: 'Forbidden' });
   }
 

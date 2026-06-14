@@ -9,6 +9,71 @@ import ActiveCall from '../components/crew/ActiveCall';
 import StatusButtons from '../components/crew/StatusButtons';
 import { STATUS_COLORS, STATUS_LABELS } from '../data/mockData';
 
+const NON_TRANSPORT_DISPOSITIONS = [
+  { id: 'treated_refused', label: 'Treated / Refused Transport', icon: '🩺' },
+  { id: 'refused_care',    label: 'Patient Refused Care',         icon: '🚫' },
+  { id: 'no_patient',      label: 'No Patient Found (UTL)',       icon: '🔍' },
+  { id: 'cancelled',       label: 'Cancelled / False Alarm',      icon: '❌' },
+  { id: 'standby',         label: 'No Treatment Needed',          icon: '✅' },
+  { id: 'doa',             label: 'Patient DOA',                  icon: '🕯️' },
+];
+
+function CrewDisposition({ call, onClose, onConfirm }) {
+  const [chosen, setChosen] = useState('');
+  const [notes, setNotes] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const submit = async () => {
+    if (!chosen) return;
+    setSubmitting(true);
+    try { await onConfirm(call.id, chosen, notes.trim()); } finally { setSubmitting(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/70 z-50 flex items-end" onClick={onClose}>
+      <div
+        className="w-full bg-gray-800 rounded-t-2xl p-4 space-y-3 max-h-[80vh] overflow-y-auto"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-1">
+          <div className="text-white font-bold text-base">Non-Transport Disposition</div>
+          <button onClick={onClose} className="text-gray-400 hover:text-white text-2xl w-8 h-8 flex items-center justify-center leading-none">×</button>
+        </div>
+
+        <div className="space-y-2">
+          {NON_TRANSPORT_DISPOSITIONS.map(d => (
+            <button
+              key={d.id}
+              onClick={() => setChosen(d.id)}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left text-sm font-medium transition-colors
+                ${chosen === d.id ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-200 active:bg-gray-600'}`}
+            >
+              <span className="text-lg">{d.icon}</span>
+              <span>{d.label}</span>
+            </button>
+          ))}
+        </div>
+
+        <textarea
+          value={notes}
+          onChange={e => setNotes(e.target.value)}
+          placeholder="Notes (optional)…"
+          rows={2}
+          className="w-full bg-gray-700 text-white rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500 resize-none"
+        />
+
+        <button
+          onClick={submit}
+          disabled={!chosen || submitting}
+          className="w-full py-3.5 rounded-xl bg-red-700 active:bg-red-800 disabled:bg-gray-700 disabled:text-gray-500 text-white font-bold text-sm transition-colors"
+        >
+          {submitting ? 'Closing…' : 'Close Call'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function fmtTime(iso) {
   if (!iso) return '';
   return new Date(iso).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
@@ -94,13 +159,14 @@ export default function CrewMobile() {
   const {
     calls, setCalls,
     handleCallCreated, handleCallUpdated, handleCallStatusChange, handleCommentAdded,
-    advanceStatus, addComment
+    advanceStatus, addComment, closeCall
   } = useCalls();
 
   const [statusLoading,    setStatusLoading]    = useState(false);
   const [backupRequested,  setBackupRequested]  = useState(false);
   const [lastActiveCallId, setLastActiveCallId] = useState(null);
   const [dismissedCallId,  setDismissedCallId]  = useState(null);
+  const [showDisposition,  setShowDisposition]  = useState(false);
 
   const myUnit = units.find(u =>
     u.id === user?.unit_id || u.unit_number === user?.unit_number
@@ -277,6 +343,15 @@ export default function CrewMobile() {
           />
         )}
 
+        {myActiveCall && (
+          <button
+            onClick={() => setShowDisposition(true)}
+            className="w-full py-3 rounded-2xl bg-gray-800 border border-gray-700 text-gray-400 active:bg-gray-700 text-sm font-medium transition-colors flex items-center justify-center gap-2"
+          >
+            📋 Non-Transport Disposition
+          </button>
+        )}
+
         <button
           onClick={() => window.open('https://sfotems.com/protocols', '_blank')}
           className="w-full py-3 rounded-2xl bg-gray-800 border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 text-sm font-medium transition-colors flex items-center justify-center gap-2"
@@ -284,6 +359,17 @@ export default function CrewMobile() {
           📖 Protocols
         </button>
       </div>
+
+      {showDisposition && myActiveCall && (
+        <CrewDisposition
+          call={myActiveCall}
+          onClose={() => setShowDisposition(false)}
+          onConfirm={async (callId, disposition, notes) => {
+            await closeCall(callId, disposition, notes);
+            setShowDisposition(false);
+          }}
+        />
+      )}
 
       {/* SOS button — fixed to bottom, only when on an active (non-closed) call */}
       {myActiveCall && (
