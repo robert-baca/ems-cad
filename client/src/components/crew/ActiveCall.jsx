@@ -3,12 +3,8 @@ import { STATUS_COLORS, STATUS_LABELS } from '../../data/mockData';
 
 const PRIORITY_LABELS = { 1: 'P1 — High Acuity', 2: 'P2 — Medium Acuity', 3: 'P3 — Low Acuity' };
 
-function formatTime(iso) {
-  if (!iso) return null;
-  return new Date(iso).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-}
 
-export default function ActiveCall({ call, myUnit, units = [] }) {
+export default function ActiveCall({ call, myUnit, units = [], isCompleted = false, onDismiss }) {
   if (!call) {
     return (
       <div className="bg-gray-800 rounded-2xl p-6 text-center border border-gray-700">
@@ -28,17 +24,22 @@ export default function ActiveCall({ call, myUnit, units = [] }) {
     .map(id => units.find(u => u.id === id))
     .filter(Boolean);
 
-  // Last 3 comments, newest first
-  const recentComments = [...(call.comments || [])].reverse().slice(0, 3);
-
   const hasLocation = call.location_lat && call.location_lng;
 
   return (
     <div className="bg-gray-800 rounded-2xl overflow-hidden border border-gray-700">
-      {/* Priority header */}
-      <div className={`px-4 py-2.5 text-sm font-bold
-        ${call.priority === 1 ? 'bg-red-600' : call.priority === 2 ? 'bg-orange-600' : 'bg-blue-700'}`}>
-        🚨 ACTIVE CALL #{call.call_number} · {PRIORITY_LABELS[call.priority]}
+      {/* Header */}
+      <div className={`px-4 py-2.5 text-sm font-bold flex items-center justify-between
+        ${isCompleted ? 'bg-gray-700' : call.priority === 1 ? 'bg-red-600' : call.priority === 2 ? 'bg-orange-600' : 'bg-blue-700'}`}>
+        <span>{isCompleted ? '✅ CALL CLEARED' : '🚨 ACTIVE CALL'} #{call.call_number}{!isCompleted && ` · ${PRIORITY_LABELS[call.priority]}`}</span>
+        {isCompleted && (
+          <button
+            onClick={onDismiss}
+            className="text-gray-400 hover:text-white text-xs bg-gray-600 hover:bg-gray-500 px-2 py-0.5 rounded transition-colors"
+          >
+            Dismiss
+          </button>
+        )}
       </div>
 
       <div className="p-4 space-y-4">
@@ -91,23 +92,6 @@ export default function ActiveCall({ call, myUnit, units = [] }) {
           </div>
         )}
 
-        {/* Recent comments from dispatch */}
-        {recentComments.length > 0 && (
-          <div>
-            <div className="text-gray-400 text-xs uppercase tracking-wider mb-2">Dispatch Updates</div>
-            <div className="space-y-2">
-              {recentComments.map(c => (
-                <div key={c.id} className="bg-gray-750 rounded-lg border border-gray-600 px-3 py-2">
-                  <div className="flex items-center justify-between mb-0.5">
-                    <span className="text-xs font-semibold text-gray-300">{c.author}</span>
-                    <span className="text-xs text-gray-500">{formatTime(c.created_at)}</span>
-                  </div>
-                  <div className="text-sm text-gray-200 leading-snug">{c.text}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
 
       </div>
     </div>

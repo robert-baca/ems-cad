@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { useUnits } from '../hooks/useUnits';
@@ -9,26 +9,128 @@ import ActiveCall from '../components/crew/ActiveCall';
 import StatusButtons from '../components/crew/StatusButtons';
 import { STATUS_COLORS, STATUS_LABELS } from '../data/mockData';
 
+function fmtTime(iso) {
+  if (!iso) return '';
+  return new Date(iso).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+}
+
+function CrewChat({ call, myUnit, onSend }) {
+  const [text, setText] = useState('');
+  const listRef = useRef(null);
+  const comments = call.comments || [];
+  const isCompleted = call.status === 'closed';
+
+  useEffect(() => {
+    if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
+  }, [comments.length]);
+
+  const submit = () => {
+    const trimmed = text.trim();
+    if (!trimmed || isCompleted) return;
+    onSend(trimmed);
+    setText('');
+  };
+
+  return (
+    <div className="bg-gray-800 rounded-2xl border border-gray-700 overflow-hidden">
+      <div className="px-4 py-2.5 border-b border-gray-700 text-sm font-semibold text-gray-300 flex items-center gap-2">
+        <span>💬 Dispatch Chat</span>
+        {comments.length > 0 && (
+          <span className="text-gray-500 font-normal text-xs">({comments.length})</span>
+        )}
+      </div>
+
+      <div ref={listRef} className="px-3 py-3 space-y-2 max-h-52 overflow-y-auto">
+        {comments.length === 0 ? (
+          <div className="text-gray-500 text-xs text-center py-3">No messages yet</div>
+        ) : (
+          comments.map(c => {
+            const isMe = c.author === myUnit.unit_number;
+            return (
+              <div key={c.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
+                <div className={`max-w-[85%] rounded-2xl px-3 py-2 ${
+                  isMe ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-100'
+                }`}>
+                  <div className="text-xs opacity-70 mb-0.5">
+                    {isMe ? 'You' : c.author}
+                    {c.created_at && ` · ${fmtTime(c.created_at)}`}
+                  </div>
+                  <div className="text-sm leading-snug">{c.text}</div>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {!isCompleted && (
+        <div className="px-3 pb-3 flex gap-2">
+          <input
+            type="text"
+            value={text}
+            onChange={e => setText(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && submit()}
+            placeholder="Message dispatch…"
+            className="flex-1 bg-gray-700 text-white rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500"
+          />
+          <button
+            onClick={submit}
+            disabled={!text.trim()}
+            className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-600 text-white text-sm rounded-xl transition-colors font-semibold"
+          >
+            Send
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function CrewMobile() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
 
   const { units, setUnits, handleGpsUpdate, handleStatusChange, changeStatus, handleUnitUpdated } = useUnits();
-  const { calls, setCalls, handleCallCreated, handleCallUpdated, handleCallStatusChange, handleCommentAdded, advanceStatus } = useCalls();
+  const {
+    calls, setCalls,
+    handleCallCreated, handleCallUpdated, handleCallStatusChange, handleCommentAdded,
+    advanceStatus, addComment
+  } = useCalls();
 
-  const [statusLoading,   setStatusLoading]   = useState(false);
-  const [backupRequested, setBackupRequested] = useState(false);
+  const [statusLoading,    setStatusLoading]    = useState(false);
+  const [backupRequested,  setBackupRequested]  = useState(false);
+  const [lastActiveCallId, setLastActiveCallId] = useState(null);
+  const [dismissedCallId,  setDismissedCallId]  = useState(null);
 
   const myUnit = units.find(u =>
     u.id === user?.unit_id || u.unit_number === user?.unit_number
   ) || null;
 
-  const myCall = calls.find(c => {
+  // Non-closed call — drives status buttons and SOS
+  const myActiveCall = calls.find(c => {
     if (c.status === 'closed') return false;
     if (!myUnit) return false;
     return c.assigned_unit_id === myUnit.id ||
       (c.additional_unit_ids || []).includes(myUnit.id);
   }) || null;
+
+  // Track the last active call ID so we can still show info after dispatch closes it
+  useEffect(() => {
+    if (myActiveCall) setLastActiveCallId(myActiveCall.id);
+  }, [myActiveCall?.id]);
+
+  // Reset when unit changes (new shift)
+  useEffect(() => {
+    setLastActiveCallId(null);
+    setDismissedCallId(null);
+  }, [myUnit?.id]);
+
+  // The call to display: active first, then the recently-closed one until the crew dismisses it
+  const myLastCall = lastActiveCallId && lastActiveCallId !== dismissedCallId
+    ? (calls.find(c => c.id === lastActiveCallId) || null)
+    : null;
+  const myCall = myActiveCall || myLastCall;
+  const callIsCompleted = !myActiveCall && !!myLastCall;
 
   // Stale token: unit found by unit_number but ID doesn't match. Force re-login.
   useEffect(() => {
@@ -39,10 +141,10 @@ export default function CrewMobile() {
     }
   }, [myUnit?.id, user?.unit_id, units.length]);
 
-  // Reset backup button when call changes
+  // Reset backup button when active call changes
   useEffect(() => {
     setBackupRequested(false);
-  }, [myCall?.id]);
+  }, [myActiveCall?.id]);
 
   // Browser GPS fallback (only fires when Tracki is stale > 3 min)
   useCrewGps({ token: user?.token, unit: myUnit, enabled: !!myUnit });
@@ -65,9 +167,8 @@ export default function CrewMobile() {
     try {
       await changeStatus(myUnit.id, status);
       // Only the primary assigned unit drives the call-level status.
-      // Additional units track their own status independently.
-      if (myCall && myCall.assigned_unit_id === myUnit.id) {
-        await advanceStatus(myCall.id, status);
+      if (myActiveCall && myActiveCall.assigned_unit_id === myUnit.id) {
+        await advanceStatus(myActiveCall.id, status);
       }
     } finally {
       setStatusLoading(false);
@@ -75,20 +176,20 @@ export default function CrewMobile() {
   };
 
   const handleRequestBackup = useCallback(async () => {
-    if (!myCall || !myUnit) return;
+    if (!myActiveCall || !myUnit) return;
     const next = !backupRequested;
     setBackupRequested(next);
     const text = next
       ? `🆘 BACKUP REQUESTED — ${myUnit.unit_number}`
       : `✅ Backup no longer needed — ${myUnit.unit_number}`;
     try {
-      await fetch(`/api/calls/${myCall.id}/comments`, {
+      await fetch(`/api/calls/${myActiveCall.id}/comments`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user?.token}` },
         body: JSON.stringify({ text })
       });
     } catch {}
-  }, [backupRequested, myCall, myUnit, user?.token]);
+  }, [backupRequested, myActiveCall, myUnit, user?.token]);
 
   const unitColor = STATUS_COLORS[myUnit?.status] || '#9ca3af';
 
@@ -155,7 +256,17 @@ export default function CrewMobile() {
           call={myCall}
           myUnit={myUnit}
           units={units}
+          isCompleted={callIsCompleted}
+          onDismiss={() => setDismissedCallId(myCall?.id)}
         />
+
+        {myCall && (
+          <CrewChat
+            call={myCall}
+            myUnit={myUnit}
+            onSend={(text) => addComment(myCall.id, text, myUnit.unit_number)}
+          />
+        )}
 
         {myUnit && (
           <StatusButtons
@@ -173,8 +284,8 @@ export default function CrewMobile() {
         </button>
       </div>
 
-      {/* SOS button — fixed to bottom, only when on an active call */}
-      {myCall && (
+      {/* SOS button — fixed to bottom, only when on an active (non-closed) call */}
+      {myActiveCall && (
         <div className="flex-shrink-0 p-3 border-t border-gray-700 bg-gray-900">
           <button
             onClick={handleRequestBackup}
