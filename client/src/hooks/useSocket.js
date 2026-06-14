@@ -8,7 +8,7 @@ export function useSocket(handlers = {}) {
   handlersRef.current = handlers;
 
   useEffect(() => {
-    const stored = sessionStorage.getItem('cad_user');
+    const stored = localStorage.getItem('cad_user');
     const u = stored ? JSON.parse(stored) : null;
     const token = u?.token || null;
 

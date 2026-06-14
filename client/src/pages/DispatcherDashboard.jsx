@@ -350,6 +350,23 @@ export default function DispatcherDashboard() {
         </div>
       )}
 
+      {/* ── Stale GPS banner ─────────────────────────────────── */}
+      {(() => {
+        const stale = units.filter(u =>
+          u.last_lat && u.last_lng && u.last_gps_at &&
+          (Date.now() - new Date(u.last_gps_at).getTime()) > 10 * 60 * 1000 &&
+          ['dispatched','en_route','on_scene','patient_contact'].includes(u.status)
+        );
+        if (!stale.length) return null;
+        return (
+          <div className="flex items-center gap-2 px-4 py-2 bg-orange-900/60 border-b border-orange-700 text-orange-200 text-xs flex-shrink-0">
+            <span>⚠️ Stale GPS on active units:</span>
+            <span className="font-bold">{stale.map(u => u.unit_number).join(', ')}</span>
+            <span className="text-orange-400">— location may be outdated</span>
+          </div>
+        );
+      })()}
+
       {/* ── Body ─────────────────────────────────────────────── */}
       <div className="flex flex-1 overflow-hidden">
 

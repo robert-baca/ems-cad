@@ -167,6 +167,7 @@ export default function CrewMobile() {
   const [lastActiveCallId, setLastActiveCallId] = useState(null);
   const [dismissedCallId,  setDismissedCallId]  = useState(null);
   const [showDisposition,  setShowDisposition]  = useState(false);
+  const [shiftEnded,       setShiftEnded]       = useState(false);
 
   const myUnit = units.find(u =>
     u.id === user?.unit_id || u.unit_number === user?.unit_number
@@ -224,7 +225,7 @@ export default function CrewMobile() {
     'call:status_change':  handleCallStatusChange,
     'call:assigned_to_me': handleCallCreated,
     'call:comment_added':  handleCommentAdded,
-    'shift:ended':         () => { setUnits([]); setCalls([]); }
+    'shift:ended':         () => { setUnits([]); setCalls([]); setShiftEnded(true); }
   });
 
   const handleStatusTap = async (status) => {
@@ -262,10 +263,14 @@ export default function CrewMobile() {
   if (!myUnit) {
     return (
       <div className="min-h-screen bg-gray-900 text-white flex flex-col items-center justify-center p-6 text-center max-w-md mx-auto">
-        <div className="text-5xl mb-4">🚑</div>
-        <div className="text-white font-bold text-lg mb-1">No Active Shift</div>
+        <div className="text-5xl mb-4">{shiftEnded ? '🏁' : '🚑'}</div>
+        <div className="text-white font-bold text-lg mb-1">
+          {shiftEnded ? 'Shift Ended' : 'No Active Shift'}
+        </div>
         <div className="text-gray-400 text-sm mb-6">
-          Waiting for dispatch to start the shift. Check back soon.
+          {shiftEnded
+            ? 'Dispatch has ended the shift. Sign out and back in when the next shift begins.'
+            : 'Waiting for dispatch to start the shift. Check back soon.'}
         </div>
         <div className="text-gray-600 text-xs mb-8">Logged in as {user?.unit_number}</div>
         <button
