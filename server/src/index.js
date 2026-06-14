@@ -530,9 +530,13 @@ app.post('/api/calls/:id/add-unit', verifyToken, async (req, res) => {
   }
   const unit = units.find(u => u.id === unit_id);
   if (unit) {
-    unit.status = 'dispatched';
+    // Start the additional unit at the current call status so they join the flow at the right point.
+    // 'pending' has no unit equivalent → use 'dispatched'; closed should never reach here.
+    const joinStatus = call.status === 'pending' ? 'dispatched' : call.status;
+    unit.status = joinStatus;
     saveUnit(unit).catch(console.error);
-    io.to('dispatchers').emit('unit:status_change', { unit_id: unit.id, status: 'dispatched' });
+    io.to('dispatchers').emit('unit:status_change', { unit_id: unit.id, status: joinStatus });
+    io.to(`crew:${unit_id}`).emit('unit:status_change', { unit_id: unit.id, status: joinStatus });
     io.to(`crew:${unit_id}`).emit('call:assigned_to_me', call);
   }
   saveCall(call).catch(console.error);
