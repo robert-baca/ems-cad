@@ -95,6 +95,7 @@ async function initDb() {
   await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS mutual_aid_agencies JSONB DEFAULT '[]'`);
   await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS arrived_first_aid_at TEXT`);
   await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS transporting_at TEXT`);
+  await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS co_unit_ids JSONB DEFAULT '[]'`);
   await pool.query(`ALTER TABLE locations ADD COLUMN IF NOT EXISTS location_type TEXT DEFAULT 'permanent'`);
   await pool.query(`ALTER TABLE units ADD COLUMN IF NOT EXISTS tracki_device_id TEXT`);
   await pool.query(`ALTER TABLE units ADD COLUMN IF NOT EXISTS tracker_name TEXT`);
@@ -148,9 +149,10 @@ async function initDb() {
   );
   calls = callsRes.rows.map(r => ({
     ...r,
-    comments:             r.comments             || [],
-    additional_unit_ids:  r.additional_unit_ids  || [],
-    mutual_aid_agencies:  r.mutual_aid_agencies  || []
+    comments:            r.comments            || [],
+    additional_unit_ids: r.additional_unit_ids || [],
+    mutual_aid_agencies: r.mutual_aid_agencies || [],
+    co_unit_ids:         r.co_unit_ids         || []
   }));
   nextCallNum = calls.length > 0 ? Math.max(...calls.map(c => c.call_number)) + 1 : 100;
 
@@ -194,8 +196,8 @@ async function saveCall(call) {
       en_route_at, on_scene_at, patient_contact_at, arrived_first_aid_at, transporting_at,
       cleared_at, available_at, closed_at,
       disposition, close_notes, comments, narrative, additional_unit_ids, response_mode,
-      parent_call_id, mutual_aid_agencies)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)
+      parent_call_id, mutual_aid_agencies, co_unit_ids)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29)
     ON CONFLICT (id) DO UPDATE SET
       status=EXCLUDED.status, call_type=EXCLUDED.call_type, priority=EXCLUDED.priority,
       location_name=EXCLUDED.location_name, location_lat=EXCLUDED.location_lat,
@@ -208,7 +210,8 @@ async function saveCall(call) {
       disposition=EXCLUDED.disposition, close_notes=EXCLUDED.close_notes,
       comments=EXCLUDED.comments, narrative=EXCLUDED.narrative,
       additional_unit_ids=EXCLUDED.additional_unit_ids, response_mode=EXCLUDED.response_mode,
-      parent_call_id=EXCLUDED.parent_call_id, mutual_aid_agencies=EXCLUDED.mutual_aid_agencies
+      parent_call_id=EXCLUDED.parent_call_id, mutual_aid_agencies=EXCLUDED.mutual_aid_agencies,
+      co_unit_ids=EXCLUDED.co_unit_ids
   `, [call.id, call.call_number, call.status, call.call_type, call.priority,
       call.location_name, call.location_lat, call.location_lng, call.assigned_unit_id,
       call.received_at, call.dispatched_at, call.acknowledged_at, call.en_route_at,
@@ -217,7 +220,8 @@ async function saveCall(call) {
       call.closed_at, call.disposition, call.close_notes, JSON.stringify(call.comments || []),
       call.narrative || null, JSON.stringify(call.additional_unit_ids || []),
       call.response_mode || null, call.parent_call_id || null,
-      JSON.stringify(call.mutual_aid_agencies || [])]);
+      JSON.stringify(call.mutual_aid_agencies || []),
+      JSON.stringify(call.co_unit_ids || [])]);
 }
 
 async function saveLocation(loc) {
@@ -459,7 +463,8 @@ app.post('/api/calls', verifyToken, async (req, res) => {
     cleared_at:           null, available_at: null,
     closed_at:            null, disposition: null, close_notes: null,
     comments:             [],
-    additional_unit_ids:  additionalIds
+    additional_unit_ids:  additionalIds,
+    co_unit_ids:          additionalIds   // units in the initial dispatch travel together
   };
   calls.unshift(call);
   await saveCall(call).catch(console.error);
@@ -596,11 +601,12 @@ app.patch('/api/calls/:id/status', verifyToken, async (req, res) => {
 
   const isClose = req.body.status === 'closed';
   const newUnitStatus = isClose ? 'available' : req.body.status;
-  // On close, all units on the call return to available.
-  // Otherwise, only update the primary unit — additional units track their own status independently.
+  // On close: all units return to available.
+  // Otherwise: primary + co_unit_ids (initial dispatch) follow the call status together.
+  // Units added mid-call (in additional_unit_ids but not co_unit_ids) stay independent.
   const unitIdsToUpdate = isClose
     ? [call.assigned_unit_id, ...(call.additional_unit_ids || [])].filter(Boolean)
-    : [call.assigned_unit_id].filter(Boolean);
+    : [call.assigned_unit_id, ...(call.co_unit_ids || [])].filter(Boolean);
 
   unitIdsToUpdate.forEach(uid => {
     const unit = units.find(u => u.id === uid);
@@ -611,6 +617,12 @@ app.patch('/api/calls/:id/status', verifyToken, async (req, res) => {
       io.to(`crew:${uid}`).emit('unit:status_change', { unit_id: uid, status: newUnitStatus });
     }
   });
+
+  // Notify co-unit crew phones of the call status update (so their call card stays in sync)
+  (call.co_unit_ids || []).forEach(uid => {
+    io.to(`crew:${uid}`).emit('call:updated', { call_id: call.id, changes: { status: call.status } });
+  });
+
   res.json(call);
 });
 
