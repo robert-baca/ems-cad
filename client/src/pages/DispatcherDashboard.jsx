@@ -246,11 +246,6 @@ export default function DispatcherDashboard() {
     if (call) { setSelectedCallId(call.id); setShowHistory(false); }
   };
 
-  const handleHistorySelectCall = (callId) => {
-    setSelectedCallId(callId);
-    setShowHistory(false);
-  };
-
   // Still checking for shift
   if (currentShift === undefined) {
     return (
@@ -467,7 +462,6 @@ export default function DispatcherDashboard() {
               calls={historyData || []}
               units={units}
               onClose={() => setShowHistory(false)}
-              onSelectCall={handleHistorySelectCall}
               loading={historyLoading}
               onRefresh={fetchHistory}
             />
@@ -581,7 +575,6 @@ export default function DispatcherDashboard() {
             calls={historyData || []}
             units={units}
             onClose={() => setShowHistoryModal(false)}
-            onSelectCall={null}
             loading={historyLoading}
             onRefresh={fetchHistory}
           />

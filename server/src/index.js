@@ -160,7 +160,9 @@ async function initDb() {
     mutual_aid_agencies: r.mutual_aid_agencies || [],
     co_unit_ids:         r.co_unit_ids         || []
   }));
-  nextCallNum = calls.length > 0 ? Math.max(...calls.map(c => c.call_number)) + 1 : 100;
+  // Query global max so call numbers never reset after a restart
+  const maxRes = await pool.query('SELECT MAX(call_number) AS max_num FROM calls');
+  nextCallNum = (maxRes.rows[0]?.max_num || 99) + 1;
 
   const shiftRes = await pool.query("SELECT * FROM shifts WHERE ended_at IS NULL ORDER BY started_at DESC LIMIT 1");
   currentShift = shiftRes.rows[0] || null;
@@ -852,6 +854,20 @@ app.patch('/api/shift/units/:unit_id', verifyToken, async (req, res) => {
   const sanitized = { ...unit, password_hash: undefined };
   io.to('dispatchers').emit('unit:updated', sanitized);
   res.json(sanitized);
+});
+
+app.get('/api/shifts', verifyToken, async (req, res) => {
+  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
+  try {
+    const result = await pool.query(
+      `SELECT id, shift_label, date, started_at, ended_at, started_by
+       FROM shifts WHERE ended_at IS NOT NULL ORDER BY started_at DESC LIMIT 90`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error('[shifts] query error:', err.message);
+    res.status(500).json({ error: 'Database error' });
+  }
 });
 
 // Returns the first active (non-closed) call a unit is on, optionally ignoring one call ID.

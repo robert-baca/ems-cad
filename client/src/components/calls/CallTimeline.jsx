@@ -26,18 +26,18 @@ function fmtTime24(iso) {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
-// Parse "HH:MM" or "HH:MM:SS" entered by user → ISO string (today's date)
-function parseManualTime(str) {
+// Parse "HH:MM" or "HH:MM:SS" entered by user → ISO string anchored to baseDate's calendar date
+function parseManualTime(str, baseDate) {
   const parts = str.trim().split(':').map(Number);
   if (parts.length < 2 || isNaN(parts[0]) || isNaN(parts[1])) return null;
   const h = parts[0], m = parts[1], s = parts[2] || 0;
   if (h < 0 || h > 23 || m < 0 || m > 59 || s < 0 || s > 59) return null;
-  const d = new Date();
+  const d = baseDate ? new Date(baseDate) : new Date();
   d.setHours(h, m, s, 0);
   return d.toISOString();
 }
 
-function TimeRow({ step, ts, isLast, prevTs, nextTs, onUpdate, onClear }) {
+function TimeRow({ step, ts, isLast, prevTs, nextTs, onUpdate, onClear, baseDate }) {
   const [editing, setEditing] = useState(false);
   const [inputVal, setInputVal] = useState('');
   const [timeError, setTimeError] = useState('');
@@ -51,8 +51,16 @@ function TimeRow({ step, ts, isLast, prevTs, nextTs, onUpdate, onClear }) {
 
   const commit = () => {
     if (inputVal.trim()) {
-      const iso = parseManualTime(inputVal);
+      let iso = parseManualTime(inputVal, baseDate);
       if (!iso) { setTimeError('Invalid time (HH:MM)'); return; }
+      // Cross-midnight: if time is before the previous step, try the next calendar day
+      if (prevTs && new Date(iso) < new Date(prevTs)) {
+        const nextDay = new Date(iso);
+        nextDay.setDate(nextDay.getDate() + 1);
+        if (!nextTs || new Date(nextDay) <= new Date(nextTs)) {
+          iso = nextDay.toISOString();
+        }
+      }
       if (prevTs && new Date(iso) < new Date(prevTs)) {
         setTimeError(`Must be after ${fmtTime24(prevTs)}`); return;
       }
@@ -155,6 +163,7 @@ export default function CallTimeline({ call, onTimestampUpdate }) {
           nextTs={i < STEPS.length - 1 ? call[STEPS[i + 1].tsField] : null}
           onUpdate={(field, iso) => onTimestampUpdate?.(field, iso)}
           onClear={(field) => onTimestampUpdate?.(field, null)}
+          baseDate={call.received_at}
         />
       ))}
     </div>
