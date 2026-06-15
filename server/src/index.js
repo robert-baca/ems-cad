@@ -96,9 +96,15 @@ async function initDb() {
   await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS arrived_first_aid_at TEXT`);
   await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS transporting_at TEXT`);
   await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS co_unit_ids JSONB DEFAULT '[]'`);
+  await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS assigned_unit_number TEXT`);
   await pool.query(`ALTER TABLE locations ADD COLUMN IF NOT EXISTS location_type TEXT DEFAULT 'permanent'`);
   await pool.query(`ALTER TABLE units ADD COLUMN IF NOT EXISTS tracki_device_id TEXT`);
   await pool.query(`ALTER TABLE units ADD COLUMN IF NOT EXISTS tracker_name TEXT`);
+
+  // Prune calls older than 90 days
+  const pruneDate = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+  const pruned = await pool.query('DELETE FROM calls WHERE received_at < $1', [pruneDate]);
+  if (pruned.rowCount > 0) console.log(`[db] pruned ${pruned.rowCount} calls older than 90 days`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS trackers (
@@ -192,16 +198,17 @@ async function deleteUnitFromDb(id) {
 async function saveCall(call) {
   await pool.query(`
     INSERT INTO calls (id, call_number, status, call_type, priority, location_name,
-      location_lat, location_lng, assigned_unit_id, received_at, dispatched_at, acknowledged_at,
+      location_lat, location_lng, assigned_unit_id, assigned_unit_number, received_at, dispatched_at, acknowledged_at,
       en_route_at, on_scene_at, patient_contact_at, arrived_first_aid_at, transporting_at,
       cleared_at, available_at, closed_at,
       disposition, close_notes, comments, narrative, additional_unit_ids, response_mode,
       parent_call_id, mutual_aid_agencies, co_unit_ids)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30)
     ON CONFLICT (id) DO UPDATE SET
       status=EXCLUDED.status, call_type=EXCLUDED.call_type, priority=EXCLUDED.priority,
       location_name=EXCLUDED.location_name, location_lat=EXCLUDED.location_lat,
       location_lng=EXCLUDED.location_lng, assigned_unit_id=EXCLUDED.assigned_unit_id,
+      assigned_unit_number=EXCLUDED.assigned_unit_number,
       dispatched_at=EXCLUDED.dispatched_at, acknowledged_at=EXCLUDED.acknowledged_at,
       en_route_at=EXCLUDED.en_route_at, on_scene_at=EXCLUDED.on_scene_at,
       patient_contact_at=EXCLUDED.patient_contact_at,
@@ -214,6 +221,7 @@ async function saveCall(call) {
       co_unit_ids=EXCLUDED.co_unit_ids
   `, [call.id, call.call_number, call.status, call.call_type, call.priority,
       call.location_name, call.location_lat, call.location_lng, call.assigned_unit_id,
+      call.assigned_unit_number || null,
       call.received_at, call.dispatched_at, call.acknowledged_at, call.en_route_at,
       call.on_scene_at, call.patient_contact_at, call.arrived_first_aid_at || null,
       call.transporting_at || null, call.cleared_at, call.available_at,
@@ -439,6 +447,27 @@ app.get('/api/calls', verifyToken, (req, res) => {
   res.json(calls);
 });
 
+app.get('/api/calls/history', verifyToken, async (req, res) => {
+  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
+  const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+  try {
+    const result = await pool.query(
+      'SELECT * FROM calls WHERE received_at > $1 ORDER BY received_at DESC',
+      [cutoff]
+    );
+    res.json(result.rows.map(r => ({
+      ...r,
+      comments:            r.comments            || [],
+      additional_unit_ids: r.additional_unit_ids || [],
+      mutual_aid_agencies: r.mutual_aid_agencies || [],
+      co_unit_ids:         r.co_unit_ids         || []
+    })));
+  } catch (err) {
+    console.error('[history] query error:', err.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
 app.post('/api/calls', verifyToken, async (req, res) => {
   if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
   const hasUnit        = !!req.body.assigned_unit_id;
@@ -464,7 +493,8 @@ app.post('/api/calls', verifyToken, async (req, res) => {
     closed_at:            null, disposition: null, close_notes: null,
     comments:             [],
     additional_unit_ids:  additionalIds,
-    co_unit_ids:          additionalIds   // units in the initial dispatch travel together
+    co_unit_ids:          additionalIds,   // units in the initial dispatch travel together
+    assigned_unit_number: hasUnit ? (units.find(u => u.id === req.body.assigned_unit_id)?.unit_number || null) : null
   };
   calls.unshift(call);
   await saveCall(call).catch(console.error);
@@ -502,9 +532,10 @@ app.patch('/api/calls/:id/assign', verifyToken, async (req, res) => {
   const conflict = getUnitActiveCall(req.body.unit_id, req.params.id);
   if (conflict) return res.status(409).json({ error: `Unit already on call #${conflict.call_number}` });
 
-  call.assigned_unit_id = req.body.unit_id;
-  call.status           = 'dispatched';
-  call.dispatched_at    = call.dispatched_at || new Date().toISOString();
+  call.assigned_unit_id     = req.body.unit_id;
+  call.assigned_unit_number = units.find(u => u.id === req.body.unit_id)?.unit_number || null;
+  call.status               = 'dispatched';
+  call.dispatched_at        = call.dispatched_at || new Date().toISOString();
 
   const unit = units.find(u => u.id === req.body.unit_id);
   if (unit) {

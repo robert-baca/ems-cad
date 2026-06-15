@@ -27,6 +27,7 @@ export const clearUnitGps = (unitId) => api.delete(`/units/${unitId}/gps`);
 // ── Calls ──────────────────────────────────────────────────────────
 export const getCalls = () => api.get('/calls');
 export const getCall = (id) => api.get(`/calls/${id}`);
+export const getCallHistory = () => api.get('/calls/history');
 export const createCall = (data) => api.post('/calls', data);
 export const assignCall = (callId, unitId) =>
   api.patch(`/calls/${callId}/assign`, { unit_id: unitId });

@@ -5,7 +5,7 @@ import { useUnits } from '../hooks/useUnits';
 import { useCalls } from '../hooks/useCalls';
 import { useLocations } from '../hooks/useLocations';
 import { useSocket } from '../hooks/useSocket';
-import { getTrackers, createTracker, updateTracker, deleteTracker } from '../services/api';
+import { getTrackers, createTracker, updateTracker, deleteTracker, getCallHistory } from '../services/api';
 import ParkMap from '../components/map/ParkMap';
 import MapContextMenu from '../components/map/MapContextMenu';
 import UnitPanel from '../components/units/UnitPanel';
@@ -59,6 +59,8 @@ export default function DispatcherDashboard() {
   const [showNewCallModal,  setShowNewCallModal]   = useState(false);
   const [contextMenu,       setContextMenu]         = useState(null);
   const [showHistory,       setShowHistory]         = useState(false);
+  const [historyData,       setHistoryData]         = useState(null);
+  const [historyLoading,    setHistoryLoading]      = useState(false);
   const [historyUnit,       setHistoryUnit]         = useState(null);
   const [flyToTarget,       setFlyToTarget]         = useState(null);
   const [unknownGpsDevice,  setUnknownGpsDevice]   = useState(null);
@@ -98,6 +100,24 @@ export default function DispatcherDashboard() {
     await deleteTracker(id);
     setTrackers(prev => prev.filter(t => t.id !== id));
   }, []);
+
+  const fetchHistory = useCallback(async () => {
+    setHistoryLoading(true);
+    try {
+      const res = await getCallHistory();
+      setHistoryData(res.data);
+    } catch {
+      setHistoryData([]);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, []);
+
+  const handleOpenHistory = useCallback(() => {
+    setShowHistory(true);
+    setSelectedCallId(null);
+    fetchHistory();
+  }, [fetchHistory]);
 
   // N key → open new call modal (skip when typing in an input)
   useEffect(() => {
@@ -303,7 +323,7 @@ export default function DispatcherDashboard() {
         <div className="flex items-center gap-3">
           <Clock />
           <button
-            onClick={() => { setShowHistory(h => !h); setSelectedCallId(null); }}
+            onClick={showHistory ? () => setShowHistory(false) : handleOpenHistory}
             className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium transition-colors
               ${showHistory ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600 hover:text-white'}`}
           >
@@ -438,10 +458,12 @@ export default function DispatcherDashboard() {
         {rightOpen && (showHistory ? (
           <div className="w-[640px] flex-shrink-0">
             <CallHistory
-              calls={calls}
+              calls={historyData || []}
               units={units}
               onClose={() => setShowHistory(false)}
               onSelectCall={handleHistorySelectCall}
+              loading={historyLoading}
+              onRefresh={fetchHistory}
             />
           </div>
         ) : (
