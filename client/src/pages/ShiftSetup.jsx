@@ -4,7 +4,7 @@ const TYPE_ICONS = { ALS: '🚑', BLS: '🚐', Cart: '🛺' };
 const UNIT_TYPES = ['ALS', 'BLS', 'Cart'];
 const STATIONS   = ['Station 7', 'Station 14', 'Roaming'];
 
-export default function ShiftSetup({ token, onShiftStarted }) {
+export default function ShiftSetup({ token, onShiftStarted, onViewHistory }) {
   const [units,        setUnits]       = useState([]);
   const [startTime,    setStartTime]   = useState('07:00');
   const [endTime,      setEndTime]     = useState('15:00');
@@ -121,7 +121,15 @@ export default function ShiftSetup({ token, onShiftStarted }) {
     <div className="fixed inset-0 bg-gray-900 z-50 overflow-y-auto">
       <div className="w-full max-w-2xl mx-auto py-8 px-4">
         {/* Header */}
-        <div className="text-center mb-6">
+        <div className="text-center mb-6 relative">
+          {onViewHistory && (
+            <button
+              onClick={onViewHistory}
+              className="absolute right-0 top-0 flex items-center gap-1.5 text-xs px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 border border-gray-600 rounded-lg transition-colors"
+            >
+              📋 Call History
+            </button>
+          )}
           <div className="text-4xl mb-2">🚑</div>
           <h1 className="text-2xl font-bold text-white">Start Shift</h1>
           <p className="text-gray-400 text-sm mt-1">{today}</p>

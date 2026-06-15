@@ -61,6 +61,7 @@ export default function DispatcherDashboard() {
   const [showHistory,       setShowHistory]         = useState(false);
   const [historyData,       setHistoryData]         = useState(null);
   const [historyLoading,    setHistoryLoading]      = useState(false);
+  const [showHistoryModal,  setShowHistoryModal]    = useState(false);
   const [historyUnit,       setHistoryUnit]         = useState(null);
   const [flyToTarget,       setFlyToTarget]         = useState(null);
   const [unknownGpsDevice,  setUnknownGpsDevice]   = useState(null);
@@ -116,6 +117,11 @@ export default function DispatcherDashboard() {
   const handleOpenHistory = useCallback(() => {
     setShowHistory(true);
     setSelectedCallId(null);
+    fetchHistory();
+  }, [fetchHistory]);
+
+  const handleOpenHistoryModal = useCallback(() => {
+    setShowHistoryModal(true);
     fetchHistory();
   }, [fetchHistory]);
 
@@ -568,11 +574,26 @@ export default function DispatcherDashboard() {
         />
       )}
 
+      {/* Full-screen history modal — accessible before/after shift */}
+      {showHistoryModal && (
+        <div className="fixed inset-0 z-[60] bg-gray-900 flex flex-col">
+          <CallHistory
+            calls={historyData || []}
+            units={units}
+            onClose={() => setShowHistoryModal(false)}
+            onSelectCall={null}
+            loading={historyLoading}
+            onRefresh={fetchHistory}
+          />
+        </div>
+      )}
+
       {/* Shift setup — shown when no active shift */}
       {currentShift === null && !shiftSummary && (
         <ShiftSetup
           token={user?.token}
           onShiftStarted={handleShiftStarted}
+          onViewHistory={handleOpenHistoryModal}
         />
       )}
 
