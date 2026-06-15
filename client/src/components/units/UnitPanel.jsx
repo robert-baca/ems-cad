@@ -22,7 +22,7 @@ const TYPE_BADGE = { ALS: 'bg-red-900/50 text-red-300', BLS: 'bg-blue-900/50 tex
 
 const ON_CALL_STATUSES = new Set(['dispatched', 'en_route', 'on_scene', 'patient_contact']);
 
-function UnitCard({ unit, activeCall, isSelected, onClick, onHistory, onEdit, onToggleOos, onFlyTo, onClearGps }) {
+function UnitCard({ unit, activeCall, isSelected, onClick, onHistory, onEdit, onToggleOos, onFlyTo, onClearGps, readOnly }) {
   const color = STATUS_COLORS[unit.status] || '#9ca3af';
   const profile = unit.profile;
   const hasGps = unit.last_lat && unit.last_lng;
@@ -74,20 +74,22 @@ function UnitCard({ unit, activeCall, isSelected, onClick, onHistory, onEdit, on
           )}
         </button>
 
-        {/* Edit button on hover */}
-        <button
-          onClick={(e) => { e.stopPropagation(); onEdit(unit); }}
-          className="absolute top-2 right-2 w-6 h-6 flex items-center justify-center rounded text-gray-600 hover:text-blue-400 hover:bg-gray-600 text-xs opacity-0 group-hover:opacity-100 transition-opacity"
-          title="Edit unit"
-        >
-          ✏️
-        </button>
+        {/* Edit button on hover (hidden for overwatch) */}
+        {!readOnly && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onEdit(unit); }}
+            className="absolute top-2 right-2 w-6 h-6 flex items-center justify-center rounded text-gray-600 hover:text-blue-400 hover:bg-gray-600 text-xs opacity-0 group-hover:opacity-100 transition-opacity"
+            title="Edit unit"
+          >
+            ✏️
+          </button>
+        )}
       </div>
 
       {/* Expanded action row when selected */}
       {isSelected && (
         <div className="px-2 pb-2 flex gap-1.5 flex-wrap">
-          {(!ON_CALL_STATUSES.has(unit.status) || !activeCall) && (
+          {!readOnly && (!ON_CALL_STATUSES.has(unit.status) || !activeCall) && (
             <button
               onClick={(e) => { e.stopPropagation(); onToggleOos(unit); }}
               className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-colors
@@ -112,7 +114,7 @@ function UnitCard({ unit, activeCall, isSelected, onClick, onHistory, onEdit, on
               >
                 📍 Go to unit
               </button>
-              {!activeCall && (
+              {!readOnly && !activeCall && (
                 <button
                   onClick={(e) => { e.stopPropagation(); onClearGps(unit.id); }}
                   className="py-1.5 px-2 rounded-lg text-xs font-bold bg-gray-700 hover:bg-red-900 text-gray-500 hover:text-red-400 transition-colors"
@@ -142,7 +144,7 @@ function UnitCard({ unit, activeCall, isSelected, onClick, onHistory, onEdit, on
   );
 }
 
-export default function UnitPanel({ units, calls, selectedUnitId, onSelectUnit, onUnitHistory, onEditUnit, onRemoveUnit, onAddUnit, onStatusChange, onClearGps, onFlyTo, trackers = [] }) {
+export default function UnitPanel({ units, calls, selectedUnitId, onSelectUnit, onUnitHistory, onEditUnit, onRemoveUnit, onAddUnit, onStatusChange, onClearGps, onFlyTo, trackers = [], readOnly = false }) {
   const [editingUnit,  setEditingUnit]  = useState(null);
   const [showAddUnit,  setShowAddUnit]  = useState(false);
 
@@ -166,13 +168,15 @@ export default function UnitPanel({ units, calls, selectedUnitId, onSelectUnit, 
         <div className="px-3 py-3 border-b border-gray-700 flex-shrink-0">
           <div className="flex items-center justify-between mb-2">
             <div className="text-white font-semibold text-sm">Units</div>
-            <button
-              onClick={() => setShowAddUnit(true)}
-              className="text-xs px-2 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white rounded-lg transition-colors"
-              title="Add unit"
-            >
-              + Add
-            </button>
+            {!readOnly && (
+              <button
+                onClick={() => setShowAddUnit(true)}
+                className="text-xs px-2 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white rounded-lg transition-colors"
+                title="Add unit"
+              >
+                + Add
+              </button>
+            )}
           </div>
           <div className="flex flex-col gap-0.5">
             <div className="flex justify-between text-xs">
@@ -213,13 +217,14 @@ export default function UnitPanel({ units, calls, selectedUnitId, onSelectUnit, 
                 }}
                 onFlyTo={(u) => onFlyTo?.(u)}
                 onClearGps={(id) => onClearGps?.(id)}
+                readOnly={readOnly}
               />
             );
           })}
         </div>
 
-        {/* Bulk GPS clear buttons */}
-        {(() => {
+        {/* Bulk GPS clear buttons (hidden for overwatch) */}
+        {!readOnly && (() => {
           const STALE_MS = 10 * 60 * 1000;
           const now = Date.now();
           const stale = units.filter(u =>

@@ -17,6 +17,7 @@ import NewCallModal from '../components/calls/NewCallModal';
 import ShiftSetup from './ShiftSetup';
 import ShiftSummaryModal from '../components/shift/ShiftSummaryModal';
 import OptionsModal from '../components/settings/OptionsModal';
+import CallSummaryModal from '../components/calls/CallSummaryModal';
 
 function Clock() {
   const [time, setTime] = useState(new Date());
@@ -34,6 +35,7 @@ function Clock() {
 export default function DispatcherDashboard() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const isOverwatch = user?.role === 'overwatch';
 
   const {
     units, setUnits,
@@ -67,6 +69,7 @@ export default function DispatcherDashboard() {
   const [unknownGpsDevice,  setUnknownGpsDevice]   = useState(null);
   const [splitParentId,     setSplitParentId]       = useState(null);
   const [showOptions,       setShowOptions]          = useState(false);
+  const [overwatchCallId,   setOverwatchCallId]      = useState(null);
   const [leftOpen,          setLeftOpen]             = useState(true);
   const [rightOpen,         setRightOpen]            = useState(true);
   const [sosAlerts,         setSosAlerts]            = useState([]);
@@ -130,7 +133,7 @@ export default function DispatcherDashboard() {
     const handler = (e) => {
       const tag = e.target.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target.isContentEditable) return;
-      if ((e.key === 'n' || e.key === 'N') && currentShift && !showNewCallModal) {
+      if (!isOverwatch && (e.key === 'n' || e.key === 'N') && currentShift && !showNewCallModal) {
         setShowNewCallModal(true);
       }
       if (e.key === 'Escape') {
@@ -140,7 +143,7 @@ export default function DispatcherDashboard() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [currentShift, showNewCallModal]);
+  }, [currentShift, showNewCallModal, isOverwatch]);
 
   const { isConnected } = useSocket({
     'init:state':          ({ units: u, calls: c, locations: l, trackers: tr }) => { setUnits(u); setCalls(c); if (l) setPermLocations(l); if (tr) setTrackers(tr); },
@@ -213,12 +216,14 @@ export default function DispatcherDashboard() {
   const pendingCount = activeCalls.filter(c => c.status === 'pending').length;
 
   const handleMapClick = ({ lat, lng }) => {
+    if (isOverwatch) return;
     setContextMenu(null);
     setNewCallPin({ lat, lng });
     setShowNewCallModal(true);
   };
 
   const handleMapRightClick = ({ lat, lng, x, y }) => {
+    if (isOverwatch) return;
     setContextMenu({ lat, lng, x, y });
   };
 
@@ -330,28 +335,36 @@ export default function DispatcherDashboard() {
           >
             📋 Call History
           </button>
-          <button
-            onClick={() => setShowOptions(true)}
-            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium transition-colors bg-gray-700 text-gray-300 hover:bg-gray-600 hover:text-white"
-            title="Options"
-          >
-            ⚙ Options
-          </button>
-          {currentShift ? (
-            <button
-              onClick={handleEndShift}
-              disabled={endingShift}
-              className="text-xs px-3 py-1.5 rounded-lg font-medium bg-red-800 hover:bg-red-700 text-red-200 transition-colors disabled:opacity-50"
-            >
-              {endingShift ? 'Ending…' : '⏹ End Shift'}
-            </button>
+          {isOverwatch ? (
+            <span className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-purple-900/60 border border-purple-700 text-purple-300 font-medium">
+              👁 Overwatch
+            </span>
           ) : (
-            <button
-              onClick={() => setCurrentShift(null)}
-              className="text-xs px-3 py-1.5 rounded-lg font-medium bg-green-800 hover:bg-green-700 text-green-200 transition-colors"
-            >
-              ▶ Start Shift
-            </button>
+            <>
+              <button
+                onClick={() => setShowOptions(true)}
+                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium transition-colors bg-gray-700 text-gray-300 hover:bg-gray-600 hover:text-white"
+                title="Options"
+              >
+                ⚙ Options
+              </button>
+              {currentShift ? (
+                <button
+                  onClick={handleEndShift}
+                  disabled={endingShift}
+                  className="text-xs px-3 py-1.5 rounded-lg font-medium bg-red-800 hover:bg-red-700 text-red-200 transition-colors disabled:opacity-50"
+                >
+                  {endingShift ? 'Ending…' : '⏹ End Shift'}
+                </button>
+              ) : (
+                <button
+                  onClick={() => setCurrentShift(null)}
+                  className="text-xs px-3 py-1.5 rounded-lg font-medium bg-green-800 hover:bg-green-700 text-green-200 transition-colors"
+                >
+                  ▶ Start Shift
+                </button>
+              )}
+            </>
           )}
           <span className="text-gray-400 text-sm">👤 {user?.name || user?.username}</span>
           <button
@@ -406,6 +419,7 @@ export default function DispatcherDashboard() {
             onClearGps={clearGps}
             onFlyTo={(unit) => setFlyToTarget({ lat: unit.last_lat, lng: unit.last_lng, _t: Date.now() })}
             trackers={trackers}
+            readOnly={isOverwatch}
           />
         )}
 
@@ -422,7 +436,7 @@ export default function DispatcherDashboard() {
             flyToTarget={flyToTarget}
           />
           <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-black/60 backdrop-blur-sm text-white text-xs px-3 py-1.5 rounded-full pointer-events-none select-none">
-            Drag to pan · Right-click → new call or add location
+            {isOverwatch ? 'Drag to pan · Click calls or units for info' : 'Drag to pan · Right-click → new call or add location'}
           </div>
 
           {/* Left panel toggle tab */}
@@ -492,8 +506,14 @@ export default function DispatcherDashboard() {
                     key={call.id}
                     call={call}
                     unit={units.find(u => u.id === call.assigned_unit_id)}
-                    isSelected={call.id === selectedCallId}
-                    onClick={() => setSelectedCallId(call.id === selectedCallId ? null : call.id)}
+                    isSelected={isOverwatch ? call.id === overwatchCallId : call.id === selectedCallId}
+                    onClick={() => {
+                      if (isOverwatch) {
+                        setOverwatchCallId(call.id === overwatchCallId ? null : call.id);
+                      } else {
+                        setSelectedCallId(call.id === selectedCallId ? null : call.id);
+                      }
+                    }}
                   />
                 ))
               )}
@@ -501,8 +521,8 @@ export default function DispatcherDashboard() {
           </div>
         ))}
 
-        {/* Far right: Call detail */}
-        {selectedCall && (
+        {/* Far right: Call detail (dispatcher only) */}
+        {!isOverwatch && selectedCall && (
           <div className="w-72 flex-shrink-0">
             <CallDetail
               call={selectedCall}
@@ -529,7 +549,7 @@ export default function DispatcherDashboard() {
       </div>
 
       {/* Modals */}
-      {showOptions && (
+      {!isOverwatch && showOptions && (
         <OptionsModal
           onClose={() => setShowOptions(false)}
           locations={locations}
@@ -541,7 +561,7 @@ export default function DispatcherDashboard() {
         />
       )}
 
-      {showNewCallModal && (
+      {!isOverwatch && showNewCallModal && (
         <NewCallModal
           pin={newCallPin}
           units={units}
@@ -551,7 +571,7 @@ export default function DispatcherDashboard() {
         />
       )}
 
-      {contextMenu && (
+      {!isOverwatch && contextMenu && (
         <MapContextMenu
           position={contextMenu}
           onStartCall={handleContextStartCall}
@@ -581,8 +601,24 @@ export default function DispatcherDashboard() {
         </div>
       )}
 
-      {/* Shift setup — shown when no active shift */}
-      {currentShift === null && !shiftSummary && (
+      {/* Overwatch: read-only call summary popup */}
+      {isOverwatch && overwatchCallId && (() => {
+        const owCall = calls.find(c => c.id === overwatchCallId);
+        return owCall ? (
+          <div className="fixed inset-0 z-50">
+            <div className="relative h-full">
+              <CallSummaryModal
+                call={owCall}
+                units={units}
+                onClose={() => setOverwatchCallId(null)}
+              />
+            </div>
+          </div>
+        ) : null;
+      })()}
+
+      {/* Shift setup — shown when no active shift (dispatcher only) */}
+      {!isOverwatch && currentShift === null && !shiftSummary && (
         <ShiftSetup
           token={user?.token}
           onShiftStarted={handleShiftStarted}
@@ -590,8 +626,8 @@ export default function DispatcherDashboard() {
         />
       )}
 
-      {/* End-of-shift summary */}
-      {shiftSummary && (
+      {/* End-of-shift summary (dispatcher only) */}
+      {!isOverwatch && shiftSummary && (
         <ShiftSummaryModal
           summary={shiftSummary}
           onClose={() => { setShiftSummary(null); logout(); navigate('/login'); }}

@@ -32,6 +32,9 @@ const dispatchers = [
   { id: 'd1', username: 'dispatch',  full_name: 'Command Dispatch', password_hash: bcrypt.hashSync(PW, 8) },
   { id: 'd2', username: 'dispatch2', full_name: 'Dispatch 2',       password_hash: bcrypt.hashSync(PW, 8) }
 ];
+const overwatches = [
+  { id: 'ow1', username: 'overwatch', full_name: 'Overwatch', password_hash: bcrypt.hashSync(PW, 8) }
+];
 
 let units        = [];
 let calls        = [];
@@ -310,6 +313,14 @@ app.post('/api/auth/login', async (req, res) => {
     });
   }
 
+  if (role === 'overwatch') {
+    const ow = overwatches.find(x => x.username === username);
+    if (!ow || !bcrypt.compareSync(password, ow.password_hash))
+      return res.status(401).json({ error: 'Invalid credentials' });
+    const token = signToken({ id: ow.id, username: ow.username, role: 'overwatch' });
+    return res.json({ token, user: { role: 'overwatch', username: ow.username, name: ow.full_name } });
+  }
+
   res.status(400).json({ error: 'Unknown role' });
 });
 
@@ -450,7 +461,7 @@ app.get('/api/calls', verifyToken, (req, res) => {
 });
 
 app.get('/api/calls/history', verifyToken, async (req, res) => {
-  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
+  if (!['dispatcher', 'overwatch'].includes(req.user.role)) return res.status(403).json({ error: 'Forbidden' });
   const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
   try {
     const result = await pool.query(
@@ -857,7 +868,7 @@ app.patch('/api/shift/units/:unit_id', verifyToken, async (req, res) => {
 });
 
 app.get('/api/shifts', verifyToken, async (req, res) => {
-  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
+  if (!['dispatcher', 'overwatch'].includes(req.user.role)) return res.status(403).json({ error: 'Forbidden' });
   try {
     const result = await pool.query(
       `SELECT id, shift_label, date, started_at, ended_at, started_by
@@ -964,7 +975,7 @@ app.delete('/api/locations/:id', verifyToken, async (req, res) => {
 
 // ── Trackers ──────────────────────────────────────────────────────
 app.get('/api/trackers', verifyToken, (req, res) => {
-  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
+  if (!['dispatcher', 'overwatch'].includes(req.user.role)) return res.status(403).json({ error: 'Forbidden' });
   res.json(trackers);
 });
 
@@ -1461,7 +1472,7 @@ io.on('connection', (socket) => {
 
   socket.on('join:dispatcher', () => {
     const role = socket.jwtUser?.role;
-    if (role !== 'dispatcher' && role !== 'display') {
+    if (role !== 'dispatcher' && role !== 'display' && role !== 'overwatch') {
       socket.emit('error:auth', { message: 'Unauthorized' });
       return;
     }
