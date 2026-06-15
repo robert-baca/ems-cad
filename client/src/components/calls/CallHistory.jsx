@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react';
 import { STATUS_COLORS, STATUS_LABELS, CALL_TYPES } from '../../data/mockData';
+import CallSummaryModal from './CallSummaryModal';
 
 const PRIORITY_LABELS = { 1: 'P1', 2: 'P2', 3: 'P3' };
 const PRIORITY_COLORS = {
@@ -40,8 +41,9 @@ function StatBox({ label, value, sub }) {
 }
 
 export default function CallHistory({ calls, units, onClose, onSelectCall, loading, onRefresh }) {
-  const [search,       setSearch]       = useState('');
-  const [filterDate,   setFilterDate]   = useState('all');
+  const [search,        setSearch]        = useState('');
+  const [filterDate,    setFilterDate]    = useState('all');
+  const [selectedCall,  setSelectedCall]  = useState(null);
   const [filterType,   setFilterType]   = useState('');
   const [filterPri,    setFilterPri]    = useState('');
   const [filterUnit,   setFilterUnit]   = useState('');
@@ -98,7 +100,14 @@ export default function CallHistory({ calls, units, onClose, onSelectCall, loadi
   }, [units, calls]);
 
   return (
-    <div className="flex flex-col h-full bg-gray-800 border-l border-gray-700">
+    <div className="relative flex flex-col h-full bg-gray-800 border-l border-gray-700">
+      {selectedCall && (
+        <CallSummaryModal
+          call={selectedCall}
+          units={units}
+          onClose={() => setSelectedCall(null)}
+        />
+      )}
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700 flex-shrink-0">
         <div>
@@ -217,7 +226,7 @@ export default function CallHistory({ calls, units, onClose, onSelectCall, loadi
                     return (
                       <tr
                         key={call.id}
-                        onClick={() => onSelectCall?.(call.id)}
+                        onClick={() => setSelectedCall(call)}
                         className="hover:bg-gray-700 cursor-pointer transition-colors"
                       >
                         <td className="px-3 py-2.5 text-white font-bold text-xs">#{call.call_number}</td>
