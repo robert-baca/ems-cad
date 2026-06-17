@@ -296,10 +296,16 @@ app.post('/api/auth/login', async (req, res) => {
 
   if (role === 'dispatcher') {
     const d = dispatchers.find(x => x.username === username);
-    if (!d || !bcrypt.compareSync(password, d.password_hash))
-      return res.status(401).json({ error: 'Invalid credentials' });
-    const token = signToken({ dispatcher_id: d.id, username: d.username, role: 'dispatcher' });
-    return res.json({ token, user: { role: 'dispatcher', username: d.username, name: d.full_name } });
+    if (d && bcrypt.compareSync(password, d.password_hash)) {
+      const token = signToken({ dispatcher_id: d.id, username: d.username, role: 'dispatcher' });
+      return res.json({ token, user: { role: 'dispatcher', username: d.username, name: d.full_name } });
+    }
+    const ow = overwatches.find(x => x.username === username);
+    if (ow && bcrypt.compareSync(password, ow.password_hash)) {
+      const token = signToken({ id: ow.id, username: ow.username, role: 'overwatch' });
+      return res.json({ token, user: { role: 'overwatch', username: ow.username, name: ow.full_name } });
+    }
+    return res.status(401).json({ error: 'Invalid credentials' });
   }
 
   if (role === 'crew') {
@@ -311,14 +317,6 @@ app.post('/api/auth/login', async (req, res) => {
       token,
       user: { role: 'crew', unit_id: unit.id, unit_number: unit.unit_number, profile: unit.profile }
     });
-  }
-
-  if (role === 'overwatch') {
-    const ow = overwatches.find(x => x.username === username);
-    if (!ow || !bcrypt.compareSync(password, ow.password_hash))
-      return res.status(401).json({ error: 'Invalid credentials' });
-    const token = signToken({ id: ow.id, username: ow.username, role: 'overwatch' });
-    return res.json({ token, user: { role: 'overwatch', username: ow.username, name: ow.full_name } });
   }
 
   res.status(400).json({ error: 'Unknown role' });

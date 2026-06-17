@@ -3,10 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
 const ROLES = [
-  { key: 'dispatcher', label: 'Dispatcher',    icon: '🎛️', description: 'Command & dispatch'      },
-  { key: 'crew',       label: 'Crew',           icon: '🚑', description: 'Unit / medic login'       },
-  { key: 'overwatch',  label: 'Overwatch',      icon: '👁️', description: 'Read-only observer view' },
-  { key: 'display',    label: 'Display Board',  icon: '📺', description: 'Live map display'         }
+  { key: 'dispatcher', label: 'Dispatcher',    icon: '🎛️', description: 'Command & dispatch' },
+  { key: 'crew',       label: 'Crew',           icon: '🚑', description: 'Unit / medic login'  },
+  { key: 'display',    label: 'Display Board',  icon: '📺', description: 'Live map display'    }
 ];
 
 const UNIT_TYPES = ['ALS', 'BLS', 'Cart'];
@@ -300,24 +299,6 @@ export default function Login() {
     finally { setLoading(false); }
   };
 
-  const handleOverwatchLogin = async (e) => {
-    e.preventDefault();
-    if (!username || !password) { setError('Enter username and password.'); return; }
-    setLoading(true); setError('');
-    try {
-      const res  = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password, role: 'overwatch' })
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Login failed');
-      login({ ...data.user, token: data.token });
-      navigate('/dispatcher');
-    } catch (err) { setError(err.message); }
-    finally { setLoading(false); }
-  };
-
   const handleDisplayLogin = async (e) => {
     e.preventDefault();
     if (!pin) { setError('Enter PIN.'); return; }
@@ -393,40 +374,6 @@ export default function Login() {
             {error && <p className="text-red-400 text-sm">{error}</p>}
             <button type="submit" disabled={loading}
               className="w-full py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-800 text-white font-semibold rounded-lg transition-colors">
-              {loading ? 'Signing in…' : 'Sign In'}
-            </button>
-            <button type="button" onClick={back}
-              className="w-full py-2 text-gray-500 hover:text-gray-300 text-sm transition-colors">
-              ← Back
-            </button>
-          </form>
-        )}
-
-        {/* ── Overwatch ── */}
-        {role === 'overwatch' && (
-          <form onSubmit={handleOverwatchLogin} className="bg-gray-800 rounded-2xl p-6 space-y-4 border border-gray-700">
-            <div className="flex items-center gap-3 mb-2">
-              <span className="text-2xl">👁️</span>
-              <div>
-                <div className="text-white font-bold">Overwatch Login</div>
-                <div className="text-gray-500 text-xs">Read-only observer — view only, no controls</div>
-              </div>
-            </div>
-            <div>
-              <label className="block text-gray-400 text-sm mb-1">Username</label>
-              <input type="text" value={username} onChange={e => setUsername(e.target.value)}
-                placeholder="overwatch" autoFocus
-                className="w-full bg-gray-700 text-white rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-purple-500 placeholder-gray-500" />
-            </div>
-            <div>
-              <label className="block text-gray-400 text-sm mb-1">Password</label>
-              <input type="password" value={password} onChange={e => setPassword(e.target.value)}
-                placeholder="••••••••"
-                className="w-full bg-gray-700 text-white rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-purple-500 placeholder-gray-500" />
-            </div>
-            {error && <p className="text-red-400 text-sm">{error}</p>}
-            <button type="submit" disabled={loading}
-              className="w-full py-3 bg-purple-700 hover:bg-purple-600 disabled:bg-purple-900 text-white font-semibold rounded-lg transition-colors">
               {loading ? 'Signing in…' : 'Sign In'}
             </button>
             <button type="button" onClick={back}
