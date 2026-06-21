@@ -8,16 +8,34 @@ const bcrypt     = require('bcryptjs');
 const { Pool }   = require('pg');
 require('dotenv').config();
 
+// CORS_ORIGIN can be set to a comma-separated allowlist; defaults to '*' (current behavior)
+const CORS_ORIGIN = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(',').map(o => o.trim())
+  : '*';
+
 const app    = express();
 const server = http.createServer(app);
 const io     = new Server(server, {
-  cors: { origin: '*', methods: ['GET', 'POST', 'PATCH', 'PUT'] }
+  cors: { origin: CORS_ORIGIN, methods: ['GET', 'POST', 'PATCH', 'PUT'] }
 });
 
-app.use(cors({ origin: '*' }));
+app.use(cors({ origin: CORS_ORIGIN }));
 app.use(express.json());
 
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-in-production';
+
+// ── Startup security checks — loud warnings, not hard failures ─────
+// (avoid taking down a live dispatch system over a missing env var;
+//  these print prominently in Railway logs so they're hard to miss)
+function warnIfWeak(name, value, fallback) {
+  if (!value || value === fallback) {
+    console.warn(`\n⚠️  [security] ${name} is not set — using an insecure default. Set it in Railway env vars.\n`);
+  }
+}
+warnIfWeak('JWT_SECRET',          process.env.JWT_SECRET,          undefined);
+warnIfWeak('CREW_PIN',            process.env.CREW_PIN,            undefined);
+warnIfWeak('DISPLAY_PIN',         process.env.DISPLAY_PIN,         undefined);
+warnIfWeak('GPS_WEBHOOK_SECRET',  process.env.GPS_WEBHOOK_SECRET,  undefined);
 
 // ── Database ──────────────────────────────────────────────────────
 const pool = new Pool({
@@ -669,6 +687,7 @@ app.patch('/api/calls/:id/status', verifyToken, async (req, res) => {
 });
 
 app.post('/api/calls/:id/comments', verifyToken, async (req, res) => {
+  if (req.user.role === 'overwatch') return res.status(403).json({ error: 'Forbidden' });
   const call = calls.find(c => c.id === req.params.id);
   if (!call) return res.status(404).json({ error: 'Not found' });
   if (!req.body.text?.trim()) return res.status(400).json({ error: 'text required' });
@@ -1083,6 +1102,7 @@ app.delete('/api/calls/:id/mutual-aid/:entryId', verifyToken, async (req, res) =
 
 // ── Call timestamps & narrative ───────────────────────────────────
 app.patch('/api/calls/:id/timestamps', verifyToken, async (req, res) => {
+  if (req.user.role === 'overwatch') return res.status(403).json({ error: 'Forbidden' });
   const call = calls.find(c => c.id === req.params.id);
   if (!call) return res.status(404).json({ error: 'Not found' });
 
@@ -1108,6 +1128,7 @@ app.patch('/api/calls/:id/timestamps', verifyToken, async (req, res) => {
 });
 
 app.patch('/api/calls/:id/narrative', verifyToken, async (req, res) => {
+  if (req.user.role === 'overwatch') return res.status(403).json({ error: 'Forbidden' });
   const call = calls.find(c => c.id === req.params.id);
   if (!call) return res.status(404).json({ error: 'Not found' });
 
@@ -1191,12 +1212,12 @@ async function tryRefreshToken() {
 }
 
 // Full server-side OAuth2 flow using Trackimo's internal client
-// (discovered by inspecting plus.trackimo.com network traffic)
-const TRACKI_INTERNAL_CLIENT   = '9092cd94-a728-47b7-86da-e15c9a3d4cdb';
+// (discovered by inspecting plus.trackimo.com network traffic — overridable via env vars)
+const TRACKI_INTERNAL_CLIENT   = process.env.TRACKI_INTERNAL_CLIENT   || '9092cd94-a728-47b7-86da-e15c9a3d4cdb';
 const TRACKI_INTERNAL_REDIRECT = `${TRACKIMO_PLUS}/api/internal/v1/oauth_redirect`;
 
-// From official Trackimo API sample (trackimo_api_short.py)
-const TRACKI_CLIENT_SECRET = '9f540cd42ec8d3bc452ce39cdd3d6de4';
+// From official Trackimo API sample (trackimo_api_short.py) — overridable via env var
+const TRACKI_CLIENT_SECRET = process.env.TRACKI_CLIENT_SECRET || '9f540cd42ec8d3bc452ce39cdd3d6de4';
 
 async function trackimoAutoLogin() {
   const { TRACKIMO_USERNAME, TRACKIMO_PASSWORD } = process.env;
@@ -1483,40 +1504,16 @@ io.on('connection', (socket) => {
     });
   });
 
+  // Only join the room for the unit your own JWT was issued for —
+  // otherwise anyone could pass an arbitrary unit_id and read another crew's call/PHI traffic.
   socket.on('join:crew', ({ unit_id }) => {
+    if (socket.jwtUser?.role !== 'crew' || socket.jwtUser.unit_id !== unit_id) {
+      socket.emit('error:auth', { message: 'Unauthorized' });
+      return;
+    }
     socket.join(`crew:${unit_id}`);
     const myCall = calls.find(c => c.assigned_unit_id === unit_id && c.status !== 'closed');
     if (myCall) socket.emit('call:assigned_to_me', myCall);
-  });
-
-  socket.on('crew:status_update', ({ unit_id, status }) => {
-    const unit = units.find(u => u.id === unit_id);
-    if (unit) {
-      unit.status = status;
-      saveUnit(unit).catch(console.error);
-      io.to('dispatchers').emit('unit:status_change', { unit_id, status });
-      const activeCall = calls.find(c => c.assigned_unit_id === unit_id && c.status !== 'closed');
-      if (activeCall) {
-        const TS_MAP = {
-          acknowledged: 'acknowledged_at', en_route: 'en_route_at', on_scene: 'on_scene_at',
-          patient_contact: 'patient_contact_at', transporting: 'transporting_at',
-          cleared: 'cleared_at', available: 'available_at'
-        };
-        activeCall.status = status;
-        if (TS_MAP[status] && !activeCall[TS_MAP[status]]) activeCall[TS_MAP[status]] = new Date().toISOString();
-        saveCall(activeCall).catch(console.error);
-        io.to('dispatchers').emit('call:status_change', { call_id: activeCall.id, status, timestamp: new Date().toISOString() });
-      }
-    }
-  });
-
-  socket.on('crew:profile_update', ({ unit_id, profile }) => {
-    const unit = units.find(u => u.id === unit_id);
-    if (unit) {
-      unit.profile = profile;
-      saveUnit(unit).catch(console.error);
-      io.to('dispatchers').emit('unit:profile_update', { unit_id, profile });
-    }
   });
 
   socket.on('disconnect', () => {
