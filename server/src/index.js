@@ -292,8 +292,10 @@ async function saveShift(shift) {
 }
 
 // ── JWT helpers ───────────────────────────────────────────────────
+// Long-lived on purpose: crew/dispatcher devices stay logged in across
+// shifts and backgrounded phone time instead of getting bounced to login.
 function signToken(payload) {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: '24h' });
+  return jwt.sign(payload, JWT_SECRET, { expiresIn: '30d' });
 }
 
 function verifyToken(req, res, next) {

@@ -30,7 +30,10 @@ export function AuthProvider({ children }) {
     });
   };
 
-  // Proactive token refresh: runs every 30 min, refreshes if < 4h remain
+  // Proactive token refresh: runs every 30 min, refreshes if < 4h remain.
+  // Mobile browsers suspend setInterval while the tab is backgrounded, so we
+  // also refresh immediately on visibilitychange — otherwise a crew phone
+  // that's been locked/backgrounded for a while comes back to a stale token.
   useEffect(() => {
     const tryRefresh = async () => {
       const stored = localStorage.getItem('cad_user');
@@ -50,11 +53,19 @@ export function AuthProvider({ children }) {
       }
     };
 
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') tryRefresh();
+    };
+
     if (user?.token) {
       tryRefresh();
       refreshTimerRef.current = setInterval(tryRefresh, REFRESH_INTERVAL_MS);
+      document.addEventListener('visibilitychange', onVisible);
     }
-    return () => clearInterval(refreshTimerRef.current);
+    return () => {
+      clearInterval(refreshTimerRef.current);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, [user?.token]);
 
   const login = (userData) => {
