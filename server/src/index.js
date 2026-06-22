@@ -33,7 +33,6 @@ function warnIfWeak(name, value, fallback) {
   }
 }
 warnIfWeak('JWT_SECRET',          process.env.JWT_SECRET,          undefined);
-warnIfWeak('CREW_PIN',            process.env.CREW_PIN,            undefined);
 warnIfWeak('DISPLAY_PIN',         process.env.DISPLAY_PIN,         undefined);
 warnIfWeak('GPS_WEBHOOK_SECRET',  process.env.GPS_WEBHOOK_SECRET,  undefined);
 
@@ -709,19 +708,10 @@ app.post('/api/calls/:id/comments', verifyToken, async (req, res) => {
   res.json(comment);
 });
 
-// ── Crew PIN auth ─────────────────────────────────────────────────
-const crewPinOk = (pin) => String(pin) === (process.env.CREW_PIN || '1234');
-
-// Step 1: validate PIN, then client shows unit picker
-app.post('/api/crew/verify-pin', (req, res) => {
-  if (!crewPinOk(req.body.pin)) return res.status(401).json({ error: 'Invalid PIN' });
-  res.json({ ok: true });
-});
-
-// Step 2a: pick an existing shift unit → get JWT
+// ── Crew login ────────────────────────────────────────────────────
+// Step 1: pick an existing shift unit → get JWT
 app.post('/api/crew/select-unit', (req, res) => {
-  const { pin, unit_id } = req.body;
-  if (!crewPinOk(pin)) return res.status(401).json({ error: 'Invalid PIN' });
+  const { unit_id } = req.body;
   const unit = units.find(u => u.id === unit_id);
   if (!unit) return res.status(404).json({ error: 'Unit not found' });
   const token = signToken({ unit_id: unit.id, unit_number: unit.unit_number, role: 'crew' });
@@ -739,11 +729,10 @@ app.get('/api/shift/units', (req, res) => {
   })));
 });
 
-// Step 2b: add a unit not in the shift roster → create it + get JWT
+// Step 2: add a unit not in the shift roster → create it + get JWT
 app.post('/api/crew/add-unit', async (req, res) => {
-  const { unit_number, unit_type = 'ALS', pin } = req.body;
+  const { unit_number, unit_type = 'ALS' } = req.body;
   if (!unit_number?.trim()) return res.status(400).json({ error: 'unit_number required' });
-  if (!crewPinOk(pin)) return res.status(401).json({ error: 'Invalid PIN' });
 
   // Re-use existing unit if it was already created
   let unit = units.find(u => u.unit_number.toLowerCase() === unit_number.trim().toLowerCase());

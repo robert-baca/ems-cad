@@ -13,9 +13,8 @@ const TYPE_COLORS = { ALS: 'text-red-400', BLS: 'text-blue-400', Cart: 'text-gre
 
 // ── Crew login sub-flow ───────────────────────────────────────────
 function CrewLogin({ onBack, onSuccess }) {
-  // step: pin → pick → confirm | add
-  const [step,       setStep]      = useState('pin');
-  const [pin,        setPin]       = useState('');
+  // step: pick → confirm | add
+  const [step,       setStep]      = useState('pick');
   const [shiftUnits, setShiftUnits] = useState([]);
   const [selected,   setSelected]  = useState(null);
   const [newNumber,  setNewNumber] = useState('');
@@ -23,23 +22,11 @@ function CrewLogin({ onBack, onSuccess }) {
   const [error,      setError]     = useState('');
   const [loading,    setLoading]   = useState(false);
 
-  const handlePinSubmit = async (e) => {
-    e.preventDefault();
-    if (!pin) { setError('Enter your PIN.'); return; }
-    setLoading(true); setError('');
-    try {
-      const res  = await fetch('/api/crew/verify-pin', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pin })
-      });
-      if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Invalid PIN'); }
-      const units = await fetch('/api/shift/units').then(r => r.json()).catch(() => []);
+  useEffect(() => {
+    fetch('/api/shift/units').then(r => r.json()).then(units => {
       setShiftUnits(Array.isArray(units) ? units : []);
-      setStep('pick');
-    } catch (err) { setError(err.message); setPin(''); }
-    finally { setLoading(false); }
-  };
+    }).catch(() => setShiftUnits([]));
+  }, []);
 
   const pickUnit = (unit) => {
     setSelected(unit);
@@ -53,7 +40,7 @@ function CrewLogin({ onBack, onSuccess }) {
       const res  = await fetch('/api/crew/select-unit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pin, unit_id: selected.id })
+        body: JSON.stringify({ unit_id: selected.id })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Login failed');
@@ -70,7 +57,7 @@ function CrewLogin({ onBack, onSuccess }) {
       const res  = await fetch('/api/crew/add-unit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ unit_number: newNumber.trim(), unit_type: newType, pin })
+        body: JSON.stringify({ unit_number: newNumber.trim(), unit_type: newType })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed');
@@ -78,38 +65,6 @@ function CrewLogin({ onBack, onSuccess }) {
     } catch (err) { setError(err.message); }
     finally { setLoading(false); }
   };
-
-  // ── PIN entry ──
-  if (step === 'pin') {
-    return (
-      <form onSubmit={handlePinSubmit} className="bg-gray-800 rounded-2xl p-6 space-y-4 border border-gray-700">
-        <div className="flex items-center gap-3 mb-2">
-          <span className="text-2xl">🚑</span>
-          <div>
-            <div className="text-white font-bold">Crew Access</div>
-            <div className="text-gray-500 text-xs">Enter your crew PIN to continue</div>
-          </div>
-        </div>
-        <div>
-          <label className="block text-gray-400 text-sm mb-1">PIN</label>
-          <input
-            type="password" inputMode="numeric" maxLength={8}
-            value={pin} onChange={e => setPin(e.target.value)}
-            placeholder="••••" autoFocus
-            className="w-full bg-gray-700 text-white rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-green-500 placeholder-gray-500 text-center text-xl tracking-widest" />
-        </div>
-        {error && <p className="text-red-400 text-sm text-center">{error}</p>}
-        <button type="submit" disabled={loading}
-          className="w-full py-3 bg-green-700 hover:bg-green-600 disabled:bg-green-900 text-white font-semibold rounded-lg transition-colors">
-          {loading ? 'Checking…' : 'Continue'}
-        </button>
-        <button type="button" onClick={onBack}
-          className="w-full py-2 text-gray-500 hover:text-gray-300 text-sm transition-colors">
-          ← Back
-        </button>
-      </form>
-    );
-  }
 
   // ── Unit picker ──
   if (step === 'pick') {
