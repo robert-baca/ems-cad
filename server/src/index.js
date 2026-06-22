@@ -850,19 +850,19 @@ app.post('/api/shift/end', verifyToken, async (req, res) => {
     calls:                shiftCalls
   };
 
-  // Capture unit IDs before clearing so we can notify crew sockets
-  const endedUnitIds = units.map(u => u.id);
-
-  // Clear live state so the next shift starts fresh
+  // Clear calls (shift-scoped) but keep unit records — deleting/recreating them
+  // every shift broke crew login sessions, GPS tracker assignments, and any
+  // custom unit passwords. Just take everyone off-service for the next shift setup.
   calls = [];
-  for (const u of [...units]) {
-    deleteUnitFromDb(u.id).catch(console.error);
-  }
-  units = [];
+  units.forEach(u => {
+    u.status = 'out_of_service';
+    saveUnit(u).catch(console.error);
+  });
 
   currentShift = null;
-  io.to('dispatchers').emit('shift:ended', { ...summary, units: [] });
-  endedUnitIds.forEach(uid => io.to(`crew:${uid}`).emit('shift:ended', { units: [] }));
+  const sanitizedUnits = units.map(u => ({ ...u, password_hash: undefined }));
+  io.to('dispatchers').emit('shift:ended', { ...summary, units: sanitizedUnits });
+  units.forEach(u => io.to(`crew:${u.id}`).emit('shift:ended', { units: sanitizedUnits }));
   res.json(summary);
 });
 
