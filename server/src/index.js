@@ -120,6 +120,7 @@ async function initDb() {
   await pool.query(`ALTER TABLE locations ADD COLUMN IF NOT EXISTS location_type TEXT DEFAULT 'permanent'`);
   await pool.query(`ALTER TABLE units ADD COLUMN IF NOT EXISTS tracki_device_id TEXT`);
   await pool.query(`ALTER TABLE units ADD COLUMN IF NOT EXISTS tracker_name TEXT`);
+  await pool.query(`ALTER TABLE units ADD COLUMN IF NOT EXISTS last_gps_fix_ts TEXT`);
 
   // Prune calls older than 90 days
   const pruneDate = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
@@ -200,17 +201,19 @@ async function initDb() {
 async function saveUnit(unit) {
   await pool.query(`
     INSERT INTO units (id, unit_number, unit_name, unit_type, status, crew, station,
-      tracki_device_id, tracker_name, last_lat, last_lng, last_gps_at, password_hash, profile)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+      tracki_device_id, tracker_name, last_lat, last_lng, last_gps_at, last_gps_fix_ts, password_hash, profile)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
     ON CONFLICT (id) DO UPDATE SET
       unit_number=EXCLUDED.unit_number, unit_name=EXCLUDED.unit_name, unit_type=EXCLUDED.unit_type,
       status=EXCLUDED.status, crew=EXCLUDED.crew, station=EXCLUDED.station,
       tracki_device_id=EXCLUDED.tracki_device_id, tracker_name=EXCLUDED.tracker_name,
       last_lat=EXCLUDED.last_lat, last_lng=EXCLUDED.last_lng,
-      last_gps_at=EXCLUDED.last_gps_at, password_hash=EXCLUDED.password_hash, profile=EXCLUDED.profile
+      last_gps_at=EXCLUDED.last_gps_at, last_gps_fix_ts=EXCLUDED.last_gps_fix_ts,
+      password_hash=EXCLUDED.password_hash, profile=EXCLUDED.profile
   `, [unit.id, unit.unit_number, unit.unit_name, unit.unit_type, unit.status,
       unit.crew, unit.station, unit.tracki_device_id, unit.tracker_name || null, unit.last_lat, unit.last_lng,
-      unit.last_gps_at, unit.password_hash, unit.profile ? JSON.stringify(unit.profile) : null]);
+      unit.last_gps_at, unit.last_gps_fix_ts || null, unit.password_hash,
+      unit.profile ? JSON.stringify(unit.profile) : null]);
 }
 
 async function deleteUnitFromDb(id) {
@@ -900,9 +903,16 @@ function getUnitActiveCall(unitId, excludeCallId = null) {
 
 // ── GPS helpers ───────────────────────────────────────────────────
 function applyGpsUpdate(unit, lat, lng, timestamp) {
-  unit.last_lat    = lat;
-  unit.last_lng    = lng;
-  unit.last_gps_at = timestamp;
+  // Trackers often resend the same cached fix (with its original timestamp) while
+  // waiting for a new GPS lock. If a dispatcher cleared that exact fix, don't let
+  // the next poll cycle silently bring back the same stale point.
+  if (unit.last_gps_fix_ts && new Date(timestamp).getTime() <= new Date(unit.last_gps_fix_ts).getTime()) {
+    return;
+  }
+  unit.last_lat        = lat;
+  unit.last_lng        = lng;
+  unit.last_gps_at     = timestamp;
+  unit.last_gps_fix_ts = timestamp;
   saveUnit(unit).catch(console.error);
   io.to('dispatchers').emit('unit:gps_update', {
     unit_id: unit.id, unit_number: unit.unit_number, lat, lng, timestamp
