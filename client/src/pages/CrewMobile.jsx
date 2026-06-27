@@ -7,6 +7,8 @@ import { useSocket } from '../hooks/useSocket';
 import { useCrewGps } from '../hooks/useCrewGps';
 import ActiveCall from '../components/crew/ActiveCall';
 import StatusButtons from '../components/crew/StatusButtons';
+import CrewCaseHistory from '../components/crew/CrewCaseHistory';
+import CallSummaryModal from '../components/calls/CallSummaryModal';
 import { STATUS_COLORS, STATUS_LABELS } from '../data/mockData';
 
 const NON_TRANSPORT_DISPOSITIONS = [
@@ -167,6 +169,8 @@ export default function CrewMobile() {
   const [dismissedCallId,  setDismissedCallId]  = useState(null);
   const [showDisposition,  setShowDisposition]  = useState(false);
   const [shiftEnded,       setShiftEnded]       = useState(false);
+  const [showCaseSummary,  setShowCaseSummary]  = useState(false);
+  const [showCaseHistory,  setShowCaseHistory]  = useState(false);
 
   const myUnit = units.find(u =>
     u.id === user?.unit_id || u.unit_number === user?.unit_number
@@ -342,6 +346,15 @@ export default function CrewMobile() {
           onDismiss={() => setDismissedCallId(myCall?.id)}
         />
 
+        {callIsCompleted && myCall && (
+          <button
+            onClick={() => setShowCaseSummary(true)}
+            className="w-full py-3 rounded-2xl bg-gray-800 border border-gray-700 text-gray-300 active:bg-gray-700 text-sm font-semibold transition-colors flex items-center justify-center gap-2"
+          >
+            📊 View Case Summary (Times for Chart)
+          </button>
+        )}
+
         {myCall && (
           <CrewChat
             call={myCall}
@@ -369,12 +382,34 @@ export default function CrewMobile() {
         )}
 
         <button
+          onClick={() => setShowCaseHistory(true)}
+          className="w-full py-3 rounded-2xl bg-gray-800 border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 text-sm font-medium transition-colors flex items-center justify-center gap-2"
+        >
+          📁 My Cases
+        </button>
+
+        <button
           onClick={() => window.open('https://sfotems.com/protocols', '_blank')}
           className="w-full py-3 rounded-2xl bg-gray-800 border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 text-sm font-medium transition-colors flex items-center justify-center gap-2"
         >
           📖 Protocols
         </button>
       </div>
+
+      {showCaseSummary && myCall && (
+        <CallSummaryModal
+          call={myCall}
+          units={units}
+          onClose={() => setShowCaseSummary(false)}
+        />
+      )}
+
+      {showCaseHistory && (
+        <CrewCaseHistory
+          units={units}
+          onClose={() => setShowCaseHistory(false)}
+        />
+      )}
 
       {showDisposition && myActiveCall && (
         <CrewDisposition

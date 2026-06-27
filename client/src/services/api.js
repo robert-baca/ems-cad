@@ -28,6 +28,7 @@ export const clearUnitGps = (unitId) => api.delete(`/units/${unitId}/gps`);
 export const getCalls = () => api.get('/calls');
 export const getCall = (id) => api.get(`/calls/${id}`);
 export const getCallHistory = () => api.get('/calls/history');
+export const getMyCallHistory = () => api.get('/crew/calls/history');
 export const getShifts = () => api.get('/shifts');
 export const createCall = (data) => api.post('/calls', data);
 export const assignCall = (callId, unitId) =>

@@ -504,6 +504,31 @@ app.get('/api/calls/history', verifyToken, async (req, res) => {
   }
 });
 
+// A crew member's own case history (primary or additional unit), for chart reference.
+app.get('/api/crew/calls/history', verifyToken, async (req, res) => {
+  if (req.user.role !== 'crew') return res.status(403).json({ error: 'Forbidden' });
+  const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+  try {
+    const result = await pool.query(
+      `SELECT * FROM calls
+       WHERE received_at > $1
+         AND (assigned_unit_id = $2 OR additional_unit_ids @> $3::jsonb)
+       ORDER BY received_at DESC`,
+      [cutoff, req.user.unit_id, JSON.stringify([req.user.unit_id])]
+    );
+    res.json(result.rows.map(r => ({
+      ...r,
+      comments:            r.comments            || [],
+      additional_unit_ids: r.additional_unit_ids || [],
+      mutual_aid_agencies: r.mutual_aid_agencies || [],
+      co_unit_ids:         r.co_unit_ids         || []
+    })));
+  } catch (err) {
+    console.error('[crew history] query error:', err.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
 app.post('/api/calls', verifyToken, async (req, res) => {
   if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
   const hasUnit        = !!req.body.assigned_unit_id;
