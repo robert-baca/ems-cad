@@ -474,7 +474,10 @@ app.delete('/api/units/:id', verifyToken, async (req, res) => {
 // ── Calls ─────────────────────────────────────────────────────────
 app.get('/api/calls', verifyToken, (req, res) => {
   if (req.user.role === 'crew') {
-    const mine = calls.filter(c => c.assigned_unit_id === req.user.unit_id && c.status !== 'closed');
+    const mine = calls.filter(c =>
+      c.status !== 'closed' &&
+      (c.assigned_unit_id === req.user.unit_id || (c.additional_unit_ids || []).includes(req.user.unit_id))
+    );
     return res.json(mine);
   }
   res.json(calls);
@@ -1513,7 +1516,7 @@ io.on('connection', (socket) => {
       return;
     }
     socket.join(`crew:${unit_id}`);
-    const myCall = calls.find(c => c.assigned_unit_id === unit_id && c.status !== 'closed');
+    const myCall = getUnitActiveCall(unit_id);
     if (myCall) socket.emit('call:assigned_to_me', myCall);
   });
 
