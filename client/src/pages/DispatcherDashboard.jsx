@@ -47,7 +47,7 @@ export default function DispatcherDashboard() {
     calls, setCalls,
     handleCallCreated, handleCallUpdated, handleCallStatusChange, handleCallAssigned,
     handleCommentAdded,
-    dispatchCall, assignUnit, advanceStatus, closeCall, updateTimestamp, logTimeNow, addComment,
+    dispatchCall, assignUnit, closeCall, updateTimestamp, logTimeNow, addComment,
     addUnitToCall, removeUnitFromCall, updatePriority, addMutualAid, removeMutualAid
   } = useCalls();
   const { locations, addLocation, removeLocation, clearShiftLocations, setPermLocations } = useLocations();
@@ -536,7 +536,7 @@ export default function DispatcherDashboard() {
               onAssignUnit={assignUnit}
               onAddUnit={addUnitToCall}
               onRemoveUnit={removeUnitFromCall}
-              onSetStatus={advanceStatus}
+              onChangeUnitStatus={changeStatus}
               onSplitCall={handleSplitCall}
               onCloseCall={closeCall}
               parentCall={parentCall}

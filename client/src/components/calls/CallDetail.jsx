@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect } from 'react';
 import CallTimeline from './CallTimeline';
 import CallComments from './CallComments';
 import CloseCallModal from './CloseCallModal';
-import { STATUS_COLORS, STATUS_LABELS, STATUS_SEQUENCE } from '../../data/mockData';
+import { STATUS_COLORS, STATUS_LABELS, VALID_UNIT_STATUSES } from '../../data/mockData';
 import { updateCallNarrative, updateCallLocation } from '../../services/api';
 
 const PRIORITY_COLORS = { 1: 'text-red-400', 2: 'text-orange-400', 3: 'text-blue-400' };
@@ -33,7 +33,7 @@ export default function CallDetail({
   call, unit, units = [], authorName = 'Dispatcher',
   onClose, onTimestampUpdate, onLogTime, onAddComment, onAssignUnit, onCloseCall, onAddUnit,
   onRemoveUnit, onSplitCall, parentCall, subCases = [], onUpdatePriority, onAddMutualAid, onRemoveMutualAid,
-  onSetStatus
+  onChangeUnitStatus
 }) {
   const [tab, setTab]                   = useState('detail');
   const [assigningUnit, setAssigningUnit] = useState(false);
@@ -49,6 +49,7 @@ export default function CallDetail({
   const [editingLocation, setEditingLocation] = useState(false);
   const [locName,         setLocName]         = useState('');
   const [locZone,         setLocZone]         = useState('');
+  const [editingUnitStatusId, setEditingUnitStatusId] = useState(null);
   const clock = LiveClock();
 
   // Reset all local state when the selected call changes
@@ -63,6 +64,7 @@ export default function CallDetail({
     setAddingAid(false);
     setAidName(''); setAidUnit(''); setAidRole('');
     setEditingLocation(false);
+    setEditingUnitStatusId(null);
   }, [call.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleNarrativeBlur = useCallback(() => {
@@ -221,38 +223,12 @@ export default function CallDetail({
 
         {tab === 'detail' && (
           <>
-            {!isPending && (
-              <div className="bg-gray-700 rounded-xl p-3 space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="text-gray-400 text-xs uppercase tracking-wider">Status</div>
-                  <div className="flex items-center gap-1.5">
-                    <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: statusColor }} />
-                    <span className="text-xs font-medium" style={{ color: statusColor }}>
-                      {STATUS_LABELS[call.status]}
-                    </span>
-                  </div>
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {STATUS_SEQUENCE.map(s => (
-                    <button
-                      key={s}
-                      onClick={() => s !== call.status && onSetStatus?.(call.id, s)}
-                      title={s === call.status ? 'Current status' : `Set status to ${STATUS_LABELS[s]} (also updates unit)`}
-                      className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition-colors
-                        ${s === call.status
-                          ? 'text-white'
-                          : 'bg-gray-600 text-gray-300 hover:bg-gray-500'}`}
-                      style={s === call.status ? { backgroundColor: STATUS_COLORS[s] } : undefined}
-                    >
-                      {STATUS_LABELS[s]}
-                    </button>
-                  ))}
-                </div>
-                <p className="text-gray-500 text-xs">
-                  Tap any status to jump forward or revert back — updates the call and the assigned unit together.
-                </p>
-              </div>
-            )}
+            <div className="flex items-center gap-2">
+              <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: statusColor }} />
+              <span className="text-sm font-medium" style={{ color: statusColor }}>
+                {STATUS_LABELS[call.status]}
+              </span>
+            </div>
 
             <div className="bg-gray-700 rounded-xl p-3 space-y-2">
               <Row label="Type"      value={call.call_type} />
@@ -393,27 +369,56 @@ export default function CallDetail({
             {additionalUnits.length > 0 && (
               <div className="bg-gray-700 rounded-xl p-3 space-y-1.5">
                 <div className="text-gray-400 text-xs uppercase tracking-wider">Additional Units</div>
-                {additionalUnits.map(u => (
-                  <div key={u.id} className="flex items-center justify-between">
-                    <div>
-                      <span className="text-white text-sm font-semibold">{u.unit_number}</span>
-                      <span className="text-gray-400 text-xs ml-2">{u.unit_type}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="text-xs font-medium px-2 py-0.5 rounded-full"
-                        style={{ color: STATUS_COLORS[u.status], background: STATUS_COLORS[u.status] + '22' }}>
-                        {STATUS_LABELS[u.status]}
+                {additionalUnits.map(u => {
+                  const addedAt = (call.additional_units_added_at || {})[u.id];
+                  return (
+                    <div key={u.id} className="space-y-1">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <span className="text-white text-sm font-semibold">{u.unit_number}</span>
+                          <span className="text-gray-400 text-xs ml-2">{u.unit_type}</span>
+                          {addedAt && (
+                            <div className="text-gray-500 text-xs">
+                              Added {new Date(addedAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => setEditingUnitStatusId(editingUnitStatusId === u.id ? null : u.id)}
+                            title="Click to change this unit's status"
+                            className="text-xs font-medium px-2 py-0.5 rounded-full hover:ring-1 hover:ring-white/30 transition-all"
+                            style={{ color: STATUS_COLORS[u.status], background: STATUS_COLORS[u.status] + '22' }}
+                          >
+                            {STATUS_LABELS[u.status]}
+                          </button>
+                          <button
+                            onClick={() => onRemoveUnit?.(call.id, u.id)}
+                            title="Remove from call"
+                            className="text-gray-600 hover:text-red-400 text-sm transition-colors leading-none"
+                          >
+                            ✕
+                          </button>
+                        </div>
                       </div>
-                      <button
-                        onClick={() => onRemoveUnit?.(call.id, u.id)}
-                        title="Remove from call"
-                        className="text-gray-600 hover:text-red-400 text-sm transition-colors leading-none"
-                      >
-                        ✕
-                      </button>
+                      {editingUnitStatusId === u.id && (
+                        <div className="flex flex-wrap gap-1.5 pt-1">
+                          {VALID_UNIT_STATUSES.map(s => (
+                            <button
+                              key={s}
+                              onClick={() => { onChangeUnitStatus?.(u.id, s); setEditingUnitStatusId(null); }}
+                              className={`px-2 py-0.5 text-xs font-semibold rounded-lg transition-colors
+                                ${s === u.status ? 'text-white' : 'bg-gray-600 text-gray-300 hover:bg-gray-500'}`}
+                              style={s === u.status ? { backgroundColor: STATUS_COLORS[s] } : undefined}
+                            >
+                              {STATUS_LABELS[s]}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
 

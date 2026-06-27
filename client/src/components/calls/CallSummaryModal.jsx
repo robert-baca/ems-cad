@@ -164,12 +164,18 @@ export default function CallSummaryModal({ call, units, onClose }) {
               <span className="text-white font-semibold text-sm">{unitDisplay}</span>
               <span className="text-gray-500 text-xs bg-gray-600 px-1.5 py-0.5 rounded">Primary</span>
             </div>
-            {additionalUnits.map(u => (
-              <div key={u.id} className="flex items-center gap-2">
-                <span className="text-gray-300 font-medium text-sm">{u.unit_number}</span>
-                <span className="text-gray-500 text-xs bg-gray-600 px-1.5 py-0.5 rounded">Additional</span>
-              </div>
-            ))}
+            {additionalUnits.map(u => {
+              const addedAt = (call.additional_units_added_at || {})[u.id];
+              return (
+                <div key={u.id} className="flex items-center gap-2">
+                  <span className="text-gray-300 font-medium text-sm">{u.unit_number}</span>
+                  <span className="text-gray-500 text-xs bg-gray-600 px-1.5 py-0.5 rounded">Additional</span>
+                  {addedAt && (
+                    <span className="text-gray-500 text-xs font-mono">Added {fmtTime(addedAt)}</span>
+                  )}
+                </div>
+              );
+            })}
             {(call.mutual_aid_agencies || []).map(a => (
               <div key={a.id} className="flex items-center gap-2 flex-wrap">
                 <span className="text-gray-300 font-medium text-sm">{a.name}</span>

@@ -28,6 +28,12 @@ export const STATUS_SEQUENCE = [
   'dispatched', 'en_route', 'on_scene', 'patient_contact', 'cleared', 'available'
 ];
 
+// Selectable statuses when manually setting an additional/backup unit's status on a call.
+export const VALID_UNIT_STATUSES = [
+  'dispatched', 'acknowledged', 'en_route', 'on_scene',
+  'patient_contact', 'transporting', 'cleared', 'available'
+];
+
 export const CALL_TYPES = [
   'Cardiac Arrest', 'Chest Pain', 'Difficulty Breathing', 'Trauma / Injury',
   'Altered Mental Status', 'Allergic Reaction / Anaphylaxis', 'Seizure',
