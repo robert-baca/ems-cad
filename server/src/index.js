@@ -593,16 +593,36 @@ app.patch('/api/calls/:id/assign', verifyToken, async (req, res) => {
   const conflict = getUnitActiveCall(req.body.unit_id, req.params.id);
   if (conflict) return res.status(409).json({ error: `Unit already on call #${conflict.call_number}` });
 
+  const previousUnitId = call.assigned_unit_id;
+  const wasPending      = call.status === 'pending';
+
   call.assigned_unit_id     = req.body.unit_id;
   call.assigned_unit_number = units.find(u => u.id === req.body.unit_id)?.unit_number || null;
-  call.status               = 'dispatched';
-  call.dispatched_at        = call.dispatched_at || new Date().toISOString();
+  // Only a first-time assignment (call was pending) bumps the call to 'dispatched'.
+  // Swapping a unit mid-call should keep the call wherever it already was.
+  if (wasPending) call.status = 'dispatched';
+  call.dispatched_at = call.dispatched_at || new Date().toISOString();
 
   const unit = units.find(u => u.id === req.body.unit_id);
   if (unit) {
-    unit.status = 'dispatched';
+    // New unit picks up the call's current status, not a hardcoded 'dispatched',
+    // so swapping mid-call (e.g. while en route) doesn't strand it a step behind.
+    unit.status = call.status;
     saveUnit(unit).catch(console.error);
-    io.to('dispatchers').emit('unit:status_change', { unit_id: unit.id, status: 'dispatched' });
+    io.to('dispatchers').emit('unit:status_change', { unit_id: unit.id, status: unit.status });
+    io.to(`crew:${unit.id}`).emit('unit:status_change', { unit_id: unit.id, status: unit.status });
+  }
+
+  // The unit being replaced is freed, not left stranded at its last status.
+  if (previousUnitId && previousUnitId !== req.body.unit_id) {
+    const previousUnit = units.find(u => u.id === previousUnitId);
+    if (previousUnit) {
+      previousUnit.status = 'available';
+      saveUnit(previousUnit).catch(console.error);
+      io.to('dispatchers').emit('unit:status_change', { unit_id: previousUnit.id, status: 'available' });
+      io.to(`crew:${previousUnitId}`).emit('unit:status_change', { unit_id: previousUnitId, status: 'available' });
+      io.to(`crew:${previousUnitId}`).emit('call:updated', { call_id: call.id, changes: { assigned_unit_id: call.assigned_unit_id } });
+    }
   }
 
   saveCall(call).catch(console.error);
