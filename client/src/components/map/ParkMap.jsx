@@ -181,7 +181,7 @@ export default function ParkMap({
 
       callMarkersRef.current[call.id] = marker;
     });
-  }, [calls]);
+  }, [calls, mapLoaded]);
 
   // Keep onRemoveLocation in a ref so the click handler never goes stale
   // and the effect doesn't re-run just because the callback changed reference
