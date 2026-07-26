@@ -33,7 +33,7 @@ export default function EditUnitModal({ unit, onSave, onDelete, onClose }) {
   const [error,         setError]        = useState('');
   const [showSetupGuide, setShowSetupGuide] = useState(false);
 
-  const serverUrl = window.location.origin;
+  const serverUrl = window.location.origin + '/api/gps/traccar';
 
   const handleSave = async () => {
     if (!unitNumber.trim()) { setError('Unit number is required.'); return; }

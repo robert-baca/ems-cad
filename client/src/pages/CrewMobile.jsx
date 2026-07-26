@@ -423,7 +423,7 @@ export default function CrewMobile() {
       {showGpsSetup && (
         <TraccarSetupModal
           deviceId={myUnit?.unit_number || user?.unit_number || ''}
-          serverUrl={window.location.origin}
+          serverUrl={window.location.origin + '/api/gps/traccar'}
           onClose={() => setShowGpsSetup(false)}
         />
       )}
