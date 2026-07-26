@@ -457,7 +457,16 @@ app.patch('/api/units/:id/tracking', verifyToken, (req, res) => {
   const unit = units.find(u => u.id === req.params.id);
   if (!unit) return res.status(404).json({ error: 'Not found' });
   unit.tracking_active = !!req.body.active;
-  if (unit.tracking_active) unit.last_gps_fix_ts = null; // so first stationary heartbeat always lands
+  if (unit.tracking_active) {
+    unit.last_gps_fix_ts = null; // so first stationary heartbeat always lands
+  } else {
+    unit.last_lat        = null;
+    unit.last_lng        = null;
+    unit.last_gps_at     = null;
+    unit.last_gps_fix_ts = null;
+    saveUnit(unit).catch(console.error);
+    io.to('dispatchers').emit('unit:gps_update', { unit_id: unit.id, unit_number: unit.unit_number, lat: null, lng: null, timestamp: null });
+  }
   // tracking_active is intentionally ephemeral — not persisted to DB, resets on restart
   const sanitized = { ...unit, password_hash: undefined };
   io.to('dispatchers').emit('unit:updated', sanitized);
