@@ -42,7 +42,7 @@ const STEPS = {
     },
     {
       title: 'Set Frequency & Motion Detection',
-      body: 'Set Frequency to 30 seconds. Turn on Motion Detection to save battery. Set Stationary heartbeat seconds to 60 — this keeps sending a ping every minute while parked so dispatch doesn\'t see you go offline.',
+      body: 'Set Frequency to 30 seconds. Turn OFF Motion Detection (also called Stop Detection) — when it is on, the app sends heartbeats without GPS coordinates when stationary and your dot will not appear on the map. Set Stationary heartbeat to 60 seconds.',
     },
     {
       title: 'Allow Location — Always',
@@ -74,7 +74,7 @@ const STEPS = {
     },
     {
       title: 'Set Frequency & Motion Detection',
-      body: 'Set Frequency to 30 seconds. Leave Motion Detection OFF — if it is on, the app sends heartbeats without GPS coordinates when stationary and your dot will not appear on the map.',
+      body: 'Set Frequency to 30 seconds. Turn OFF Motion Detection (also called Stop Detection on some phones) — when it is on, the app sends heartbeats without GPS coordinates when stationary and your dot will not appear on the map. Also turn ON Wake lock so Android keeps GPS running when the screen is off.',
     },
     {
       title: 'Allow Location — All the time',
