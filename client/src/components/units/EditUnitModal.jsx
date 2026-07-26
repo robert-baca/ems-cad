@@ -2,21 +2,36 @@ import { useState } from 'react';
 
 const UNIT_TYPES = ['ALS', 'BLS', 'Cart'];
 
-export default function EditUnitModal({ unit, onSave, onDelete, onClose, trackers = [], units = [] }) {
-  const [unitNumber,   setUnitNumber]  = useState(unit.unit_number);
-  const [unitName,     setUnitName]    = useState(unit.unit_name);
-  const [unitType,     setUnitType]    = useState(unit.unit_type);
-  const [trackerName,  setTrackerName] = useState(unit.tracker_name || '');
-  const [saving,       setSaving]      = useState(false);
-  const [confirming,   setConfirming]  = useState(false);
-  const [error,        setError]       = useState('');
+function SetupRow({ label, value }) {
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    navigator.clipboard.writeText(value).catch(() => {});
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <div className="min-w-0">
+        <div className="text-gray-500 text-xs">{label}</div>
+        <div className="text-white text-xs font-mono mt-0.5 break-all">{value}</div>
+      </div>
+      <button onClick={copy}
+        className="text-xs text-gray-400 hover:text-white bg-gray-600 hover:bg-gray-500 px-2 py-1 rounded transition-colors flex-shrink-0">
+        {copied ? '✓' : 'Copy'}
+      </button>
+    </div>
+  );
+}
 
-  const selectedTracker = trackers.find(t => t.name === trackerName);
+export default function EditUnitModal({ unit, onSave, onDelete, onClose }) {
+  const [unitNumber, setUnitNumber] = useState(unit.unit_number);
+  const [unitName,   setUnitName]   = useState(unit.unit_name);
+  const [unitType,   setUnitType]   = useState(unit.unit_type);
+  const [saving,     setSaving]     = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [error,      setError]      = useState('');
 
-  // Map tracker name → unit number, excluding this unit's own current assignment
-  const assignedTo = {};
-  units.filter(u => u.id !== unit.id).forEach(u => { if (u.tracker_name) assignedTo[u.tracker_name] = u.unit_number; });
-  const conflict = trackerName && assignedTo[trackerName];
+  const serverUrl = window.location.origin;
 
   const handleSave = async () => {
     if (!unitNumber.trim()) { setError('Unit number is required.'); return; }
@@ -25,10 +40,9 @@ export default function EditUnitModal({ unit, onSave, onDelete, onClose, tracker
     setError('');
     try {
       await onSave(unit.id, {
-        unit_number:  unitNumber.trim(),
-        unit_name:    unitName.trim(),
-        unit_type:    unitType,
-        tracker_name: trackerName || null
+        unit_number: unitNumber.trim(),
+        unit_name:   unitName.trim(),
+        unit_type:   unitType
       });
       onClose();
     } catch {
@@ -98,40 +112,18 @@ export default function EditUnitModal({ unit, onSave, onDelete, onClose, tracker
               </div>
 
               <div>
-                <label className="block text-gray-400 text-xs uppercase tracking-wider mb-1.5">GPS Tracker</label>
-                {trackers.length === 0 ? (
-                  <div className="text-gray-500 text-xs bg-gray-700 rounded-lg px-3 py-2.5">
-                    No trackers configured — add them in Settings ⚙
+                <label className="block text-gray-400 text-xs uppercase tracking-wider mb-1.5">
+                  GPS — Traccar Client Setup
+                </label>
+                <div className="bg-gray-700 rounded-lg border border-gray-600 p-3 space-y-2.5">
+                  <SetupRow label="Protocol"          value="OsmAnd" />
+                  <SetupRow label="Server URL"        value={serverUrl} />
+                  <SetupRow label="Device Identifier" value={unitNumber.trim() || unit.unit_number} />
+                  <div className="text-gray-500 text-xs pt-1.5 border-t border-gray-600 space-y-0.5">
+                    <div>Set interval to 30 s · enable motion detection to save battery</div>
+                    <div>Download: <span className="text-blue-400">Traccar Client</span> — App Store / Google Play</div>
                   </div>
-                ) : (
-                  <>
-                    <select
-                      value={trackerName}
-                      onChange={e => setTrackerName(e.target.value)}
-                      className="w-full bg-gray-700 text-white rounded-lg px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                    >
-                      <option value="">None</option>
-                      {trackers.map(t => {
-                        const inUse = assignedTo[t.name];
-                        return (
-                          <option key={t.id} value={t.name}>
-                            {t.name}{inUse ? ` — in use by ${inUse}` : ''}
-                          </option>
-                        );
-                      })}
-                    </select>
-                    {conflict ? (
-                      <p className="text-yellow-400 text-xs mt-1">
-                        ⚠ {trackerName} is already assigned to {conflict}. Saving will move it to this unit.
-                      </p>
-                    ) : selectedTracker ? (
-                      <p className="text-green-400 text-xs mt-1">
-                        ✓ GPS tracking via {selectedTracker.name}
-                        {selectedTracker.device_id ? ` (${selectedTracker.device_id})` : ' — no IMEI set yet'}
-                      </p>
-                    ) : null}
-                  </>
-                )}
+                </div>
               </div>
 
               {error && <p className="text-red-400 text-sm">{error}</p>}

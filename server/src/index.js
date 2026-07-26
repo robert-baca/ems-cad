@@ -474,6 +474,15 @@ app.delete('/api/units/:id', verifyToken, async (req, res) => {
   res.json({ ok: true });
 });
 
+// Returns Traccar Client setup info for a unit (dispatcher only)
+app.get('/api/units/:id/tracking-setup', verifyToken, (req, res) => {
+  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
+  const unit = units.find(u => u.id === req.params.id);
+  if (!unit) return res.status(404).json({ error: 'Not found' });
+  const baseUrl = process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`;
+  res.json({ device_id: unit.unit_number, server_url: baseUrl });
+});
+
 // ── Calls ─────────────────────────────────────────────────────────
 app.get('/api/calls', verifyToken, (req, res) => {
   if (req.user.role === 'crew') {
@@ -1019,7 +1028,35 @@ app.post('/api/gps/webhook', (req, res) => {
   res.json({ ok: true });
 });
 
-// ── Crew browser GPS (fallback when Tracki is stale) ─────────────
+// ── Traccar Client GPS (phone-based, OsmAnd protocol) ────────────
+// Crew setup: install Traccar Client, set Protocol=OsmAnd, Server URL=<this server>,
+// Device Identifier=<unit_number>. Interval 30s recommended.
+// ALWAYS returns 200 — Traccar Client retries forever on any non-2xx response.
+function handleTraccarGps(req, res) {
+  res.sendStatus(200); // respond first, process after
+  const p      = { ...req.query, ...req.body };
+  const unitId = String(p.id ?? p.deviceId ?? '').trim();
+  const lat    = parseFloat(p.lat ?? p.latitude  ?? '');
+  const lng    = parseFloat(p.lon ?? p.lng ?? p.longitude ?? '');
+  if (!unitId || isNaN(lat) || isNaN(lng)) return;
+  const unit = units.find(u => u.unit_number.toLowerCase() === unitId.toLowerCase());
+  if (!unit) { console.log(`[traccar] unknown device id: ${unitId}`); return; }
+  let ts = new Date().toISOString();
+  if (p.timestamp) {
+    const num = Number(p.timestamp);
+    // Unix seconds if < year 2255 (~9e12 ms); otherwise treat as ISO string
+    const parsed = (!isNaN(num) && num < 9_000_000_000)
+      ? new Date(num * 1000)
+      : new Date(p.timestamp);
+    if (!isNaN(parsed.getTime())) ts = parsed.toISOString();
+  }
+  applyGpsUpdate(unit, lat, lng, ts);
+  console.log(`[traccar] ${unit.unit_number} → ${lat.toFixed(5)}, ${lng.toFixed(5)}`);
+}
+app.get('/api/gps/traccar',  handleTraccarGps);
+app.post('/api/gps/traccar', handleTraccarGps);
+
+// ── Crew browser GPS ──────────────────────────────────────────────
 app.post('/api/crew/gps', verifyToken, (req, res) => {
   if (req.user.role !== 'crew') return res.status(403).json({ error: 'Forbidden' });
   const unit = units.find(u => u.id === req.user.unit_id);
