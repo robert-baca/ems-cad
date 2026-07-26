@@ -120,7 +120,7 @@ export default function EditUnitModal({ unit, onSave, onDelete, onClose }) {
                 <div className="bg-gray-700 rounded-lg border border-gray-600 p-3 space-y-2.5">
                   <SetupRow label="Protocol"          value="OsmAnd" />
                   <SetupRow label="Server URL"        value={serverUrl} />
-                  <SetupRow label="Device Identifier" value={unitNumber.trim() || unit.unit_number} />
+                  <SetupRow label="Device Identifier" value={(unitNumber.trim() || unit.unit_number).replace(/\s+/g, '')} />
                   <div className="text-gray-500 text-xs pt-1.5 border-t border-gray-600 space-y-0.5">
                     <div>Set interval to 30 s · enable motion detection to save battery</div>
                     <div>Download: <span className="text-blue-400">Traccar Client</span> — App Store / Google Play</div>
@@ -181,7 +181,7 @@ export default function EditUnitModal({ unit, onSave, onDelete, onClose }) {
 
       {showSetupGuide && (
         <TraccarSetupModal
-          deviceId={unitNumber.trim() || unit.unit_number}
+          deviceId={(unitNumber.trim() || unit.unit_number).replace(/\s+/g, '')}
           serverUrl={serverUrl}
           onClose={() => setShowSetupGuide(false)}
         />

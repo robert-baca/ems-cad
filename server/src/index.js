@@ -1063,7 +1063,8 @@ function handleTraccarGps(req, res) {
   const lat    = parseFloat(p.lat ?? p.latitude  ?? '');
   const lng    = parseFloat(p.lon ?? p.lng ?? p.longitude ?? '');
   if (!unitId || isNaN(lat) || isNaN(lng)) return;
-  const unit = units.find(u => u.unit_number.toLowerCase() === unitId.toLowerCase());
+  const norm = s => s.toLowerCase().replace(/\s+/g, '');
+  const unit = units.find(u => norm(u.unit_number) === norm(unitId));
   if (!unit) { console.log(`[traccar] unknown device id: ${unitId}`); return; }
   let ts = new Date().toISOString();
   if (p.timestamp) {
