@@ -1067,7 +1067,7 @@ function handleTraccarGps(req, res) {
   const unitId = String(p.id ?? p.deviceId ?? '').trim();
   const lat    = parseFloat(p.lat ?? p.latitude  ?? '');
   const lng    = parseFloat(p.lon ?? p.lng ?? p.longitude ?? '');
-  console.log(`[traccar:diag] raw — id="${unitId}" lat=${lat} lng=${lng} ts=${p.timestamp ?? '(none)'} allKeys=${Object.keys(p).join(',')}`);
+  console.log(`[traccar:diag] query=${JSON.stringify(req.query)} body=${JSON.stringify(req.body)}`);
   if (!unitId || isNaN(lat) || isNaN(lng)) {
     console.log(`[traccar:diag] bad params — dropped`);
     return;
