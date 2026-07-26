@@ -456,6 +456,7 @@ app.patch('/api/units/:id/tracking', verifyToken, (req, res) => {
   const unit = units.find(u => u.id === req.params.id);
   if (!unit) return res.status(404).json({ error: 'Not found' });
   unit.tracking_active = !!req.body.active;
+  if (unit.tracking_active) unit.last_gps_fix_ts = null; // so first stationary heartbeat always lands
   // tracking_active is intentionally ephemeral — not persisted to DB, resets on restart
   const sanitized = { ...unit, password_hash: undefined };
   io.to('dispatchers').emit('unit:updated', sanitized);
