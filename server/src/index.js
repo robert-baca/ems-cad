@@ -976,9 +976,9 @@ function getUnitActiveCall(unitId, excludeCallId = null) {
 
 // ── GPS helpers ───────────────────────────────────────────────────
 function applyGpsUpdate(unit, lat, lng, timestamp) {
-  // Trackers often resend the same cached fix (with its original timestamp) while
-  // waiting for a new GPS lock. If a dispatcher cleared that exact fix, don't let
-  // the next poll cycle silently bring back the same stale point.
+  // Trackers can resend the same cached fix (same original timestamp) while waiting
+  // for a new lock. If a dispatcher cleared that fix, don't let the same stale
+  // point silently reappear on the next ping.
   if (unit.last_gps_fix_ts && new Date(timestamp).getTime() <= new Date(unit.last_gps_fix_ts).getTime()) {
     return;
   }
@@ -987,9 +987,12 @@ function applyGpsUpdate(unit, lat, lng, timestamp) {
   unit.last_gps_at     = timestamp;
   unit.last_gps_fix_ts = timestamp;
   saveUnit(unit).catch(console.error);
-  io.to('dispatchers').emit('unit:gps_update', {
-    unit_id: unit.id, unit_number: unit.unit_number, lat, lng, timestamp
-  });
+  const payload = { unit_id: unit.id, unit_number: unit.unit_number, lat, lng, timestamp };
+  io.to('dispatchers').emit('unit:gps_update', payload);
+  // Crew app needs this too — the browser GPS fallback hook checks last_gps_at to
+  // know whether Traccar is still active. Without this emit, the hook sees a stale
+  // timestamp after 3 minutes and starts sending redundant browser GPS alongside Traccar.
+  io.to(`crew:${unit.id}`).emit('unit:gps_update', payload);
 }
 
 function handleUnknownDevice(device_id) {
@@ -1044,10 +1047,14 @@ function handleTraccarGps(req, res) {
   let ts = new Date().toISOString();
   if (p.timestamp) {
     const num = Number(p.timestamp);
-    // Unix seconds if < year 2255 (~9e12 ms); otherwise treat as ISO string
-    const parsed = (!isNaN(num) && num < 9_000_000_000)
-      ? new Date(num * 1000)
-      : new Date(p.timestamp);
+    let parsed;
+    if (!isNaN(num) && num < 9_000_000_000) {
+      parsed = new Date(num * 1000);        // Unix seconds  (~1.75e9 today)
+    } else if (!isNaN(num) && num < 9_000_000_000_000) {
+      parsed = new Date(num);               // Unix milliseconds (~1.75e12 today)
+    } else {
+      parsed = new Date(p.timestamp);       // ISO string fallback
+    }
     if (!isNaN(parsed.getTime())) ts = parsed.toISOString();
   }
   applyGpsUpdate(unit, lat, lng, ts);

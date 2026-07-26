@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 
-const STALE_MS = 3 * 60 * 1000; // send browser GPS only when Tracki hasn't pinged in 3 min
+const STALE_MS = 3 * 60 * 1000; // browser GPS fires only when Traccar hasn't pinged in 3 min
 
 export function useCrewGps({ token, unit, enabled = true }) {
   const unitRef    = useRef(unit);
@@ -33,8 +33,8 @@ export function useCrewGps({ token, unit, enabled = true }) {
 
     const postGps = async (lat, lng) => {
       const u = unitRef.current;
-      const lastTracki = u?.last_gps_at ? new Date(u.last_gps_at).getTime() : 0;
-      if (Date.now() - lastTracki < STALE_MS) return; // Tracki is healthy, stay quiet
+      const lastGps = u?.last_gps_at ? new Date(u.last_gps_at).getTime() : 0;
+      if (Date.now() - lastGps < STALE_MS) return; // Traccar is healthy, stay quiet
       try {
         await fetch('/api/crew/gps', {
           method: 'POST',
