@@ -21,6 +21,7 @@ const io     = new Server(server, {
 
 app.use(cors({ origin: CORS_ORIGIN }));
 app.use(express.json());
+app.use(express.urlencoded({ extended: false })); // Traccar Client POSTs form-encoded params
 
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-in-production';
 
