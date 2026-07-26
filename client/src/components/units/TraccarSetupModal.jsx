@@ -41,8 +41,8 @@ const STEPS = {
       copy: 'server_url',
     },
     {
-      title: 'Set Frequency to 30',
-      body: 'Set Frequency to 30 seconds. Turn on Motion Detection — this pauses tracking when you\'re stationary and saves your battery.',
+      title: 'Set Frequency & Motion Detection',
+      body: 'Set Frequency to 30 seconds. Turn on Motion Detection to save battery. Set Stationary heartbeat seconds to 60 — this keeps sending a ping every minute while parked so dispatch doesn\'t see you go offline.',
     },
     {
       title: 'Allow Location — Always',
