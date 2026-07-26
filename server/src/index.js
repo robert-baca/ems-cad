@@ -466,9 +466,10 @@ app.delete('/api/units/:id/gps', verifyToken, async (req, res) => {
   if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
   const unit = units.find(u => u.id === req.params.id);
   if (!unit) return res.status(404).json({ error: 'Not found' });
-  unit.last_lat    = null;
-  unit.last_lng    = null;
-  unit.last_gps_at = null;
+  unit.last_lat        = null;
+  unit.last_lng        = null;
+  unit.last_gps_at     = null;
+  unit.last_gps_fix_ts = null; // reset dedup so next ping always lands
   saveUnit(unit).catch(console.error);
   const sanitized = { ...unit, password_hash: undefined };
   io.to('dispatchers').emit('unit:updated', sanitized);
