@@ -59,7 +59,8 @@ let locations    = [];
 let trackers     = [];
 let currentShift = null;
 let nextCallNum  = 100;
-const unknownGpsDevices = new Set();
+const unknownGpsDevices  = new Set();
+const gpsDiscardLastLog  = new Map(); // unit_id → last discard log timestamp
 
 // ── DB setup & seed ───────────────────────────────────────────────
 async function initDb() {
@@ -831,7 +832,8 @@ app.post('/api/crew/add-unit', async (req, res) => {
       unit_type, status: 'available',
       last_lat: null, last_lng: null, last_gps_at: null, tracki_device_id: null,
       password_hash: null,
-      profile: null, crew: null, station: null
+      profile: null, crew: null, station: null,
+      tracking_active: false
     };
     units.push(unit);
     await saveUnit(unit).catch(console.error);
@@ -932,7 +934,8 @@ app.post('/api/shift/end', verifyToken, async (req, res) => {
   // custom unit passwords. Just take everyone off-service for the next shift setup.
   calls = [];
   units.forEach(u => {
-    u.status = 'out_of_service';
+    u.status          = 'out_of_service';
+    u.tracking_active = false;
     saveUnit(u).catch(console.error);
   });
 
@@ -992,7 +995,11 @@ function applyGpsUpdate(unit, lat, lng, timestamp) {
   // Discard pings unless unit is on an active call or dispatcher has manually enabled tracking.
   const onCall = !!getUnitActiveCall(unit.id);
   if (!onCall && !unit.tracking_active) {
-    console.log(`[gps] ${unit.unit_number} — discarded (tracking off, not on call)`);
+    const last = gpsDiscardLastLog.get(unit.id) || 0;
+    if (Date.now() - last > 5 * 60 * 1000) {
+      console.log(`[gps] ${unit.unit_number} — discarded (tracking off, not on call)`);
+      gpsDiscardLastLog.set(unit.id, Date.now());
+    }
     return false;
   }
 
