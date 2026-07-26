@@ -218,7 +218,7 @@ export default function CrewMobile() {
     setBackupRequested(false);
   }, [myActiveCall?.id]);
 
-  // Browser GPS fallback (only fires when Tracki is stale > 3 min)
+  // Browser GPS fallback (only fires when Traccar hasn't pinged in > 3 min)
   useCrewGps({ token: user?.token, unit: myUnit, enabled: !!myUnit });
 
   useSocket({

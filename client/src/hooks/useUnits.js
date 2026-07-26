@@ -80,7 +80,12 @@ export function useUnits() {
   const toggleTracking = useCallback(async (unit) => {
     const newActive = !unit.tracking_active;
     setUnits(prev => prev.map(u => u.id === unit.id ? { ...u, tracking_active: newActive } : u));
-    try { await apiToggleTracking(unit.id, newActive); } catch {}
+    try {
+      await apiToggleTracking(unit.id, newActive);
+    } catch (err) {
+      console.error('[tracking toggle failed]', err);
+      setUnits(prev => prev.map(u => u.id === unit.id ? { ...u, tracking_active: unit.tracking_active } : u));
+    }
   }, []);
 
   return {

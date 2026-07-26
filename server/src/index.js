@@ -987,16 +987,20 @@ function getUnitActiveCall(unitId, excludeCallId = null) {
 }
 
 // ── GPS helpers ───────────────────────────────────────────────────
+// Returns true if the ping was accepted, false if discarded.
 function applyGpsUpdate(unit, lat, lng, timestamp) {
   // Discard pings unless unit is on an active call or dispatcher has manually enabled tracking.
   const onCall = !!getUnitActiveCall(unit.id);
-  if (!onCall && !unit.tracking_active) return;
+  if (!onCall && !unit.tracking_active) {
+    console.log(`[gps] ${unit.unit_number} — discarded (tracking off, not on call)`);
+    return false;
+  }
 
   // Trackers can resend the same cached fix (same original timestamp) while waiting
   // for a new lock. If a dispatcher cleared that fix, don't let the same stale
   // point silently reappear on the next ping.
   if (unit.last_gps_fix_ts && new Date(timestamp).getTime() <= new Date(unit.last_gps_fix_ts).getTime()) {
-    return;
+    return false;
   }
   unit.last_lat        = lat;
   unit.last_lng        = lng;
@@ -1009,6 +1013,7 @@ function applyGpsUpdate(unit, lat, lng, timestamp) {
   // know whether Traccar is still active. Without this emit, the hook sees a stale
   // timestamp after 3 minutes and starts sending redundant browser GPS alongside Traccar.
   io.to(`crew:${unit.id}`).emit('unit:gps_update', payload);
+  return true;
 }
 
 function handleUnknownDevice(device_id) {
@@ -1073,8 +1078,8 @@ function handleTraccarGps(req, res) {
     }
     if (!isNaN(parsed.getTime())) ts = parsed.toISOString();
   }
-  applyGpsUpdate(unit, lat, lng, ts);
-  console.log(`[traccar] ${unit.unit_number} → ${lat.toFixed(5)}, ${lng.toFixed(5)}`);
+  const accepted = applyGpsUpdate(unit, lat, lng, ts);
+  if (accepted) console.log(`[traccar] ${unit.unit_number} → ${lat.toFixed(5)}, ${lng.toFixed(5)}`);
 }
 app.get('/api/gps/traccar',  handleTraccarGps);
 app.post('/api/gps/traccar', handleTraccarGps);
