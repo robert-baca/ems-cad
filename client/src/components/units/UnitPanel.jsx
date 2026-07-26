@@ -116,7 +116,7 @@ function UnitCard({ unit, activeCall, isSelected, onClick, onHistory, onEdit, on
                 e.stopPropagation();
                 if (trackPending.current) return;
                 trackPending.current = true;
-                setTimeout(() => { trackPending.current = false; }, 2000);
+                setTimeout(() => { trackPending.current = false; }, 8000);
                 onToggleTracking(unit);
               }}
               className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-colors ${
