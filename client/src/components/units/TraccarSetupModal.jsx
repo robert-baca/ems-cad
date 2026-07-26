@@ -73,8 +73,8 @@ const STEPS = {
       copy: 'server_url',
     },
     {
-      title: 'Set Frequency to 30',
-      body: 'Set Frequency to 30 seconds. Turn on Motion Detection — this pauses tracking when stationary and saves battery.',
+      title: 'Set Frequency & Motion Detection',
+      body: 'Set Frequency to 30 seconds. Leave Motion Detection OFF — if it is on, the app sends heartbeats without GPS coordinates when stationary and your dot will not appear on the map.',
     },
     {
       title: 'Allow Location — All the time',

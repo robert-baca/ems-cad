@@ -122,7 +122,7 @@ export default function EditUnitModal({ unit, onSave, onDelete, onClose }) {
                   <SetupRow label="Server URL"        value={serverUrl} />
                   <SetupRow label="Device Identifier" value={(unitNumber.trim() || unit.unit_number).replace(/\s+/g, '')} />
                   <div className="text-gray-500 text-xs pt-1.5 border-t border-gray-600 space-y-0.5">
-                    <div>Set interval to 30 s · enable motion detection to save battery</div>
+                    <div>Set interval to 30 s · keep motion detection OFF (on = no GPS when stationary)</div>
                     <div>Download: <span className="text-blue-400">Traccar Client</span> — App Store / Google Play</div>
                   </div>
                 </div>

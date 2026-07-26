@@ -996,15 +996,16 @@ function getUnitActiveCall(unitId, excludeCallId = null) {
 // Returns true if the ping was accepted, false if discarded.
 function applyGpsUpdate(unit, lat, lng, timestamp) {
   const onCall = !!getUnitActiveCall(unit.id);
-  console.log(`[gps:diag] ${unit.unit_number} ping — onCall=${onCall} tracking=${unit.tracking_active} ts=${timestamp} last_fix=${unit.last_gps_fix_ts}`);
-
   if (!onCall && !unit.tracking_active) {
-    console.log(`[gps:diag] ${unit.unit_number} — GATE blocked (tracking off, not on call)`);
+    const last = gpsDiscardLastLog.get(unit.id) || 0;
+    if (Date.now() - last > 5 * 60 * 1000) {
+      console.log(`[gps] ${unit.unit_number} — discarded (tracking off, not on call)`);
+      gpsDiscardLastLog.set(unit.id, Date.now());
+    }
     return false;
   }
 
   if (unit.last_gps_fix_ts && new Date(timestamp).getTime() <= new Date(unit.last_gps_fix_ts).getTime()) {
-    console.log(`[gps:diag] ${unit.unit_number} — DEDUP blocked (${timestamp} <= ${unit.last_gps_fix_ts})`);
     return false;
   }
   unit.last_lat        = lat;
@@ -1067,11 +1068,7 @@ function handleTraccarGps(req, res) {
   const unitId = String(p.id ?? p.deviceId ?? '').trim();
   const lat    = parseFloat(p.lat ?? p.latitude  ?? '');
   const lng    = parseFloat(p.lon ?? p.lng ?? p.longitude ?? '');
-  console.log(`[traccar:diag] query=${JSON.stringify(req.query)} body=${JSON.stringify(req.body)}`);
-  if (!unitId || isNaN(lat) || isNaN(lng)) {
-    console.log(`[traccar:diag] bad params — dropped`);
-    return;
-  }
+  if (!unitId || isNaN(lat) || isNaN(lng)) return;
   const norm = s => s.toLowerCase().replace(/\s+/g, '');
   const unit = units.find(u => norm(u.unit_number) === norm(unitId));
   if (!unit) { console.log(`[traccar] unknown device id: ${unitId}`); return; }
