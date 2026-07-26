@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
-import { getUnits, updateUnitStatus, createUnit as apiCreateUnit, editUnit as apiEditUnit, deleteUnit as apiDeleteUnit, clearUnitGps as apiClearGps } from '../services/api';
+import { getUnits, updateUnitStatus, createUnit as apiCreateUnit, editUnit as apiEditUnit, deleteUnit as apiDeleteUnit, clearUnitGps as apiClearGps, toggleUnitTracking as apiToggleTracking } from '../services/api';
 
 export function useUnits() {
   const [units, setUnits] = useState([]);
@@ -77,10 +77,16 @@ export function useUnits() {
     try { await apiClearGps(unitId); } catch {}
   }, []);
 
+  const toggleTracking = useCallback(async (unit) => {
+    const newActive = !unit.tracking_active;
+    setUnits(prev => prev.map(u => u.id === unit.id ? { ...u, tracking_active: newActive } : u));
+    try { await apiToggleTracking(unit.id, newActive); } catch {}
+  }, []);
+
   return {
     units, setUnits,
     handleGpsUpdate, handleStatusChange, handleProfileUpdate,
     handleUnitUpdated, handleUnitRemoved,
-    changeStatus, addUnit, editUnit, removeUnit, moveUnit, clearGps
+    changeStatus, addUnit, editUnit, removeUnit, moveUnit, clearGps, toggleTracking
   };
 }

@@ -168,7 +168,7 @@ async function initDb() {
   `);
 
   const unitsRes = await pool.query('SELECT * FROM units ORDER BY unit_number');
-  units = unitsRes.rows;
+  units = unitsRes.rows.map(u => ({ ...u, tracking_active: false }));
 
   const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
   const callsRes = await pool.query(
@@ -408,7 +408,8 @@ app.post('/api/units', verifyToken, async (req, res) => {
     password_hash:   bcrypt.hashSync('ems2024', 8),
     profile:         null,
     crew:            null,
-    station:         null
+    station:         null,
+    tracking_active: false
   };
   units.push(newUnit);
   await saveUnit(newUnit).catch(console.error);
@@ -447,6 +448,17 @@ app.put('/api/units/:id', verifyToken, async (req, res) => {
   const sanitized = { ...unit, password_hash: undefined };
   io.to('dispatchers').emit('unit:updated', sanitized);
   res.json(sanitized);
+});
+
+app.patch('/api/units/:id/tracking', verifyToken, (req, res) => {
+  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
+  const unit = units.find(u => u.id === req.params.id);
+  if (!unit) return res.status(404).json({ error: 'Not found' });
+  unit.tracking_active = !!req.body.active;
+  // tracking_active is intentionally ephemeral — not persisted to DB, resets on restart
+  const sanitized = { ...unit, password_hash: undefined };
+  io.to('dispatchers').emit('unit:updated', sanitized);
+  res.json({ ok: true, tracking_active: unit.tracking_active });
 });
 
 app.delete('/api/units/:id/gps', verifyToken, async (req, res) => {
@@ -976,6 +988,10 @@ function getUnitActiveCall(unitId, excludeCallId = null) {
 
 // ── GPS helpers ───────────────────────────────────────────────────
 function applyGpsUpdate(unit, lat, lng, timestamp) {
+  // Discard pings unless unit is on an active call or dispatcher has manually enabled tracking.
+  const onCall = !!getUnitActiveCall(unit.id);
+  if (!onCall && !unit.tracking_active) return;
+
   // Trackers can resend the same cached fix (same original timestamp) while waiting
   // for a new lock. If a dispatcher cleared that fix, don't let the same stale
   // point silently reappear on the next ping.
