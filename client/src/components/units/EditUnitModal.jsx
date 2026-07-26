@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import TraccarSetupModal from './TraccarSetupModal';
 
 const UNIT_TYPES = ['ALS', 'BLS', 'Cart'];
 
@@ -27,9 +28,10 @@ export default function EditUnitModal({ unit, onSave, onDelete, onClose }) {
   const [unitNumber, setUnitNumber] = useState(unit.unit_number);
   const [unitName,   setUnitName]   = useState(unit.unit_name);
   const [unitType,   setUnitType]   = useState(unit.unit_type);
-  const [saving,     setSaving]     = useState(false);
-  const [confirming, setConfirming] = useState(false);
-  const [error,      setError]      = useState('');
+  const [saving,        setSaving]       = useState(false);
+  const [confirming,    setConfirming]   = useState(false);
+  const [error,         setError]        = useState('');
+  const [showSetupGuide, setShowSetupGuide] = useState(false);
 
   const serverUrl = window.location.origin;
 
@@ -124,6 +126,13 @@ export default function EditUnitModal({ unit, onSave, onDelete, onClose }) {
                     <div>Download: <span className="text-blue-400">Traccar Client</span> — App Store / Google Play</div>
                   </div>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => setShowSetupGuide(true)}
+                  className="w-full mt-2 py-2 rounded-lg bg-blue-700/40 hover:bg-blue-700/60 border border-blue-600/50 text-blue-300 text-xs font-semibold transition-colors"
+                >
+                  View Step-by-Step Setup Guide →
+                </button>
               </div>
 
               {error && <p className="text-red-400 text-sm">{error}</p>}
@@ -169,6 +178,14 @@ export default function EditUnitModal({ unit, onSave, onDelete, onClose }) {
           </div>
         )}
       </div>
+
+      {showSetupGuide && (
+        <TraccarSetupModal
+          deviceId={unitNumber.trim() || unit.unit_number}
+          serverUrl={serverUrl}
+          onClose={() => setShowSetupGuide(false)}
+        />
+      )}
     </div>
   );
 }
