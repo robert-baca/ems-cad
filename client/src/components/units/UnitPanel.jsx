@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { STATUS_COLORS, STATUS_LABELS } from '../../data/mockData';
 import EditUnitModal from './EditUnitModal';
 import AddUnitModal from './AddUnitModal';
@@ -23,6 +23,7 @@ const TYPE_BADGE = { ALS: 'bg-red-900/50 text-red-300', BLS: 'bg-blue-900/50 tex
 const ON_CALL_STATUSES = new Set(['dispatched', 'en_route', 'on_scene', 'patient_contact']);
 
 function UnitCard({ unit, activeCall, isSelected, onClick, onHistory, onEdit, onToggleOos, onFlyTo, onClearGps, onToggleTracking, readOnly }) {
+  const trackPending = useRef(false);
   const color = STATUS_COLORS[unit.status] || '#9ca3af';
   const profile = unit.profile;
   const hasGps = unit.last_lat && unit.last_lng;
@@ -111,7 +112,13 @@ function UnitCard({ unit, activeCall, isSelected, onClick, onHistory, onEdit, on
           )}
           {!readOnly && !activeCall && (
             <button
-              onClick={(e) => { e.stopPropagation(); onToggleTracking(unit); }}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (trackPending.current) return;
+                trackPending.current = true;
+                setTimeout(() => { trackPending.current = false; }, 2000);
+                onToggleTracking(unit);
+              }}
               className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-colors ${
                 unit.tracking_active
                   ? 'bg-green-800 hover:bg-green-700 text-green-300'
