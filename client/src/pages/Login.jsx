@@ -219,8 +219,15 @@ function CrewLogin({ onBack, onSuccess }) {
 
 // ── Main login page ───────────────────────────────────────────────
 export default function Login() {
-  const { login } = useAuth();
+  const { user, login } = useAuth();
   const navigate  = useNavigate();
+
+  // Auto-redirect if already logged in
+  useEffect(() => {
+    if (!user) return;
+    if (user.role === 'crew')       navigate('/crew',       { replace: true });
+    else if (user.role === 'dispatcher') navigate('/dispatcher', { replace: true });
+  }, [user]);
 
   const [role,     setRole]    = useState(null);
   const [username, setUsername] = useState('');

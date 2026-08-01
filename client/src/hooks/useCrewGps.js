@@ -45,6 +45,11 @@ export function useCrewGps({ token, unit, enabled = true }) {
     };
 
     if (isNative()) {
+      // Android 13+ requires notification permission for foreground service notification
+      if ('Notification' in window && Notification.permission === 'default') {
+        Notification.requestPermission().catch(() => {});
+      }
+
       const bgGeo = getBgGeo();
       bgGeo.addWatcher(
         {
