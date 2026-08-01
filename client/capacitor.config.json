@@ -1,0 +1,13 @@
+{
+  "appId": "com.sfotems.crew",
+  "appName": "EMS Crew",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  },
+  "plugins": {
+    "Geolocation": {
+      "permissions": ["location", "coarseLocation"]
+    }
+  }
+}
