@@ -3,7 +3,8 @@
   "appName": "EMS Crew",
   "webDir": "dist",
   "server": {
-    "androidScheme": "https"
+    "url": "https://cad.sfotems.com",
+    "cleartext": false
   },
   "plugins": {
     "Geolocation": {

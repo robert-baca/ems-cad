@@ -1,13 +1,21 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { registerPlugin } from '@capacitor/core';
 
-const STALE_MS = 3 * 60 * 1000; // web-only: browser GPS fires only when Traccar hasn't pinged in 3 min
+const STALE_MS = 3 * 60 * 1000;
 
 const isNative = () => !!(window.Capacitor?.isNativePlatform?.());
 
+let _bgGeo = null;
+function getBgGeo() {
+  if (!_bgGeo) _bgGeo = registerPlugin('BackgroundGeolocation');
+  return _bgGeo;
+}
+
 export function useCrewGps({ token, unit, enabled = true }) {
-  const unitRef    = useRef(unit);
-  const wakeLockRef = useRef(null);
-  const watchRef   = useRef(null);
+  const unitRef        = useRef(unit);
+  const wakeLockRef    = useRef(null);
+  const watchIdRef     = useRef(null);
+  const [bgPermNeeded, setBgPermNeeded] = useState(false);
 
   unitRef.current = unit;
 
@@ -37,32 +45,34 @@ export function useCrewGps({ token, unit, enabled = true }) {
     };
 
     if (isNative()) {
-      // ── Native Android app: Capacitor GPS, always send, no Traccar needed ──
-      let watchId = null;
-      (async () => {
-        try {
-          const { Geolocation } = await import('@capacitor/geolocation');
-          await Geolocation.requestPermissions({ permissions: ['location', 'coarseLocation'] });
-          watchId = await Geolocation.watchPosition(
-            { enableHighAccuracy: true, timeout: 15000 },
-            (pos, err) => {
-              if (pos) postGps(pos.coords.latitude, pos.coords.longitude);
-            }
-          );
-          watchRef.current = watchId;
-        } catch (e) {
-          console.error('[gps] Capacitor geolocation error:', e);
+      const bgGeo = getBgGeo();
+      bgGeo.addWatcher(
+        {
+          backgroundMessage:  'EMS Crew GPS is active.',
+          backgroundTitle:    'EMS Crew Tracking',
+          requestPermissions: true,
+          stale:              false,
+          distanceFilter:     10,
+        },
+        (location, error) => {
+          if (error) {
+            if (error.code === 'NOT_AUTHORIZED') setBgPermNeeded(true);
+            console.error('[gps] background-geolocation error:', error.code, error.message);
+            return;
+          }
+          setBgPermNeeded(false);
+          if (location) postGps(location.latitude, location.longitude);
         }
-      })();
+      ).then(id => { watchIdRef.current = id; })
+        .catch(e => console.error('[gps] addWatcher failed:', e));
+
       return () => {
-        if (watchRef.current !== null) {
-          import('@capacitor/geolocation').then(({ Geolocation }) => {
-            Geolocation.clearWatch({ id: watchRef.current });
-          }).catch(() => {});
+        if (watchIdRef.current) {
+          bgGeo.removeWatcher({ id: watchIdRef.current }).catch(() => {});
+          watchIdRef.current = null;
         }
       };
     } else {
-      // ── Web browser: fallback GPS, only fires when Traccar hasn't pinged in 3 min ──
       if (!navigator.geolocation) return;
 
       if ('wakeLock' in navigator) {
@@ -78,16 +88,22 @@ export function useCrewGps({ token, unit, enabled = true }) {
         postGps(lat, lng);
       };
 
-      watchRef.current = navigator.geolocation.watchPosition(
+      watchIdRef.current = navigator.geolocation.watchPosition(
         (pos) => postIfStale(pos.coords.latitude, pos.coords.longitude),
         null,
         { enableHighAccuracy: true, maximumAge: 10000 }
       );
 
       return () => {
-        if (watchRef.current !== null) navigator.geolocation.clearWatch(watchRef.current);
+        if (watchIdRef.current !== null) navigator.geolocation.clearWatch(watchIdRef.current);
         wakeLockRef.current?.release().catch(() => {});
       };
     }
   }, [enabled, token]);
+
+  const openGpsSettings = () => {
+    if (isNative()) getBgGeo().openSettings().catch(() => {});
+  };
+
+  return { bgPermNeeded, openGpsSettings };
 }

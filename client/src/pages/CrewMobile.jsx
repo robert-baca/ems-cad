@@ -218,8 +218,7 @@ export default function CrewMobile() {
     setBackupRequested(false);
   }, [myActiveCall?.id]);
 
-  // Browser GPS fallback (only fires when Traccar hasn't pinged in > 3 min)
-  useCrewGps({ token: user?.token, unit: myUnit, enabled: !!myUnit });
+  const { bgPermNeeded, openGpsSettings } = useCrewGps({ token: user?.token, unit: myUnit, enabled: !!myUnit });
 
   useSocket({
     'unit:gps_update':     handleGpsUpdate,
@@ -294,6 +293,24 @@ export default function CrewMobile() {
 
   return (
     <div className="min-h-screen bg-gray-900 text-white flex flex-col max-w-md mx-auto">
+
+      {/* Background GPS permission banner */}
+      {bgPermNeeded && (
+        <div className="bg-amber-900/80 border-b border-amber-600 px-4 py-3 flex items-center gap-3">
+          <span className="text-amber-400 text-xl flex-shrink-0">⚠️</span>
+          <div className="flex-1 min-w-0">
+            <div className="text-amber-200 font-semibold text-sm">GPS needs background access</div>
+            <div className="text-amber-300/80 text-xs mt-0.5">Set location to "Allow all the time" so tracking works with screen off.</div>
+          </div>
+          <button
+            onClick={openGpsSettings}
+            className="flex-shrink-0 bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs px-3 py-1.5 rounded-lg transition-colors"
+          >
+            Fix Now
+          </button>
+        </div>
+      )}
+
       {/* Header */}
       <div className="bg-gray-800 border-b border-gray-700 px-4 py-3 flex-shrink-0">
         <div className="flex items-center justify-between mb-3">
