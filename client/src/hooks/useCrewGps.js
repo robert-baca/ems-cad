@@ -51,8 +51,8 @@ export function useCrewGps({ token, unit, enabled = true }) {
           backgroundMessage:  'EMS Crew GPS is active.',
           backgroundTitle:    'EMS Crew Tracking',
           requestPermissions: true,
-          stale:              false,
-          distanceFilter:     10,
+          stale:              true,
+          distanceFilter:     0,
         },
         (location, error) => {
           if (error) {
