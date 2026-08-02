@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { apiBase } from '../lib/native';
 
 const ROLES = [
   { key: 'dispatcher', label: 'Dispatcher',    icon: '🎛️', description: 'Command & dispatch' },
@@ -23,7 +24,7 @@ function CrewLogin({ onBack, onSuccess }) {
   const [loading,    setLoading]   = useState(false);
 
   useEffect(() => {
-    fetch('/api/shift/units').then(r => r.json()).then(units => {
+    fetch(`${apiBase()}/shift/units`).then(r => r.json()).then(units => {
       setShiftUnits(Array.isArray(units) ? units : []);
     }).catch(() => setShiftUnits([]));
   }, []);
@@ -37,7 +38,7 @@ function CrewLogin({ onBack, onSuccess }) {
   const confirmUnit = async () => {
     setLoading(true); setError('');
     try {
-      const res  = await fetch('/api/crew/select-unit', {
+      const res  = await fetch(`${apiBase()}/crew/select-unit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ unit_id: selected.id })
@@ -54,7 +55,7 @@ function CrewLogin({ onBack, onSuccess }) {
     if (!newNumber.trim()) { setError('Enter a unit number.'); return; }
     setLoading(true); setError('');
     try {
-      const res  = await fetch('/api/crew/add-unit', {
+      const res  = await fetch(`${apiBase()}/crew/add-unit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ unit_number: newNumber.trim(), unit_type: newType })
@@ -248,7 +249,7 @@ export default function Login() {
     if (!username || !password) { setError('Enter your username and password.'); return; }
     setLoading(true); setError('');
     try {
-      const res  = await fetch('/api/auth/login', {
+      const res  = await fetch(`${apiBase()}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password, role: 'dispatcher' })
@@ -266,7 +267,7 @@ export default function Login() {
     if (!pin) { setError('Enter PIN.'); return; }
     setLoading(true); setError('');
     try {
-      const res  = await fetch('/api/display/auth', {
+      const res  = await fetch(`${apiBase()}/display/auth`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ pin })

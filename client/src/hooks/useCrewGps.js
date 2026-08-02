@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { registerPlugin } from '@capacitor/core';
+import { apiBase } from '../lib/native';
 
 const STALE_MS = 3 * 60 * 1000;
 
@@ -36,7 +37,7 @@ export function useCrewGps({ token, unit, enabled = true }) {
 
     const postGps = async (lat, lng) => {
       try {
-        await fetch('/api/crew/gps', {
+        await fetch(`${apiBase()}/crew/gps`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
           body: JSON.stringify({ lat, lng })

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
+import { sockUrl } from '../lib/native';
 
 export function useSocket(handlers = {}) {
   const socketRef = useRef(null);
@@ -12,7 +13,7 @@ export function useSocket(handlers = {}) {
     const u = stored ? JSON.parse(stored) : null;
     const token = u?.token || null;
 
-    socketRef.current = io('', {
+    socketRef.current = io(sockUrl(), {
       auth: { token },
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000
