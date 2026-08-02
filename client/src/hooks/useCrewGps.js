@@ -46,38 +46,71 @@ export function useCrewGps({ token, unit, enabled = true }) {
     };
 
     if (isNative()) {
-      // Android 13+ requires POST_NOTIFICATIONS permission for foreground service
-      (async () => {
+      let cancelled = false;
+
+      const startGps = async () => {
+        // Request notification permission (Android 13+)
         try {
           const { LocalNotifications } = await import('@capacitor/local-notifications');
           await LocalNotifications.requestPermissions();
         } catch {}
-      })();
 
-      const bgGeo = getBgGeo();
-      bgGeo.addWatcher(
-        {
+        // Retry addWatcher — service binding is async and may not be ready immediately
+        const bgGeo = getBgGeo();
+        const opts = {
           backgroundMessage:  'EMS Crew GPS is active.',
           backgroundTitle:    'EMS Crew Tracking',
           requestPermissions: true,
           stale:              true,
           distanceFilter:     0,
-        },
-        (location, error) => {
+        };
+        const cb = (location, error) => {
           if (error) {
             if (error.code === 'NOT_AUTHORIZED') setBgPermNeeded(true);
-            console.error('[gps] background-geolocation error:', error.code, error.message);
             return;
           }
           setBgPermNeeded(false);
           if (location) postGps(location.latitude, location.longitude);
+        };
+
+        for (let attempt = 0; attempt < 8; attempt++) {
+          if (cancelled) return;
+          try {
+            const id = await bgGeo.addWatcher(opts, cb);
+            watchIdRef.current = id;
+            return; // success
+          } catch (e) {
+            if (attempt < 7) await new Promise(r => setTimeout(r, 500));
+          }
         }
-      ).then(id => { watchIdRef.current = id; })
-        .catch(e => console.error('[gps] addWatcher failed:', e));
+
+        // Background geolocation failed — fall back to foreground-only geolocation
+        try {
+          const { Geolocation } = await import('@capacitor/geolocation');
+          await Geolocation.requestPermissions({ permissions: ['location'] });
+          const id = await Geolocation.watchPosition(
+            { enableHighAccuracy: true },
+            (pos) => { if (pos) postGps(pos.coords.latitude, pos.coords.longitude); }
+          );
+          watchIdRef.current = `geo:${id}`;
+        } catch (e) {
+          console.error('[gps] all GPS methods failed:', e);
+        }
+      };
+
+      startGps();
 
       return () => {
-        if (watchIdRef.current) {
-          bgGeo.removeWatcher({ id: watchIdRef.current }).catch(() => {});
+        cancelled = true;
+        const id = watchIdRef.current;
+        if (id) {
+          if (typeof id === 'string' && id.startsWith('geo:')) {
+            import('@capacitor/geolocation').then(({ Geolocation }) => {
+              Geolocation.clearWatch({ id: id.slice(4) }).catch(() => {});
+            }).catch(() => {});
+          } else {
+            getBgGeo().removeWatcher({ id }).catch(() => {});
+          }
           watchIdRef.current = null;
         }
       };
