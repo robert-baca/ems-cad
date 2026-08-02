@@ -14,6 +14,15 @@ const scryptAsync = promisify(scrypt);
 const SUPABASE_URL        = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 
+let _supabase = null;
+function getSupabase() {
+  if (!_supabase && SUPABASE_URL && SUPABASE_SERVICE_KEY) {
+    const { createClient } = require('@supabase/supabase-js');
+    _supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+  }
+  return _supabase;
+}
+
 async function verifyPersonnelPin(plain, stored) {
   try {
     const [salt, hash] = stored.split(':');
@@ -390,18 +399,20 @@ app.post('/api/auth/crew-login', async (req, res) => {
     const cleanUsername = username.trim().toLowerCase();
     const cleanPin      = String(pin).replace(/\D/g, '');
 
-    const resp = await fetch(
-      `${SUPABASE_URL}/rest/v1/personnel?username=eq.${encodeURIComponent(cleanUsername)}&select=id,name,username,pin_hash,failed_attempts,locked_until`,
-      { headers: { apikey: SUPABASE_SERVICE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_KEY}` } }
-    );
-    const rows   = await resp.json();
-    console.log('[crew-login] supabase status:', resp.status, 'rows:', JSON.stringify(rows).slice(0, 200));
-    const person = rows[0];
+    const supabase = getSupabase();
+    const { data: person, error: sbErr } = await supabase
+      .from('personnel')
+      .select('id, name, username, pin_hash, failed_attempts, locked_until')
+      .eq('username', cleanUsername)
+      .maybeSingle();
 
-    if (!person || !person.pin_hash) {
-      console.log('[crew-login] no person or no pin_hash for username:', cleanUsername);
-      return res.status(401).json({ error: 'Incorrect username or PIN' });
+    if (sbErr) {
+      console.error('[crew-login] supabase error:', sbErr.message);
+      return res.status(500).json({ error: 'Server error' });
     }
+
+    if (!person || !person.pin_hash)
+      return res.status(401).json({ error: 'Incorrect username or PIN' });
 
     if (person.locked_until && new Date(person.locked_until) > new Date()) {
       const mins = Math.ceil((new Date(person.locked_until) - Date.now()) / 60000);
@@ -409,18 +420,9 @@ app.post('/api/auth/crew-login', async (req, res) => {
     }
 
     const valid = await verifyPersonnelPin(cleanPin, person.pin_hash);
-    console.log('[crew-login] pin valid:', valid, 'pin_hash prefix:', person.pin_hash?.slice(0, 20));
 
     const patchPersonnel = (fields) =>
-      fetch(`${SUPABASE_URL}/rest/v1/personnel?id=eq.${person.id}`, {
-        method: 'PATCH',
-        headers: {
-          apikey: SUPABASE_SERVICE_KEY,
-          Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(fields),
-      }).catch(console.error);
+      supabase.from('personnel').update(fields).eq('id', person.id);
 
     if (!valid) {
       await patchPersonnel({ failed_attempts: (person.failed_attempts || 0) + 1 });
