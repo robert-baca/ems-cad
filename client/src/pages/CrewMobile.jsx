@@ -223,7 +223,7 @@ export default function CrewMobile() {
     setBackupRequested(false);
   }, [myActiveCall?.id]);
 
-  const { bgPermNeeded, openGpsSettings } = useCrewGps({ token: user?.token, unit: myUnit, enabled: !!myUnit });
+  const { bgPermNeeded, openGpsSettings, gpsStatus } = useCrewGps({ token: user?.token, unit: myUnit, enabled: !!myUnit });
 
   useSocket({
     'unit:gps_update':     handleGpsUpdate,

@@ -17,6 +17,7 @@ export function useCrewGps({ token, unit, enabled = true }) {
   const wakeLockRef    = useRef(null);
   const watchIdRef     = useRef(null);
   const [bgPermNeeded, setBgPermNeeded] = useState(false);
+  const [gpsStatus,    setGpsStatus]    = useState('idle');
 
   unitRef.current = unit;
 
@@ -36,13 +37,19 @@ export function useCrewGps({ token, unit, enabled = true }) {
     if (!enabled || !token) return;
 
     const postGps = async (lat, lng) => {
+      setGpsStatus(`sending ${lat.toFixed(4)},${lng.toFixed(4)}`);
       try {
-        await fetch(`${apiBase()}/crew/gps`, {
+        const res = await fetch(`${apiBase()}/crew/gps`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
           body: JSON.stringify({ lat, lng })
         });
-      } catch {}
+        const data = await res.json().catch(() => ({}));
+        setGpsStatus(`${res.ok ? 'ok' : `err ${res.status}`} — ${lat.toFixed(4)},${lng.toFixed(4)}`);
+        if (!res.ok) console.warn('[gps] server rejected:', res.status, data);
+      } catch (e) {
+        setGpsStatus(`fetch failed: ${e.message}`);
+      }
     };
 
     if (isNative()) {
@@ -73,18 +80,22 @@ export function useCrewGps({ token, unit, enabled = true }) {
           if (location) postGps(location.latitude, location.longitude);
         };
 
+        setGpsStatus('starting bg-geo...');
         for (let attempt = 0; attempt < 8; attempt++) {
           if (cancelled) return;
           try {
             const id = await bgGeo.addWatcher(opts, cb);
             watchIdRef.current = id;
+            setGpsStatus('bg-geo active');
             return; // success
           } catch (e) {
+            setGpsStatus(`bg-geo attempt ${attempt + 1}/8: ${e.message}`);
             if (attempt < 7) await new Promise(r => setTimeout(r, 500));
           }
         }
 
         // Background geolocation failed — fall back to foreground-only geolocation
+        setGpsStatus('falling back to foreground GPS...');
         try {
           const { Geolocation } = await import('@capacitor/geolocation');
           await Geolocation.requestPermissions({ permissions: ['location'] });
@@ -93,8 +104,9 @@ export function useCrewGps({ token, unit, enabled = true }) {
             (pos) => { if (pos) postGps(pos.coords.latitude, pos.coords.longitude); }
           );
           watchIdRef.current = `geo:${id}`;
+          setGpsStatus('foreground GPS active — waiting for fix...');
         } catch (e) {
-          console.error('[gps] all GPS methods failed:', e);
+          setGpsStatus(`all GPS failed: ${e.message}`);
         }
       };
 
@@ -147,5 +159,5 @@ export function useCrewGps({ token, unit, enabled = true }) {
     if (isNative()) getBgGeo().openSettings().catch(() => {});
   };
 
-  return { bgPermNeeded, openGpsSettings };
+  return { bgPermNeeded, openGpsSettings, gpsStatus };
 }
