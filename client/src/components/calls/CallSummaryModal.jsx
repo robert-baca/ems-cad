@@ -1,4 +1,5 @@
 import { STATUS_COLORS, STATUS_LABELS } from '../../data/mockData';
+import GpsTrackTab from './GpsTrackTab';
 
 const PRIORITY_LABELS = { 1: 'P1 — High Acuity', 2: 'P2 — Medium Acuity', 3: 'P3 — Low Acuity' };
 const PRIORITY_COLORS = { 1: 'text-red-400', 2: 'text-orange-400', 3: 'text-blue-400' };
@@ -142,6 +143,12 @@ export default function CallSummaryModal({ call, units, onClose }) {
               {totalDuration && <StatBox label="Total duration" value={totalDuration} />}
             </div>
           )}
+
+          {/* GPS Track */}
+          <div className="bg-gray-700 rounded-xl p-3">
+            <div className="text-gray-400 text-xs uppercase tracking-wider mb-3">GPS Track</div>
+            <GpsTrackTab call={call} />
+          </div>
 
           {/* Call info */}
           <div className="bg-gray-700 rounded-xl p-3 space-y-1.5">
