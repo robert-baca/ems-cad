@@ -395,10 +395,13 @@ app.post('/api/auth/crew-login', async (req, res) => {
       { headers: { apikey: SUPABASE_SERVICE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_KEY}` } }
     );
     const rows   = await resp.json();
+    console.log('[crew-login] supabase status:', resp.status, 'rows:', JSON.stringify(rows).slice(0, 200));
     const person = rows[0];
 
-    if (!person || !person.pin_hash)
+    if (!person || !person.pin_hash) {
+      console.log('[crew-login] no person or no pin_hash for username:', cleanUsername);
       return res.status(401).json({ error: 'Incorrect username or PIN' });
+    }
 
     if (person.locked_until && new Date(person.locked_until) > new Date()) {
       const mins = Math.ceil((new Date(person.locked_until) - Date.now()) / 60000);
@@ -406,6 +409,7 @@ app.post('/api/auth/crew-login', async (req, res) => {
     }
 
     const valid = await verifyPersonnelPin(cleanPin, person.pin_hash);
+    console.log('[crew-login] pin valid:', valid, 'pin_hash prefix:', person.pin_hash?.slice(0, 20));
 
     const patchPersonnel = (fields) =>
       fetch(`${SUPABASE_URL}/rest/v1/personnel?id=eq.${person.id}`, {
