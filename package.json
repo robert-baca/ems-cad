@@ -1,6 +1,9 @@
 {
   "name": "cad-system",
   "version": "1.0.0",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "build": "cd client && npm install --include=dev && npm run build",
     "start": "node server/src/index.js",
