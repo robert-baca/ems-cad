@@ -17,8 +17,13 @@ const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 let _supabase = null;
 function getSupabase() {
   if (!_supabase && SUPABASE_URL && SUPABASE_SERVICE_KEY) {
-    const { createClient } = require('@supabase/supabase-js');
-    _supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+    try {
+      const { createClient } = require('@supabase/supabase-js');
+      _supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, { auth: { persistSession: false } });
+      console.log('[supabase] client created ok');
+    } catch (e) {
+      console.error('[supabase] createClient failed:', e.message);
+    }
   }
   return _supabase;
 }
@@ -400,11 +405,15 @@ app.post('/api/auth/crew-login', async (req, res) => {
     const cleanPin      = String(pin).replace(/\D/g, '');
 
     const supabase = getSupabase();
+    if (!supabase) return res.status(503).json({ error: 'Crew login not configured on server' });
+
     const { data: person, error: sbErr } = await supabase
       .from('personnel')
       .select('id, name, username, pin_hash, failed_attempts, locked_until')
       .eq('username', cleanUsername)
       .maybeSingle();
+
+    console.log('[crew-login] sb query result — person:', person ? person.username : null, 'err:', sbErr?.message);
 
     if (sbErr) {
       console.error('[crew-login] supabase error:', sbErr.message);
