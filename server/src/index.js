@@ -6,7 +6,21 @@ const { Server } = require('socket.io');
 const jwt        = require('jsonwebtoken');
 const bcrypt     = require('bcryptjs');
 const { Pool }   = require('pg');
+const { scrypt, timingSafeEqual } = require('crypto');
+const { promisify } = require('util');
 require('dotenv').config();
+
+const scryptAsync = promisify(scrypt);
+const SUPABASE_URL        = process.env.SUPABASE_URL;
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
+
+async function verifyPersonnelPin(plain, stored) {
+  try {
+    const [salt, hash] = stored.split(':');
+    const buf = await scryptAsync(String(plain), salt, 64);
+    return timingSafeEqual(buf, Buffer.from(hash, 'hex'));
+  } catch { return false; }
+}
 
 // CORS_ORIGIN can be set to a comma-separated allowlist; defaults to '*' (current behavior)
 const CORS_ORIGIN = process.env.CORS_ORIGIN
@@ -362,6 +376,66 @@ app.post('/api/auth/login', async (req, res) => {
   }
 
   res.status(400).json({ error: 'Unknown role' });
+});
+
+// ── Crew personal login (EMS credentials) ─────────────────────────
+app.post('/api/auth/crew-login', async (req, res) => {
+  const { username, pin } = req.body;
+  if (!username || !pin) return res.status(400).json({ error: 'Username and PIN required' });
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
+    return res.status(503).json({ error: 'Crew login not configured on server' });
+  }
+
+  try {
+    const cleanUsername = username.trim().toLowerCase();
+    const cleanPin      = String(pin).replace(/\D/g, '');
+
+    const resp = await fetch(
+      `${SUPABASE_URL}/rest/v1/personnel?username=eq.${encodeURIComponent(cleanUsername)}&select=id,name,username,pin_hash,failed_attempts,locked_until`,
+      { headers: { apikey: SUPABASE_SERVICE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_KEY}` } }
+    );
+    const rows   = await resp.json();
+    const person = rows[0];
+
+    if (!person || !person.pin_hash)
+      return res.status(401).json({ error: 'Incorrect username or PIN' });
+
+    if (person.locked_until && new Date(person.locked_until) > new Date()) {
+      const mins = Math.ceil((new Date(person.locked_until) - Date.now()) / 60000);
+      return res.status(401).json({ error: `Account locked. Try again in ${mins} minute${mins !== 1 ? 's' : ''}.` });
+    }
+
+    const valid = await verifyPersonnelPin(cleanPin, person.pin_hash);
+
+    const patchPersonnel = (fields) =>
+      fetch(`${SUPABASE_URL}/rest/v1/personnel?id=eq.${person.id}`, {
+        method: 'PATCH',
+        headers: {
+          apikey: SUPABASE_SERVICE_KEY,
+          Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(fields),
+      }).catch(console.error);
+
+    if (!valid) {
+      await patchPersonnel({ failed_attempts: (person.failed_attempts || 0) + 1 });
+      return res.status(401).json({ error: 'Incorrect username or PIN' });
+    }
+
+    await patchPersonnel({ failed_attempts: 0, locked_until: null });
+
+    const token = signToken({
+      personnel_id: person.id,
+      name:         person.name,
+      username:     person.username,
+      role:         'crew',
+    });
+    return res.json({ token, user: { role: 'crew', name: person.name, username: person.username } });
+  } catch (err) {
+    console.error('[crew-login]', err.message);
+    return res.status(500).json({ error: 'Server error' });
+  }
 });
 
 const VALID_UNIT_STATUSES = new Set([
@@ -830,8 +904,21 @@ app.post('/api/crew/select-unit', (req, res) => {
   const { unit_id } = req.body;
   const unit = units.find(u => u.id === unit_id);
   if (!unit) return res.status(404).json({ error: 'Unit not found' });
-  const token = signToken({ unit_id: unit.id, unit_number: unit.unit_number, role: 'crew' });
-  res.json({ token, user: { role: 'crew', unit_id: unit.id, unit_number: unit.unit_number, profile: unit.profile } });
+
+  // Carry personnel identity forward from the pre-auth crew-login token (if present)
+  let personnel = {};
+  const auth = req.headers.authorization;
+  if (auth?.startsWith('Bearer ')) {
+    try {
+      const decoded = jwt.verify(auth.slice(7), JWT_SECRET);
+      if (decoded.personnel_id) {
+        personnel = { personnel_id: decoded.personnel_id, name: decoded.name, username: decoded.username };
+      }
+    } catch { /* no personnel info */ }
+  }
+
+  const token = signToken({ ...personnel, unit_id: unit.id, unit_number: unit.unit_number, role: 'crew' });
+  res.json({ token, user: { role: 'crew', ...personnel, unit_id: unit.id, unit_number: unit.unit_number, profile: unit.profile } });
 });
 
 // ── Shift ─────────────────────────────────────────────────────────
@@ -867,8 +954,20 @@ app.post('/api/crew/add-unit', async (req, res) => {
     io.to('dispatchers').emit('unit:updated', { ...unit, password_hash: undefined });
   }
 
-  const token = signToken({ unit_id: unit.id, unit_number: unit.unit_number, role: 'crew' });
-  res.json({ token, user: { role: 'crew', unit_id: unit.id, unit_number: unit.unit_number, profile: unit.profile } });
+  // Carry personnel identity forward from the pre-auth crew-login token (if present)
+  let personnel = {};
+  const auth = req.headers.authorization;
+  if (auth?.startsWith('Bearer ')) {
+    try {
+      const decoded = jwt.verify(auth.slice(7), JWT_SECRET);
+      if (decoded.personnel_id) {
+        personnel = { personnel_id: decoded.personnel_id, name: decoded.name, username: decoded.username };
+      }
+    } catch { /* no personnel info */ }
+  }
+
+  const token = signToken({ ...personnel, unit_id: unit.id, unit_number: unit.unit_number, role: 'crew' });
+  res.json({ token, user: { role: 'crew', ...personnel, unit_id: unit.id, unit_number: unit.unit_number, profile: unit.profile } });
 });
 
 app.get('/api/shift/current', verifyToken, (req, res) => {

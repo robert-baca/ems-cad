@@ -14,20 +14,44 @@ const TYPE_COLORS = { ALS: 'text-red-400', BLS: 'text-blue-400', Cart: 'text-gre
 
 // ── Crew login sub-flow ───────────────────────────────────────────
 function CrewLogin({ onBack, onSuccess }) {
-  // step: pick → confirm | add
-  const [step,       setStep]      = useState('pick');
-  const [shiftUnits, setShiftUnits] = useState([]);
-  const [selected,   setSelected]  = useState(null);
-  const [newNumber,  setNewNumber] = useState('');
-  const [newType,    setNewType]   = useState('ALS');
-  const [error,      setError]     = useState('');
-  const [loading,    setLoading]   = useState(false);
+  // step: creds → pick → confirm | add
+  const [step,         setStep]        = useState('creds');
+  const [crewUsername, setCrewUsername] = useState('');
+  const [crewPin,      setCrewPin]     = useState('');
+  const [preAuthToken, setPreAuthToken] = useState('');
+  const [crewName,     setCrewName]    = useState('');
+  const [shiftUnits,   setShiftUnits]  = useState([]);
+  const [selected,     setSelected]    = useState(null);
+  const [newNumber,    setNewNumber]   = useState('');
+  const [newType,      setNewType]     = useState('ALS');
+  const [error,        setError]       = useState('');
+  const [loading,      setLoading]     = useState(false);
 
-  useEffect(() => {
+  const loadShiftUnits = () => {
     fetch(`${apiBase()}/shift/units`).then(r => r.json()).then(units => {
       setShiftUnits(Array.isArray(units) ? units : []);
     }).catch(() => setShiftUnits([]));
-  }, []);
+  };
+
+  const handleCredsSubmit = async (e) => {
+    e.preventDefault();
+    if (!crewUsername.trim() || !crewPin.trim()) { setError('Enter your username and PIN.'); return; }
+    setLoading(true); setError('');
+    try {
+      const res  = await fetch(`${apiBase()}/auth/crew-login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: crewUsername.trim(), pin: crewPin.trim() })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Login failed');
+      setPreAuthToken(data.token);
+      setCrewName(data.user.name || crewUsername);
+      loadShiftUnits();
+      setStep('pick');
+    } catch (err) { setError(err.message); setCrewPin(''); }
+    finally { setLoading(false); }
+  };
 
   const pickUnit = (unit) => {
     setSelected(unit);
@@ -40,7 +64,10 @@ function CrewLogin({ onBack, onSuccess }) {
     try {
       const res  = await fetch(`${apiBase()}/crew/select-unit`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(preAuthToken ? { Authorization: `Bearer ${preAuthToken}` } : {}),
+        },
         body: JSON.stringify({ unit_id: selected.id })
       });
       const data = await res.json();
@@ -57,7 +84,10 @@ function CrewLogin({ onBack, onSuccess }) {
     try {
       const res  = await fetch(`${apiBase()}/crew/add-unit`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(preAuthToken ? { Authorization: `Bearer ${preAuthToken}` } : {}),
+        },
         body: JSON.stringify({ unit_number: newNumber.trim(), unit_type: newType })
       });
       const data = await res.json();
@@ -66,6 +96,48 @@ function CrewLogin({ onBack, onSuccess }) {
     } catch (err) { setError(err.message); }
     finally { setLoading(false); }
   };
+
+  // ── Credentials form ──
+  if (step === 'creds') {
+    return (
+      <form onSubmit={handleCredsSubmit} className="bg-gray-800 rounded-2xl border border-gray-700 overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-700 flex items-center gap-3">
+          <span className="text-2xl">🚑</span>
+          <div>
+            <div className="text-white font-bold">Crew Sign In</div>
+            <div className="text-gray-500 text-xs">Use your EMS credentials username & PIN</div>
+          </div>
+        </div>
+        <div className="p-5 space-y-4">
+          <div>
+            <label className="block text-gray-400 text-sm mb-1">Username</label>
+            <input
+              type="text" value={crewUsername} onChange={e => setCrewUsername(e.target.value)}
+              placeholder="your.name" autoFocus autoCapitalize="none" autoCorrect="off"
+              className="w-full bg-gray-700 text-white rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-green-500 placeholder-gray-500"
+            />
+          </div>
+          <div>
+            <label className="block text-gray-400 text-sm mb-1">PIN</label>
+            <input
+              type="password" inputMode="numeric" value={crewPin} onChange={e => setCrewPin(e.target.value)}
+              placeholder="••••••" maxLength={8}
+              className="w-full bg-gray-700 text-white rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-green-500 placeholder-gray-500 text-center text-xl tracking-widest"
+            />
+          </div>
+          {error && <p className="text-red-400 text-sm">{error}</p>}
+          <button type="submit" disabled={loading}
+            className="w-full py-3.5 bg-green-700 hover:bg-green-600 disabled:bg-green-900 text-white font-bold text-base rounded-xl transition-colors">
+            {loading ? 'Signing in…' : 'Continue'}
+          </button>
+          <button type="button" onClick={onBack}
+            className="w-full py-2 text-gray-500 hover:text-gray-300 text-sm transition-colors">
+            ← Back
+          </button>
+        </div>
+      </form>
+    );
+  }
 
   // ── Unit picker ──
   if (step === 'pick') {
@@ -76,6 +148,7 @@ function CrewLogin({ onBack, onSuccess }) {
           <div>
             <div className="text-white font-bold">Select Your Unit</div>
             <div className="text-gray-500 text-xs">
+              {crewName ? `Signed in as ${crewName} · ` : ''}
               {shiftUnits.length > 0 ? "Tap the unit you've been assigned" : 'No units on shift yet'}
             </div>
           </div>
@@ -112,7 +185,7 @@ function CrewLogin({ onBack, onSuccess }) {
             className="w-full py-2.5 rounded-xl bg-gray-700 hover:bg-gray-600 border border-gray-600 text-gray-300 hover:text-white text-sm font-medium transition-colors">
             + My unit isn't listed
           </button>
-          <button onClick={onBack}
+          <button onClick={() => { setStep('creds'); setError(''); setCrewPin(''); }}
             className="w-full py-2 text-gray-500 hover:text-gray-300 text-sm transition-colors">
             ← Back
           </button>
@@ -209,9 +282,9 @@ function CrewLogin({ onBack, onSuccess }) {
           className="w-full py-3 bg-green-700 hover:bg-green-600 disabled:bg-green-900 text-white font-semibold rounded-lg transition-colors">
           {loading ? 'Adding…' : 'Add Unit & Sign In'}
         </button>
-        <button type="button" onClick={onBack}
+        <button type="button" onClick={() => { setStep('pick'); setError(''); }}
           className="w-full py-2 text-gray-500 hover:text-gray-300 text-sm transition-colors">
-          ← Back
+          ← Back to units
         </button>
       </form>
     );
