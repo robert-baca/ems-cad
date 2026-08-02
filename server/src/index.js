@@ -20,7 +20,6 @@ function getSupabase() {
     try {
       const { createClient } = require('@supabase/supabase-js');
       _supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, { auth: { persistSession: false } });
-      console.log('[supabase] client created ok');
     } catch (e) {
       console.error('[supabase] createClient failed:', e.message);
     }
@@ -412,8 +411,6 @@ app.post('/api/auth/crew-login', async (req, res) => {
       .select('id, name, username, pin_hash, failed_attempts, locked_until')
       .eq('username', cleanUsername)
       .maybeSingle();
-
-    console.log('[crew-login] sb query result — person:', person ? person.username : null, 'err:', sbErr?.message);
 
     if (sbErr) {
       console.error('[crew-login] supabase error:', sbErr.message);
