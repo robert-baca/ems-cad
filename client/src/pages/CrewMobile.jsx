@@ -11,6 +11,8 @@ import StatusButtons from '../components/crew/StatusButtons';
 import CrewCaseHistory from '../components/crew/CrewCaseHistory';
 import CallSummaryModal from '../components/calls/CallSummaryModal';
 import NativeSetupModal from '../components/crew/NativeSetupModal';
+import BeaconMode from '../components/crew/BeaconMode';
+import { toggleUnitBeacon } from '../services/api';
 import { STATUS_COLORS, STATUS_LABELS } from '../data/mockData';
 
 const NON_TRANSPORT_DISPOSITIONS = [
@@ -173,6 +175,7 @@ export default function CrewMobile() {
   const [shiftEnded,       setShiftEnded]       = useState(false);
   const [showCaseSummary,  setShowCaseSummary]  = useState(false);
   const [showCaseHistory,  setShowCaseHistory]  = useState(false);
+  const [showBeacon,       setShowBeacon]       = useState(false);
   const isNative = !!(window.Capacitor?.isNativePlatform?.());
   const [showNativeSetup,  setShowNativeSetup]  = useState(
     isNative && !localStorage.getItem('native_setup_done')
@@ -269,6 +272,17 @@ export default function CrewMobile() {
       });
     } catch {}
   }, [backupRequested, myActiveCall, myUnit, user?.token]);
+
+  const beaconActive   = !!myUnit?.beacon_active;
+  const othersBeaconing = units.some(u => u.beacon_active && u.id !== myUnit?.id);
+
+  const handleToggleBeacon = async () => {
+    if (!myUnit) return;
+    const next = !beaconActive;
+    setUnits(prev => prev.map(u => u.id === myUnit.id ? { ...u, beacon_active: next } : u));
+    try { await toggleUnitBeacon(myUnit.id, next); }
+    catch { setUnits(prev => prev.map(u => u.id === myUnit.id ? { ...u, beacon_active: beaconActive } : u)); }
+  };
 
   const unitColor = STATUS_COLORS[myUnit?.status] || '#9ca3af';
 
@@ -417,6 +431,27 @@ export default function CrewMobile() {
           📁 My Cases
         </button>
 
+        {/* Beacon row */}
+        <div className="flex gap-2">
+          <button
+            onClick={handleToggleBeacon}
+            className={`flex-1 py-3 rounded-2xl border text-sm font-semibold transition-all flex items-center justify-center gap-2
+              ${beaconActive
+                ? 'bg-green-900/60 border-green-600 text-green-300 shadow-[0_0_12px_rgba(34,197,94,0.3)]'
+                : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-500 hover:text-white'}`}
+          >
+            🔦 {beaconActive ? 'Beacon ON' : 'Beacon'}
+          </button>
+          {othersBeaconing && (
+            <button
+              onClick={() => setShowBeacon(true)}
+              className="flex-1 py-3 rounded-2xl bg-blue-900/50 border border-blue-700 text-blue-300 hover:bg-blue-800/60 text-sm font-semibold transition-all flex items-center justify-center gap-2"
+            >
+              🧭 Find Medic
+            </button>
+          )}
+        </div>
+
         <button
           onClick={() => window.open('https://sfotems.com/protocols', '_blank')}
           className="w-full py-3 rounded-2xl bg-gray-800 border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 text-sm font-medium transition-colors flex items-center justify-center gap-2"
@@ -437,6 +472,17 @@ export default function CrewMobile() {
         <CrewCaseHistory
           units={units}
           onClose={() => setShowCaseHistory(false)}
+        />
+      )}
+
+      {showBeacon && (
+        <BeaconMode
+          myUnit={myUnit}
+          units={units}
+          token={user?.token}
+          beaconActive={beaconActive}
+          onToggleBeacon={handleToggleBeacon}
+          onClose={() => setShowBeacon(false)}
         />
       )}
 

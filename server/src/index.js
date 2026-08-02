@@ -574,6 +574,19 @@ app.patch('/api/units/:id/tracking', verifyToken, (req, res) => {
   res.json({ ok: true, tracking_active: unit.tracking_active });
 });
 
+// ── Beacon (crew ↔ crew finder) ───────────────────────────────────
+app.patch('/api/units/:id/beacon', verifyToken, (req, res) => {
+  if (req.user.role !== 'crew') return res.status(403).json({ error: 'Forbidden' });
+  if (req.user.unit_id !== req.params.id) return res.status(403).json({ error: 'Can only toggle your own beacon' });
+  const unit = units.find(u => u.id === req.params.id);
+  if (!unit) return res.status(404).json({ error: 'Not found' });
+  unit.beacon_active = !!req.body.active;
+  const sanitized = { ...unit, password_hash: undefined };
+  io.to('dispatchers').emit('unit:updated', sanitized);
+  io.to('crew_all').emit('unit:updated', sanitized);
+  res.json({ ok: true, beacon_active: unit.beacon_active });
+});
+
 app.delete('/api/units/:id/gps', verifyToken, async (req, res) => {
   if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
   const unit = units.find(u => u.id === req.params.id);

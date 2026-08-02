@@ -25,6 +25,7 @@ export const editUnit = (unitId, data) => api.put(`/units/${unitId}`, data);
 export const deleteUnit = (unitId) => api.delete(`/units/${unitId}`);
 export const clearUnitGps = (unitId) => api.delete(`/units/${unitId}/gps`);
 export const toggleUnitTracking = (unitId, active) => api.patch(`/units/${unitId}/tracking`, { active });
+export const toggleUnitBeacon  = (unitId, active) => api.patch(`/units/${unitId}/beacon`,   { active });
 
 // ── Calls ──────────────────────────────────────────────────────────
 export const getCalls = () => api.get('/calls');
