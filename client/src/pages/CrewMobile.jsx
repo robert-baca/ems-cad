@@ -330,9 +330,11 @@ export default function CrewMobile() {
               <div className="text-gray-400 text-xs">{myUnit.unit_type}</div>
             </div>
           </div>
-          <button onClick={() => { logout(); navigate('/login'); }}
-            className="text-gray-500 hover:text-white text-xs px-2 py-1 rounded hover:bg-gray-700 transition-colors">
-            Sign out
+          <button
+            onClick={() => { logout(); navigate('/login'); }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-900/40 hover:bg-red-700 border border-red-700/60 hover:border-red-500 text-red-400 hover:text-white text-xs font-semibold transition-colors"
+          >
+            <span>⏹</span> End Tracking
           </button>
         </div>
 
