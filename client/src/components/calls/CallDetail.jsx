@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from 'react';
 import CallTimeline from './CallTimeline';
 import CallComments from './CallComments';
 import CloseCallModal from './CloseCallModal';
+import GpsTrackTab from './GpsTrackTab';
 import { STATUS_COLORS, STATUS_LABELS, VALID_UNIT_STATUSES } from '../../data/mockData';
 import { updateCallNarrative, updateCallLocation } from '../../services/api';
 
@@ -52,7 +53,7 @@ export default function CallDetail({
   const [editingUnitStatusId, setEditingUnitStatusId] = useState(null);
   const clock = LiveClock();
 
-  // Reset all local state when the selected call changes
+  // Reset to detail tab when selected call changes
   useEffect(() => {
     setTab('detail');
     setAssigningUnit(false);
@@ -206,7 +207,8 @@ export default function CallDetail({
         {[
           { id: 'detail',   label: 'Detail' },
           { id: 'timeline', label: 'Timeline' },
-          { id: 'comments', label: `Comments${commentCount ? ` (${commentCount})` : ''}` }
+          { id: 'comments', label: `Comments${commentCount ? ` (${commentCount})` : ''}` },
+          { id: 'gpstrack', label: 'GPS Track' }
         ].map(t => (
           <button key={t.id} onClick={() => setTab(t.id)}
             className={`flex-1 py-2 text-xs font-medium transition-colors
@@ -567,6 +569,10 @@ export default function CallDetail({
               authorName={authorName}
             />
           </>
+        )}
+
+        {tab === 'gpstrack' && (
+          <GpsTrackTab call={call} />
         )}
       </div>
 

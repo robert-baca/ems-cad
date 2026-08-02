@@ -2,20 +2,21 @@ import { useEffect, useRef, useState } from 'react';
 import { registerPlugin } from '@capacitor/core';
 import { apiBase } from '../lib/native';
 
+const PROD_URL = 'https://cad.sfotems.com';
 const STALE_MS = 3 * 60 * 1000;
 
 const isNative = () => !!(window.Capacitor?.isNativePlatform?.());
 
-let _bgGeo = null;
-function getBgGeo() {
-  if (!_bgGeo) _bgGeo = registerPlugin('BackgroundGeolocation');
-  return _bgGeo;
+let _tracker = null;
+function getTracker() {
+  if (!_tracker) _tracker = registerPlugin('GpsTracker');
+  return _tracker;
 }
 
 export function useCrewGps({ token, unit, enabled = true }) {
-  const unitRef        = useRef(unit);
-  const wakeLockRef    = useRef(null);
-  const watchIdRef     = useRef(null);
+  const unitRef     = useRef(unit);
+  const wakeLockRef = useRef(null);
+  const watchIdRef  = useRef(null);
   const [bgPermNeeded, setBgPermNeeded] = useState(false);
   const [gpsStatus,    setGpsStatus]    = useState('idle');
 
@@ -36,97 +37,65 @@ export function useCrewGps({ token, unit, enabled = true }) {
   useEffect(() => {
     if (!enabled || !token) return;
 
-    const postGps = async (lat, lng) => {
-      setGpsStatus(`sending ${lat.toFixed(4)},${lng.toFixed(4)}`);
-      try {
-        const res = await fetch(`${apiBase()}/crew/gps`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ lat, lng })
-        });
-        const data = await res.json().catch(() => ({}));
-        setGpsStatus(`${res.ok ? 'ok' : `err ${res.status}`} — ${lat.toFixed(4)},${lng.toFixed(4)}`);
-        if (!res.ok) console.warn('[gps] server rejected:', res.status, data);
-      } catch (e) {
-        setGpsStatus(`fetch failed: ${e.message}`);
-      }
-    };
-
     if (isNative()) {
-      let cancelled = false;
+      const postGpsJs = async (lat, lng) => {
+        try {
+          await fetch(`${apiBase()}/crew/gps`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ lat, lng })
+          });
+        } catch {}
+      };
 
-      const startGps = async () => {
-        // Request notification permission (Android 13+)
+      const startTracking = async () => {
+        // Request permissions
+        try {
+          const { Geolocation } = await import('@capacitor/geolocation');
+          await Geolocation.requestPermissions({ permissions: ['location'] });
+        } catch {}
         try {
           const { LocalNotifications } = await import('@capacitor/local-notifications');
           await LocalNotifications.requestPermissions();
         } catch {}
 
-        // Retry addWatcher — service binding is async and may not be ready immediately
-        const bgGeo = getBgGeo();
-        const opts = {
-          backgroundMessage:  'EMS Crew GPS is active.',
-          backgroundTitle:    'EMS Crew Tracking',
-          requestPermissions: true,
-          stale:              true,
-          distanceFilter:     0,
-        };
-        const cb = (location, error) => {
-          if (error) {
-            if (error.code === 'NOT_AUTHORIZED') setBgPermNeeded(true);
-            return;
-          }
-          setBgPermNeeded(false);
-          if (location) postGps(location.latitude, location.longitude);
-        };
-
-        setGpsStatus('starting bg-geo...');
-        for (let attempt = 0; attempt < 8; attempt++) {
-          if (cancelled) return;
-          try {
-            const id = await bgGeo.addWatcher(opts, cb);
-            watchIdRef.current = id;
-            setGpsStatus('bg-geo active');
-            return; // success
-          } catch (e) {
-            setGpsStatus(`bg-geo attempt ${attempt + 1}/8: ${e.message}`);
-            if (attempt < 7) await new Promise(r => setTimeout(r, 500));
-          }
-        }
-
-        // Background geolocation failed — fall back to foreground-only geolocation
-        setGpsStatus('falling back to foreground GPS...');
+        // Start native foreground service — posts GPS directly without JS involvement
         try {
-          const { Geolocation } = await import('@capacitor/geolocation');
-          await Geolocation.requestPermissions({ permissions: ['location'] });
-          const id = await Geolocation.watchPosition(
-            { enableHighAccuracy: true },
-            (pos) => { if (pos) postGps(pos.coords.latitude, pos.coords.longitude); }
-          );
-          watchIdRef.current = `geo:${id}`;
-          setGpsStatus('foreground GPS active — waiting for fix...');
+          await getTracker().startTracking({ token, serverUrl: PROD_URL });
+          setGpsStatus('native service running');
         } catch (e) {
-          setGpsStatus(`all GPS failed: ${e.message}`);
+          // Fall back to JS watchPosition if native service fails
+          setGpsStatus('falling back to foreground GPS...');
+          try {
+            const { Geolocation } = await import('@capacitor/geolocation');
+            const id = await Geolocation.watchPosition(
+              { enableHighAccuracy: true },
+              (pos) => { if (pos) postGpsJs(pos.coords.latitude, pos.coords.longitude); }
+            );
+            watchIdRef.current = `geo:${id}`;
+            setGpsStatus('foreground GPS active');
+          } catch (e2) {
+            setGpsStatus(`GPS unavailable: ${e2.message}`);
+          }
         }
       };
 
-      startGps();
+      startTracking();
 
       return () => {
-        cancelled = true;
+        // Always stop the native service
+        try { getTracker().stopTracking(); } catch {}
+        // Stop JS fallback if it was used
         const id = watchIdRef.current;
-        if (id) {
-          if (typeof id === 'string' && id.startsWith('geo:')) {
-            import('@capacitor/geolocation').then(({ Geolocation }) => {
-              Geolocation.clearWatch({ id: id.slice(4) }).catch(() => {});
-            }).catch(() => {});
-          } else {
-            getBgGeo().removeWatcher({ id }).catch(() => {});
-          }
+        if (id && typeof id === 'string' && id.startsWith('geo:')) {
+          import('@capacitor/geolocation').then(({ Geolocation }) => {
+            Geolocation.clearWatch({ id: id.slice(4) }).catch(() => {});
+          }).catch(() => {});
           watchIdRef.current = null;
         }
       };
     } else {
+      // Web path — browser geolocation + screen wake lock
       if (!navigator.geolocation) return;
 
       if ('wakeLock' in navigator) {
@@ -139,7 +108,11 @@ export function useCrewGps({ token, unit, enabled = true }) {
         const u = unitRef.current;
         const lastGps = u?.last_gps_at ? new Date(u.last_gps_at).getTime() : 0;
         if (Date.now() - lastGps < STALE_MS) return;
-        postGps(lat, lng);
+        fetch('/api/crew/gps', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ lat, lng })
+        }).catch(() => {});
       };
 
       watchIdRef.current = navigator.geolocation.watchPosition(
@@ -155,9 +128,5 @@ export function useCrewGps({ token, unit, enabled = true }) {
     }
   }, [enabled, token]);
 
-  const openGpsSettings = () => {
-    if (isNative()) getBgGeo().openSettings().catch(() => {});
-  };
-
-  return { bgPermNeeded, openGpsSettings, gpsStatus };
+  return { bgPermNeeded, openGpsSettings: () => {}, gpsStatus };
 }

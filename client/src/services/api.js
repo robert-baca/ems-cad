@@ -57,6 +57,7 @@ export const removeMutualAid = (callId, entryId) =>
   api.delete(`/calls/${callId}/mutual-aid/${entryId}`);
 export const addCallComment = (callId, text, author) =>
   api.post(`/calls/${callId}/comments`, { text, author });
+export const getCallGpsTrack = (callId) => api.get(`/calls/${callId}/gps-track`);
 
 // ── Trackers ───────────────────────────────────────────────────────
 export const getTrackers = () => api.get('/trackers');

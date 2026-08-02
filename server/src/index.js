@@ -169,6 +169,21 @@ async function initDb() {
     )
   `);
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS gps_history (
+      id SERIAL PRIMARY KEY,
+      call_id TEXT NOT NULL,
+      unit_id TEXT NOT NULL,
+      unit_number TEXT,
+      lat DOUBLE PRECISION NOT NULL,
+      lng DOUBLE PRECISION NOT NULL,
+      recorded_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS gps_history_call_id_idx ON gps_history(call_id)
+  `);
+
   const unitsRes = await pool.query('SELECT * FROM units ORDER BY unit_number');
   units = unitsRes.rows.map(u => ({ ...u, tracking_active: false }));
 
@@ -1022,6 +1037,14 @@ function applyGpsUpdate(unit, lat, lng, timestamp) {
   unit.last_gps_at     = timestamp;
   unit.last_gps_fix_ts = timestamp;
   saveUnit(unit).catch(console.error);
+
+  const activeCall = getUnitActiveCall(unit.id);
+  if (activeCall) {
+    pool.query(
+      'INSERT INTO gps_history (call_id, unit_id, unit_number, lat, lng) VALUES ($1, $2, $3, $4, $5)',
+      [activeCall.id, unit.id, unit.unit_number, lat, lng]
+    ).catch(console.error);
+  }
   const payload = { unit_id: unit.id, unit_number: unit.unit_number, lat, lng, timestamp };
   io.to('dispatchers').emit('unit:gps_update', payload);
   // Crew app needs this too — the browser GPS fallback hook checks last_gps_at to
@@ -1110,6 +1133,21 @@ app.post('/api/crew/gps', verifyToken, (req, res) => {
   if (!lat || !lng) return res.status(400).json({ error: 'lat and lng required' });
   applyGpsUpdate(unit, lat, lng, new Date().toISOString());
   res.json({ ok: true });
+});
+
+// ── GPS history ───────────────────────────────────────────────────
+app.get('/api/calls/:id/gps-track', verifyToken, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT unit_id, unit_number, lat, lng, recorded_at
+       FROM gps_history WHERE call_id = $1
+       ORDER BY recorded_at ASC`,
+      [req.params.id]
+    );
+    res.json(rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ── Locations ─────────────────────────────────────────────────────
