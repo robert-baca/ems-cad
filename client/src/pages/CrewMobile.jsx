@@ -10,6 +10,7 @@ import StatusButtons from '../components/crew/StatusButtons';
 import CrewCaseHistory from '../components/crew/CrewCaseHistory';
 import CallSummaryModal from '../components/calls/CallSummaryModal';
 import TraccarSetupModal from '../components/units/TraccarSetupModal';
+import NativeSetupModal from '../components/crew/NativeSetupModal';
 import { STATUS_COLORS, STATUS_LABELS } from '../data/mockData';
 
 const NON_TRANSPORT_DISPOSITIONS = [
@@ -173,6 +174,10 @@ export default function CrewMobile() {
   const [showCaseSummary,  setShowCaseSummary]  = useState(false);
   const [showCaseHistory,  setShowCaseHistory]  = useState(false);
   const [showGpsSetup,     setShowGpsSetup]     = useState(false);
+  const isNative = !!(window.Capacitor?.isNativePlatform?.());
+  const [showNativeSetup,  setShowNativeSetup]  = useState(
+    isNative && !localStorage.getItem('native_setup_done')
+  );
 
   const myUnit = units.find(u =>
     u.id === user?.unit_id || u.unit_number === user?.unit_number
@@ -289,6 +294,10 @@ export default function CrewMobile() {
         </button>
       </div>
     );
+  }
+
+  if (showNativeSetup) {
+    return <NativeSetupModal onDone={() => setShowNativeSetup(false)} />;
   }
 
   return (
