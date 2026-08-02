@@ -1,28 +1,7 @@
 import { useState } from 'react';
-import TraccarSetupModal from './TraccarSetupModal';
 
 const UNIT_TYPES = ['ALS', 'BLS', 'Cart'];
 
-function SetupRow({ label, value }) {
-  const [copied, setCopied] = useState(false);
-  const copy = () => {
-    navigator.clipboard.writeText(value).catch(() => {});
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  };
-  return (
-    <div className="flex items-center justify-between gap-3">
-      <div className="min-w-0">
-        <div className="text-gray-500 text-xs">{label}</div>
-        <div className="text-white text-xs font-mono mt-0.5 break-all">{value}</div>
-      </div>
-      <button onClick={copy}
-        className="text-xs text-gray-400 hover:text-white bg-gray-600 hover:bg-gray-500 px-2 py-1 rounded transition-colors flex-shrink-0">
-        {copied ? '✓' : 'Copy'}
-      </button>
-    </div>
-  );
-}
 
 export default function EditUnitModal({ unit, onSave, onDelete, onClose }) {
   const [unitNumber, setUnitNumber] = useState(unit.unit_number);
@@ -31,10 +10,6 @@ export default function EditUnitModal({ unit, onSave, onDelete, onClose }) {
   const [saving,        setSaving]       = useState(false);
   const [confirming,    setConfirming]   = useState(false);
   const [error,         setError]        = useState('');
-  const [showSetupGuide, setShowSetupGuide] = useState(false);
-
-  const serverUrl = window.location.origin + '/api/gps/traccar';
-
   const handleSave = async () => {
     if (!unitNumber.trim()) { setError('Unit number is required.'); return; }
     if (!unitName.trim())   { setError('Unit name is required.');   return; }
@@ -113,28 +88,6 @@ export default function EditUnitModal({ unit, onSave, onDelete, onClose }) {
                 </div>
               </div>
 
-              <div>
-                <label className="block text-gray-400 text-xs uppercase tracking-wider mb-1.5">
-                  GPS — Traccar Client Setup
-                </label>
-                <div className="bg-gray-700 rounded-lg border border-gray-600 p-3 space-y-2.5">
-                  <SetupRow label="Protocol"          value="OsmAnd" />
-                  <SetupRow label="Server URL"        value={serverUrl} />
-                  <SetupRow label="Device Identifier" value={(unitNumber.trim() || unit.unit_number).replace(/\s+/g, '')} />
-                  <div className="text-gray-500 text-xs pt-1.5 border-t border-gray-600 space-y-0.5">
-                    <div>Set interval to 30 s · keep motion detection OFF (on = no GPS when stationary)</div>
-                    <div>Download: <span className="text-blue-400">Traccar Client</span> — App Store / Google Play</div>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setShowSetupGuide(true)}
-                  className="w-full mt-2 py-2 rounded-lg bg-blue-700/40 hover:bg-blue-700/60 border border-blue-600/50 text-blue-300 text-xs font-semibold transition-colors"
-                >
-                  View Step-by-Step Setup Guide →
-                </button>
-              </div>
-
               {error && <p className="text-red-400 text-sm">{error}</p>}
             </div>
 
@@ -179,13 +132,6 @@ export default function EditUnitModal({ unit, onSave, onDelete, onClose }) {
         )}
       </div>
 
-      {showSetupGuide && (
-        <TraccarSetupModal
-          deviceId={(unitNumber.trim() || unit.unit_number).replace(/\s+/g, '')}
-          serverUrl={serverUrl}
-          onClose={() => setShowSetupGuide(false)}
-        />
-      )}
     </div>
   );
 }

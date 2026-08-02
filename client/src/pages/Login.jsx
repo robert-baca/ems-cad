@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { apiBase } from '../lib/native';
+import { apiBase, isNative } from '../lib/native';
 
 const ROLES = [
   { key: 'dispatcher', label: 'Dispatcher',    icon: '🎛️', description: 'Command & dispatch' },
@@ -352,6 +352,22 @@ export default function Login() {
     } catch (err) { setError(err.message); setPin(''); }
     finally { setLoading(false); }
   };
+
+  // ── Native app: skip role picker, go straight to crew login ──
+  if (isNative()) {
+    return (
+      <div className="min-h-screen bg-gray-900 flex items-center justify-center p-4">
+        <div className="w-full max-w-sm">
+          <div className="text-center mb-8">
+            <div className="text-5xl mb-3">🚑</div>
+            <h1 className="text-2xl font-bold text-white tracking-wide">Six Flags EMS CAD</h1>
+            <p className="text-gray-400 text-sm mt-1">Computer Aided Dispatch — Over Texas</p>
+          </div>
+          <CrewLogin onBack={() => {}} onSuccess={handleCrewSuccess} />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-900 flex items-center justify-center p-4">

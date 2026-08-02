@@ -9,7 +9,6 @@ import ActiveCall from '../components/crew/ActiveCall';
 import StatusButtons from '../components/crew/StatusButtons';
 import CrewCaseHistory from '../components/crew/CrewCaseHistory';
 import CallSummaryModal from '../components/calls/CallSummaryModal';
-import TraccarSetupModal from '../components/units/TraccarSetupModal';
 import NativeSetupModal from '../components/crew/NativeSetupModal';
 import { STATUS_COLORS, STATUS_LABELS } from '../data/mockData';
 
@@ -173,7 +172,6 @@ export default function CrewMobile() {
   const [shiftEnded,       setShiftEnded]       = useState(false);
   const [showCaseSummary,  setShowCaseSummary]  = useState(false);
   const [showCaseHistory,  setShowCaseHistory]  = useState(false);
-  const [showGpsSetup,     setShowGpsSetup]     = useState(false);
   const isNative = !!(window.Capacitor?.isNativePlatform?.());
   const [showNativeSetup,  setShowNativeSetup]  = useState(
     isNative && !localStorage.getItem('native_setup_done')
@@ -419,13 +417,6 @@ export default function CrewMobile() {
         </button>
 
         <button
-          onClick={() => setShowGpsSetup(true)}
-          className="w-full py-3 rounded-2xl bg-gray-800 border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 text-sm font-medium transition-colors flex items-center justify-center gap-2"
-        >
-          📡 GPS Setup Guide
-        </button>
-
-        <button
           onClick={() => window.open('https://sfotems.com/protocols', '_blank')}
           className="w-full py-3 rounded-2xl bg-gray-800 border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 text-sm font-medium transition-colors flex items-center justify-center gap-2"
         >
@@ -445,14 +436,6 @@ export default function CrewMobile() {
         <CrewCaseHistory
           units={units}
           onClose={() => setShowCaseHistory(false)}
-        />
-      )}
-
-      {showGpsSetup && (
-        <TraccarSetupModal
-          deviceId={(myUnit?.unit_number || user?.unit_number || '').replace(/\s+/g, '')}
-          serverUrl={window.location.origin + '/api/gps/traccar'}
-          onClose={() => setShowGpsSetup(false)}
         />
       )}
 
