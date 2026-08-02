@@ -1820,6 +1820,7 @@ io.on('connection', (socket) => {
       return;
     }
     socket.join(`crew:${unit_id}`);
+    socket.join('crew_all');
     const myCall = getUnitActiveCall(unit_id);
     if (myCall) socket.emit('call:assigned_to_me', myCall);
   });
