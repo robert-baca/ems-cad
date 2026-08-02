@@ -130,10 +130,12 @@ function CrewLogin({ onBack, onSuccess }) {
             className="w-full py-3.5 bg-green-700 hover:bg-green-600 disabled:bg-green-900 text-white font-bold text-base rounded-xl transition-colors">
             {loading ? 'Signing in…' : 'Continue'}
           </button>
-          <button type="button" onClick={onBack}
-            className="w-full py-2 text-gray-500 hover:text-gray-300 text-sm transition-colors">
-            ← Back
-          </button>
+          {onBack && (
+            <button type="button" onClick={onBack}
+              className="w-full py-2 text-gray-500 hover:text-gray-300 text-sm transition-colors">
+              ← Back
+            </button>
+          )}
         </div>
       </form>
     );
@@ -363,7 +365,7 @@ export default function Login() {
             <h1 className="text-2xl font-bold text-white tracking-wide">Six Flags EMS CAD</h1>
             <p className="text-gray-400 text-sm mt-1">Computer Aided Dispatch — Over Texas</p>
           </div>
-          <CrewLogin onBack={() => {}} onSuccess={handleCrewSuccess} />
+          <CrewLogin onBack={null} onSuccess={handleCrewSuccess} />
         </div>
       </div>
     );

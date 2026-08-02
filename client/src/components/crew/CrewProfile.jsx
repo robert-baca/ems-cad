@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { apiBase } from '../../lib/native';
 
 const CERT_LEVELS = ['First Responder', 'EMT-B', 'AEMT', 'Paramedic'];
 const EXTRA_CERTS = ['ACLS', 'BLS', 'PALS', 'ITLS', 'PHTLS', 'CPR-I'];
@@ -27,7 +28,7 @@ export default function CrewProfile({ unit, currentProfile, token, onSave, onClo
         certifications: certs,
         employee_id: employeeId.trim()
       };
-      const res = await fetch(`/api/units/${unit.unit_id}/profile`, {
+      const res = await fetch(`${apiBase()}/units/${unit.unit_id}/profile`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',

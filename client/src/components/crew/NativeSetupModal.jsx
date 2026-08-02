@@ -1,11 +1,4 @@
-import { useState, useEffect } from 'react';
-import { registerPlugin } from '@capacitor/core';
-
-let _bgGeo = null;
-function getBgGeo() {
-  if (!_bgGeo) _bgGeo = registerPlugin('BackgroundGeolocation');
-  return _bgGeo;
-}
+import { useState } from 'react';
 
 const STEPS = [
   {
@@ -26,8 +19,8 @@ const STEPS = [
     key: 'battery',
     icon: '🔋',
     title: 'Unrestricted Battery',
-    body: 'Tap below, then tap Battery → set to Unrestricted. This prevents Android from killing GPS.',
-    button: 'Open App Settings',
+    body: 'Go to Settings → Apps → this app → Battery → set to Unrestricted. This prevents Android from killing GPS.',
+    button: 'Got it',
   },
 ];
 
@@ -47,9 +40,8 @@ export default function NativeSetupModal({ onDone }) {
       } else if (current.key === 'notifications') {
         const { LocalNotifications } = await import('@capacitor/local-notifications');
         await LocalNotifications.requestPermissions();
-      } else if (current.key === 'battery') {
-        getBgGeo().openSettings().catch(() => {});
       }
+      // battery step: instructions only, no plugin needed
     } catch {}
     setLoading(false);
 
@@ -68,14 +60,12 @@ export default function NativeSetupModal({ onDone }) {
     <div className="fixed inset-0 z-50 bg-gray-900 flex flex-col items-center justify-center p-6">
       <div className="w-full max-w-sm">
 
-        {/* Header */}
         <div className="text-center mb-8">
           <div className="text-5xl mb-3">🚑</div>
           <div className="text-white font-bold text-xl">One-Time Setup</div>
           <div className="text-gray-400 text-sm mt-1">Allow these 3 things so GPS tracking works</div>
         </div>
 
-        {/* Progress dots */}
         <div className="flex justify-center gap-2 mb-8">
           {STEPS.map((s, i) => (
             <div key={s.key} className={`w-2 h-2 rounded-full transition-colors ${
@@ -84,14 +74,12 @@ export default function NativeSetupModal({ onDone }) {
           ))}
         </div>
 
-        {/* Current step */}
         <div className="bg-gray-800 border border-gray-700 rounded-2xl p-6 mb-6 text-center">
           <div className="text-4xl mb-3">{current.icon}</div>
           <div className="text-white font-bold text-lg mb-2">{current.title}</div>
           <div className="text-gray-400 text-sm leading-relaxed">{current.body}</div>
         </div>
 
-        {/* Step counter */}
         <div className="text-gray-500 text-xs text-center mb-4">
           Step {step + 1} of {STEPS.length}
         </div>

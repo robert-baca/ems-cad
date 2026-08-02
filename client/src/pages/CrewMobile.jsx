@@ -5,6 +5,7 @@ import { useUnits } from '../hooks/useUnits';
 import { useCalls } from '../hooks/useCalls';
 import { useSocket } from '../hooks/useSocket';
 import { useCrewGps } from '../hooks/useCrewGps';
+import { apiBase } from '../lib/native';
 import ActiveCall from '../components/crew/ActiveCall';
 import StatusButtons from '../components/crew/StatusButtons';
 import CrewCaseHistory from '../components/crew/CrewCaseHistory';
@@ -261,7 +262,7 @@ export default function CrewMobile() {
       ? `🆘 BACKUP REQUESTED — ${myUnit.unit_number}`
       : `✅ Backup no longer needed — ${myUnit.unit_number}`;
     try {
-      await fetch(`/api/calls/${myActiveCall.id}/comments`, {
+      await fetch(`${apiBase()}/calls/${myActiveCall.id}/comments`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user?.token}` },
         body: JSON.stringify({ text })
