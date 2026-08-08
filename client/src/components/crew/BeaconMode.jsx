@@ -54,13 +54,25 @@ function Arrow({ angle, active }) {
 }
 
 // ── Compass view ─────────────────────────────────────────────────────
-function Compass({ myUnit, target, onBack, token }) {
-  const [heading, setHeading]     = useState(null);
+function Compass({ target, onBack, token }) {
+  const [heading,   setHeading]   = useState(null);
+  const [myPos,     setMyPos]     = useState(null);   // { lat, lng } from live Geolocation
   const [targetPos, setTargetPos] = useState({
     lat: parseFloat(target.last_lat), lng: parseFloat(target.last_lng)
   });
-  const [noCompass, setNoCompass]   = useState(false);
-  const pollRef = useRef(null);
+  const [noCompass,  setNoCompass]  = useState(false);
+  const [noGps,      setNoGps]      = useState(false);
+  const pollRef  = useRef(null);
+  const watchRef = useRef(null);
+
+  // Own position via Geolocation API (fresh, independent of server)
+  useEffect(() => {
+    if (!navigator.geolocation) { setNoGps(true); return; }
+    const onPos = (pos) => setMyPos({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+    const onErr = () => setNoGps(true);
+    watchRef.current = navigator.geolocation.watchPosition(onPos, onErr, { enableHighAccuracy: true, maximumAge: 3000 });
+    return () => { if (watchRef.current != null) navigator.geolocation.clearWatch(watchRef.current); };
+  }, []);
 
   // Device compass
   useEffect(() => {
@@ -113,14 +125,12 @@ function Compass({ myUnit, target, onBack, token }) {
     return () => clearInterval(pollRef.current);
   }, [target.id, token]);
 
-  const myLat = parseFloat(myUnit.last_lat);
-  const myLng = parseFloat(myUnit.last_lng);
-  const hasMyPos    = !isNaN(myLat) && !isNaN(myLng);
+  const hasMyPos     = !!myPos;
   const hasTargetPos = !isNaN(targetPos.lat) && !isNaN(targetPos.lng);
-  const hasPos      = hasMyPos && hasTargetPos;
+  const hasPos       = hasMyPos && hasTargetPos;
 
-  const bearing = hasPos ? getBearing(myLat, myLng, targetPos.lat, targetPos.lng) : null;
-  const distFt  = hasPos ? getDistanceFt(myLat, myLng, targetPos.lat, targetPos.lng) : null;
+  const bearing = hasPos ? getBearing(myPos.lat, myPos.lng, targetPos.lat, targetPos.lng) : null;
+  const distFt  = hasPos ? getDistanceFt(myPos.lat, myPos.lng, targetPos.lat, targetPos.lng) : null;
 
   const arrowAngle = (bearing != null && heading != null)
     ? (bearing - heading + 360) % 360
@@ -151,6 +161,10 @@ function Compass({ myUnit, target, onBack, token }) {
         {noCompass ? (
           <div className="text-amber-400 text-sm text-center bg-amber-900/30 border border-amber-700/50 rounded-xl px-4 py-2">
             No compass sensor detected on this device
+          </div>
+        ) : noGps ? (
+          <div className="text-amber-400 text-sm text-center bg-amber-900/30 border border-amber-700/50 rounded-xl px-4 py-2">
+            GPS unavailable on this device
           </div>
         ) : !hasMyPos ? (
           <div className="text-amber-400 text-sm text-center bg-amber-900/30 border border-amber-700/50 rounded-xl px-4 py-2">
@@ -263,7 +277,6 @@ export default function BeaconMode({ myUnit, units, token, beaconActive, onToggl
   if (view === 'compass' && target) {
     return (
       <Compass
-        myUnit={myUnit}
         target={target}
         token={token}
         onBack={() => setView('finder')}
