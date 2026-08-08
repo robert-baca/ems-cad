@@ -12,6 +12,11 @@ const ROLES = [
 const UNIT_TYPES = ['ALS', 'BLS', 'Cart'];
 const TYPE_COLORS = { ALS: 'text-red-400', BLS: 'text-blue-400', Cart: 'text-green-400' };
 
+// Remembers that this device was last used to sign in as crew, so returning
+// crew (e.g. after a shift-end logout) land straight on the crew credentials
+// form instead of the role picker — mirrors how the native app skips it entirely.
+const LAST_ROLE_KEY = 'cad_last_role';
+
 // ── Crew login sub-flow ───────────────────────────────────────────
 function CrewLogin({ onBack, onSuccess }) {
   // step: creds → pick → confirm | add
@@ -305,16 +310,20 @@ export default function Login() {
     else if (user.role === 'dispatcher') navigate('/dispatcher', { replace: true });
   }, [user]);
 
-  const [role,     setRole]    = useState(null);
+  const [role,     setRole]    = useState(() => localStorage.getItem(LAST_ROLE_KEY) === 'crew' ? 'crew' : null);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [pin,      setPin]     = useState('');
   const [error,    setError]   = useState('');
   const [loading,  setLoading] = useState(false);
 
-  const back = () => { setRole(null); setError(''); setUsername(''); setPassword(''); setPin(''); };
+  const back = () => {
+    localStorage.removeItem(LAST_ROLE_KEY);
+    setRole(null); setError(''); setUsername(''); setPassword(''); setPin('');
+  };
 
   const handleCrewSuccess = (userData, path) => {
+    localStorage.setItem(LAST_ROLE_KEY, 'crew');
     login(userData);
     navigate(path);
   };
