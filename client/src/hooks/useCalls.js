@@ -51,14 +51,17 @@ export function useCalls() {
     }
   }, []);
 
-  // Assign a unit to a pending (or active) call
+  // Assign a unit to a pending (or active) call. Mirrors the server's own
+  // rule (server/src/index.js, PATCH /api/calls/:id/assign): only a
+  // first-time assignment bumps the call to 'dispatched' — swapping a unit
+  // mid-call (e.g. while en route) must leave the call's status alone.
   const assignUnit = useCallback(async (callId, unitId) => {
     setCalls(prev => prev.map(c =>
       c.id === callId
         ? {
             ...c,
             assigned_unit_id: unitId,
-            status: 'dispatched',
+            status: c.status === 'pending' ? 'dispatched' : c.status,
             dispatched_at: c.dispatched_at || new Date().toISOString()
           }
         : c
