@@ -2,14 +2,15 @@ package com.sfotems.crew;
 
 import android.os.Bundle;
 import android.view.WindowManager;
+import android.webkit.WebView;
 import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(GpsTrackerPlugin.class);
+        WebView.setWebContentsDebuggingEnabled(true);
         super.onCreate(savedInstanceState);
-        // Prevent screen timeout while app is in foreground (crew vehicle use)
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     }
 

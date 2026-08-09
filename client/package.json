@@ -13,6 +13,7 @@
     "@capacitor/cli": "^8.5.0",
     "@capacitor/core": "^8.5.0",
     "@capacitor/geolocation": "^8.2.0",
+    "@capacitor/ios": "^8.5.0",
     "@capacitor/local-notifications": "^8.2.1",
     "axios": "^1.6.8",
     "mapbox-gl": "^3.3.0",

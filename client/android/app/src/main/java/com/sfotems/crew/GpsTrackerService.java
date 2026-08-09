@@ -28,6 +28,7 @@ public class GpsTrackerService extends Service {
 
     private static final float MIN_DISTANCE_M  = 5f;
     private static final long  MIN_INTERVAL_MS = 900L;
+    private static final long  HEARTBEAT_MS    = 30_000L; // force-post every 30s even if stationary
     private static final int   MAX_QUEUE       = 100; // ~100 seconds of offline points
 
     private LocationManager  locationManager;
@@ -38,9 +39,10 @@ public class GpsTrackerService extends Service {
     private String token;
     private String serverUrl;
 
-    private long   lastPostMs = 0;
-    private double lastLat    = Double.NaN;
-    private double lastLng    = Double.NaN;
+    private long   lastPostMs      = 0;
+    private long   lastHeartbeatMs = 0;
+    private double lastLat         = Double.NaN;
+    private double lastLng         = Double.NaN;
 
     private final LinkedList<double[]> offlineQueue = new LinkedList<>();
 
@@ -119,11 +121,16 @@ public class GpsTrackerService extends Service {
         long now = System.currentTimeMillis();
         if (now - lastPostMs < MIN_INTERVAL_MS) return;
 
+        boolean heartbeatDue = (now - lastHeartbeatMs) >= HEARTBEAT_MS;
         if (!Double.isNaN(lastLat)) {
             float[] result = new float[1];
             Location.distanceBetween(lastLat, lastLng, loc.getLatitude(), loc.getLongitude(), result);
-            if (result[0] < MIN_DISTANCE_M) return;
+            if (result[0] < MIN_DISTANCE_M && !heartbeatDue) return;
         }
+        // Reset on every post, not just heartbeat-triggered ones — otherwise
+        // a burst of movement posts never refreshes this, and the heartbeat
+        // fires again moments later even though a point was just sent.
+        lastHeartbeatMs = now;
 
         lastPostMs = now;
         lastLat    = loc.getLatitude();

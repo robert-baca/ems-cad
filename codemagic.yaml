@@ -1,0 +1,55 @@
+workflows:
+  ios-release:
+    name: EMS Crew iOS Release
+    max_build_duration: 60
+    instance_type: mac_mini_m1
+    integrations:
+      app_store_connect: Apple App Store Connect
+    environment:
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.sfotems.crew
+      node: 20
+      xcode: latest
+      cocoapods: default
+    cache:
+      cache_paths:
+        - $HOME/Library/Caches/CocoaPods
+        - client/node_modules
+    scripts:
+      - name: Install dependencies
+        script: |
+          cd client
+          npm ci
+      - name: Build web app
+        script: |
+          cd client
+          npm run build
+      - name: Capacitor sync iOS
+        script: |
+          cd client
+          npx cap sync ios
+      - name: Set version from build number
+        script: |
+          cd client/ios/App
+          LATEST_BUILD=$(app-store-connect get-latest-testflight-build-number "$APP_STORE_ID" 2>/dev/null || echo "0")
+          BUILD_NUMBER=$(($LATEST_BUILD + 1))
+          agvtool new-version -all $BUILD_NUMBER
+      - name: Install CocoaPods
+        script: |
+          cd client/ios/App
+          pod install
+      - name: Build and sign iOS
+        script: |
+          xcode-project build-ipa \
+            --workspace client/ios/App/App.xcworkspace \
+            --scheme App
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+      - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.dSYM
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
+        submit_to_app_store: false
