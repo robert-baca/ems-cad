@@ -3,10 +3,6 @@ require_relative '../../node_modules/@capacitor/ios/scripts/pods_helpers'
 platform :ios, '14.0'
 use_frameworks!
 
-# workaround to avoid Xcode caching of Pods that requires
-# cache invalidation every time CocoaPods version is updated
-load_all_pods_from_podspec_files!
-
 target 'App' do
   capacitor_pods
   # Add your Pods here
