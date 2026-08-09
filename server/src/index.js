@@ -1144,10 +1144,10 @@ function getUnitActiveCall(unitId, excludeCallId = null) {
 // Returns true if the ping was accepted, false if discarded.
 function applyGpsUpdate(unit, lat, lng, timestamp) {
   const onCall = !!getUnitActiveCall(unit.id);
-  if (!onCall && !unit.tracking_active) {
+  if (!onCall && !unit.tracking_active && !unit.beacon_active) {
     const last = gpsDiscardLastLog.get(unit.id) || 0;
     if (Date.now() - last > 5 * 60 * 1000) {
-      console.log(`[gps] ${unit.unit_number} — discarded (tracking off, not on call)`);
+      console.log(`[gps] ${unit.unit_number} — discarded (tracking off, not on call, beacon off)`);
       gpsDiscardLastLog.set(unit.id, Date.now());
     }
     return false;
