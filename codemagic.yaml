@@ -3,8 +3,6 @@ workflows:
     name: EMS Crew iOS Release
     max_build_duration: 60
     instance_type: mac_mini_m1
-    integrations:
-      app_store_connect: Apple App Store Connect
     environment:
       ios_signing:
         distribution_type: app_store
@@ -12,6 +10,9 @@ workflows:
       node: 20
       xcode: latest
       cocoapods: default
+      vars:
+        APP_STORE_CONNECT_ISSUER_ID: "2dddf940-2d08-4205-b6bd-e5f94d86b2a4"
+        APP_STORE_CONNECT_KEY_IDENTIFIER: "P4Y42BF394"
     cache:
       cache_paths:
         - $HOME/Library/Caches/CocoaPods
@@ -29,12 +30,6 @@ workflows:
         script: |
           cd client
           npx cap sync ios
-      - name: Set version from build number
-        script: |
-          cd client/ios/App
-          LATEST_BUILD=$(app-store-connect get-latest-testflight-build-number "$APP_STORE_ID" 2>/dev/null || echo "0")
-          BUILD_NUMBER=$(($LATEST_BUILD + 1))
-          agvtool new-version -all $BUILD_NUMBER
       - name: Install CocoaPods
         script: |
           cd client/ios/App
@@ -47,9 +42,10 @@ workflows:
     artifacts:
       - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
-      - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.dSYM
     publishing:
       app_store_connect:
-        auth: integration
+        api_key: $APP_STORE_CONNECT_PRIVATE_KEY
+        key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
+        issuer_id: $APP_STORE_CONNECT_ISSUER_ID
         submit_to_testflight: true
         submit_to_app_store: false
