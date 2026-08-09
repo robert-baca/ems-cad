@@ -53,17 +53,27 @@ function Arrow({ angle, active }) {
   );
 }
 
+// Smooth compass heading using exponential moving average with wrap-around handling
+function smoothHeading(prev, next, alpha = 0.15) {
+  if (prev === null) return next;
+  let diff = next - prev;
+  if (diff > 180) diff -= 360;
+  if (diff < -180) diff += 360;
+  return (prev + alpha * diff + 360) % 360;
+}
+
 // ── Compass view ─────────────────────────────────────────────────────
 function Compass({ target, onBack, token }) {
   const [heading,   setHeading]   = useState(null);
-  const [myPos,     setMyPos]     = useState(null);   // { lat, lng } from live Geolocation
+  const [myPos,     setMyPos]     = useState(null);
   const [targetPos, setTargetPos] = useState({
     lat: parseFloat(target.last_lat), lng: parseFloat(target.last_lng)
   });
   const [noCompass,  setNoCompass]  = useState(false);
   const [noGps,      setNoGps]      = useState(false);
-  const pollRef  = useRef(null);
-  const watchRef = useRef(null);
+  const pollRef    = useRef(null);
+  const watchRef   = useRef(null);
+  const headingRef = useRef(null); // raw smoothed heading for EMA
 
   // Own position via Geolocation API (fresh, independent of server)
   useEffect(() => {
@@ -74,17 +84,30 @@ function Compass({ target, onBack, token }) {
     return () => { if (watchRef.current != null) navigator.geolocation.clearWatch(watchRef.current); };
   }, []);
 
-  // Device compass
+  // Device compass — prefer absolute, fall back to relative only if absolute never fires
   useEffect(() => {
-    let gotReading = false;
-    const handler = (e) => {
+    let gotAbsolute = false;
+    let gotReading  = false;
+
+    const applyHeading = (raw) => {
+      headingRef.current = smoothHeading(headingRef.current, raw);
+      gotReading = true;
+      setHeading(Math.round(headingRef.current));
+    };
+
+    const absoluteHandler = (e) => {
       let h = null;
-      if (e.webkitCompassHeading != null) {
-        h = e.webkitCompassHeading;              // iOS — degrees CW from North
-      } else if (e.alpha != null) {
-        h = (360 - e.alpha) % 360;              // Android absolute — alpha is CCW from North
-      }
-      if (h != null) { gotReading = true; setHeading(h); }
+      if (e.webkitCompassHeading != null) h = e.webkitCompassHeading;
+      else if (e.alpha != null) h = (360 - e.alpha) % 360;
+      if (h != null) { gotAbsolute = true; applyHeading(h); }
+    };
+
+    const relativeHandler = (e) => {
+      if (gotAbsolute) return; // absolute is firing — ignore relative
+      let h = null;
+      if (e.webkitCompassHeading != null) h = e.webkitCompassHeading;
+      else if (e.alpha != null) h = (360 - e.alpha) % 360;
+      if (h != null) applyHeading(h);
     };
 
     // Request iOS 13+ permission
@@ -94,15 +117,14 @@ function Compass({ target, onBack, token }) {
         .catch(() => setNoCompass(true));
     }
 
-    window.addEventListener('deviceorientationabsolute', handler, true);
-    window.addEventListener('deviceorientation', handler, true);
+    window.addEventListener('deviceorientationabsolute', absoluteHandler, true);
+    window.addEventListener('deviceorientation', relativeHandler, true);
 
-    // If no reading after 3s, device has no compass
     const timeout = setTimeout(() => { if (!gotReading) setNoCompass(true); }, 3000);
 
     return () => {
-      window.removeEventListener('deviceorientationabsolute', handler, true);
-      window.removeEventListener('deviceorientation', handler, true);
+      window.removeEventListener('deviceorientationabsolute', absoluteHandler, true);
+      window.removeEventListener('deviceorientation', relativeHandler, true);
       clearTimeout(timeout);
     };
   }, []);
