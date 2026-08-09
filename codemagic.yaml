@@ -4,15 +4,13 @@ workflows:
     max_build_duration: 60
     instance_type: mac_mini_m1
     environment:
-      ios_signing:
-        distribution_type: app_store
-        bundle_identifier: com.sfotems.crew
       node: 20
       xcode: latest
       cocoapods: default
       vars:
         APP_STORE_CONNECT_ISSUER_ID: "2dddf940-2d08-4205-b6bd-e5f94d86b2a4"
         APP_STORE_CONNECT_KEY_IDENTIFIER: "P4Y42BF394"
+        BUNDLE_ID: "com.sfotems.crew"
     cache:
       cache_paths:
         - $HOME/Library/Caches/CocoaPods
@@ -34,6 +32,18 @@ workflows:
         script: |
           cd client/ios/App
           pod install
+      - name: Set up keychain and code signing
+        script: |
+          keychain initialize
+          app-store-connect fetch-signing-files \
+            "$BUNDLE_ID" \
+            --type IOS_APP_STORE \
+            --create \
+            --issuer-id "$APP_STORE_CONNECT_ISSUER_ID" \
+            --key-id "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
+            --private-key "$APP_STORE_CONNECT_PRIVATE_KEY"
+          keychain add-certificates
+          xcode-project use-profiles
       - name: Build and sign iOS
         script: |
           xcode-project build-ipa \
