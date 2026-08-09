@@ -13,7 +13,6 @@ workflows:
         BUNDLE_ID: "com.sfotems.crew"
     cache:
       cache_paths:
-        - $HOME/Library/Caches/CocoaPods
         - client/node_modules
     scripts:
       - name: Install dependencies
@@ -28,10 +27,6 @@ workflows:
         script: |
           cd client
           npx cap sync ios
-      - name: Install CocoaPods
-        script: |
-          cd client/ios/App
-          pod install
       - name: Set up keychain and code signing
         script: |
           keychain initialize
@@ -47,7 +42,7 @@ workflows:
       - name: Build and sign iOS
         script: |
           xcode-project build-ipa \
-            --workspace client/ios/App/App.xcworkspace \
+            --project client/ios/App/App.xcodeproj \
             --scheme App
     artifacts:
       - build/ios/ipa/*.ipa
