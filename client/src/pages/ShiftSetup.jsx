@@ -1,34 +1,45 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { apiBase } from '../lib/native';
 
 const TYPE_ICONS  = { ALS: '🚑', BLS: '🚐', Cart: '🛺' };
 const TYPE_ORDER  = { ALS: 0, BLS: 1, Cart: 2 };
 const UNIT_TYPES  = ['ALS', 'BLS', 'Cart'];
 const STATIONS    = ['Station 7', 'Station 14', 'Roaming'];
-const TIME_PRESETS = [
-  { label: 'Day  07–15',  start: '07:00', end: '15:00' },
-  { label: 'Eve  15–23',  start: '15:00', end: '23:00' },
-  { label: 'Night 23–07', start: '23:00', end: '07:00' },
+
+const UNIT_PRESETS = [
+  { key: 'Medic', base: 'Medic', type: 'ALS'  },
+  { key: 'Cart',  base: 'Cart',  type: 'Cart'  },
+  { key: '555',   base: '555',   type: 'ALS'   },
+  { key: 'Other', base: '',      type: 'ALS'   },
 ];
+
+function nextUnitNumber(base, units) {
+  const escaped = base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(`^${escaped}\\s*(\\d+)?$`, 'i');
+  const nums = units
+    .map(u => { const m = u.unit_number.trim().match(pattern); return m ? (parseInt(m[1]) || 1) : null; })
+    .filter(n => n !== null);
+  return nums.length === 0 ? `${base} 1` : `${base} ${Math.max(...nums) + 1}`;
+}
 
 export default function ShiftSetup({ token, onShiftStarted, onViewHistory }) {
   const [units,    setUnits]    = useState([]);
-  const [startTime, setStartTime] = useState('07:00');
-  const [endTime,   setEndTime]   = useState('15:00');
   const [staffing,  setStaffing]  = useState({});
   const [saving,    setSaving]    = useState(false);
   const [error,     setError]     = useState('');
-  const [uncrewedWarning, setUncrewedWarning] = useState(null); // list of unit numbers needing confirmation
+  const [uncrewedWarning, setUncrewedWarning] = useState(null);
 
-  // GPS tracker edit state — only one unit open at a time
   const [editingGpsId, setEditingGpsId] = useState(null);
 
-  // Add unit inline form
+  // Add unit state
   const [addingUnit, setAddingUnit] = useState(false);
+  const [newPreset,  setNewPreset]  = useState(null); // null | preset key
   const [newNumber,  setNewNumber]  = useState('');
   const [newType,    setNewType]    = useState('ALS');
+  const [newCrew,    setNewCrew]    = useState('');
   const [addError,   setAddError]   = useState('');
   const [addSaving,  setAddSaving]  = useState(false);
+  const nameInputRef = useRef(null);
 
   useEffect(() => {
     fetch(`${apiBase()}/units`, { headers: { Authorization: `Bearer ${token}` } })
@@ -70,23 +81,47 @@ export default function ShiftSetup({ token, onShiftStarted, onViewHistory }) {
       return next;
     });
 
+  const selectPreset = (preset) => {
+    setNewPreset(preset.key);
+    if (preset.key === 'Other') {
+      setNewNumber('');
+      setNewType('ALS');
+    } else {
+      setNewNumber(nextUnitNumber(preset.base, units));
+      setNewType(preset.type);
+    }
+    setNewCrew('');
+    setAddError('');
+    setTimeout(() => nameInputRef.current?.focus(), 50);
+  };
+
+  const cancelAdd = () => {
+    setAddingUnit(false);
+    setNewPreset(null);
+    setNewNumber('');
+    setNewCrew('');
+    setAddError('');
+  };
+
   const handleAddUnit = async () => {
-    if (!newNumber.trim()) { setAddError('Enter a unit number.'); return; }
+    const unitNumber = newNumber.trim();
+    if (!unitNumber) { setAddError('Enter a unit number.'); return; }
     setAddSaving(true);
     setAddError('');
     try {
       const res = await fetch(`${apiBase()}/units`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ unit_number: newNumber.trim(), unit_name: newNumber.trim(), unit_type: newType })
+        body: JSON.stringify({ unit_number: unitNumber, unit_name: unitNumber, unit_type: newType })
       });
       const unit = await res.json();
       if (!res.ok) throw new Error(unit.error || 'Failed to add unit');
       setUnits(prev => [...prev, unit]);
-      setStaffing(prev => ({ ...prev, [unit.id]: { crew: '', unit_type: newType, in_service: true, station: '', tracki_device_id: '' } }));
-      setNewNumber('');
-      setNewType('ALS');
-      setAddingUnit(false);
+      setStaffing(prev => ({
+        ...prev,
+        [unit.id]: { crew: newCrew.trim(), unit_type: newType, in_service: true, station: '', tracki_device_id: '' }
+      }));
+      cancelAdd();
     } catch (err) {
       setAddError(err.message);
     } finally {
@@ -105,7 +140,6 @@ export default function ShiftSetup({ token, onShiftStarted, onViewHistory }) {
 
   const doStart = async () => {
     setUncrewedWarning(null);
-    const label = `${startTime} – ${endTime || '?'}`;
     setSaving(true);
     setError('');
     try {
@@ -116,6 +150,7 @@ export default function ShiftSetup({ token, onShiftStarted, onViewHistory }) {
         in_service: staffing[u.id]?.in_service ?? true,
         station:    staffing[u.id]?.station || ''
       }));
+      const label = new Date().toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
       const res  = await fetch(`${apiBase()}/shift/start`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -132,7 +167,6 @@ export default function ShiftSetup({ token, onShiftStarted, onViewHistory }) {
   };
 
   const handleStart = () => {
-    if (!startTime) { setError('Enter a start time.'); return; }
     const uncrewed = units.filter(u => {
       const s = staffing[u.id];
       return (s?.in_service ?? true) && (s?.unit_type || u.unit_type) !== 'Cart' && !s?.crew?.trim();
@@ -144,7 +178,6 @@ export default function ShiftSetup({ token, onShiftStarted, onViewHistory }) {
     }
   };
 
-  // Sort: ALS → BLS → Cart, then alphabetically by unit number
   const sortedUnits = [...units].sort((a, b) => {
     const ta = staffing[a.id]?.unit_type || a.unit_type;
     const tb = staffing[b.id]?.unit_type || b.unit_type;
@@ -178,49 +211,6 @@ export default function ShiftSetup({ token, onShiftStarted, onViewHistory }) {
 
         <div className="bg-gray-800 rounded-2xl border border-gray-700 overflow-hidden">
 
-          {/* Shift times */}
-          <div className="px-6 py-5 border-b border-gray-700">
-            <div className="text-gray-400 text-xs uppercase tracking-wider mb-3">Shift Hours</div>
-
-            {/* Presets */}
-            <div className="flex gap-2 mb-3">
-              {TIME_PRESETS.map(p => (
-                <button
-                  key={p.label}
-                  onClick={() => { setStartTime(p.start); setEndTime(p.end); }}
-                  className={`flex-1 py-1.5 text-xs font-semibold rounded-lg border-2 transition-all
-                    ${startTime === p.start && endTime === p.end
-                      ? 'bg-blue-700 border-blue-500 text-white'
-                      : 'bg-gray-700 border-gray-600 text-gray-400 hover:border-gray-400 hover:text-gray-200'}`}
-                >
-                  {p.label}
-                </button>
-              ))}
-            </div>
-
-            <div className="flex items-center gap-3">
-              <div className="flex-1">
-                <label className="block text-gray-500 text-xs mb-1">Start Time</label>
-                <input
-                  type="time"
-                  value={startTime}
-                  onChange={e => { setStartTime(e.target.value); }}
-                  className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-              <div className="text-gray-500 text-sm mt-4">–</div>
-              <div className="flex-1">
-                <label className="block text-gray-500 text-xs mb-1">End Time</label>
-                <input
-                  type="time"
-                  value={endTime}
-                  onChange={e => setEndTime(e.target.value)}
-                  className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-            </div>
-          </div>
-
           {/* Unit roster */}
           <div className="px-6 py-4">
             <div className="flex items-center justify-between mb-3">
@@ -237,63 +227,121 @@ export default function ShiftSetup({ token, onShiftStarted, onViewHistory }) {
                   <button
                     onClick={setAllInService}
                     className="text-xs px-2.5 py-1.5 bg-green-900/60 hover:bg-green-800/60 text-green-300 border border-green-700 rounded-lg transition-colors"
-                    title="Mark all units as In Service"
                   >
                     ✓ All In Service
                   </button>
                 )}
-                <button
-                  onClick={() => { setAddingUnit(true); setAddError(''); }}
-                  className="text-xs px-3 py-1.5 bg-green-800 hover:bg-green-700 text-green-300 rounded-lg font-medium transition-colors"
-                >
-                  + Add Unit
-                </button>
+                {!addingUnit && (
+                  <button
+                    onClick={() => { setAddingUnit(true); setNewPreset(null); setAddError(''); }}
+                    className="text-xs px-3 py-1.5 bg-green-800 hover:bg-green-700 text-green-300 rounded-lg font-medium transition-colors"
+                  >
+                    + Add Unit
+                  </button>
+                )}
               </div>
             </div>
 
-            {/* Inline add unit form */}
+            {/* Add unit panel */}
             {addingUnit && (
               <div className="mb-4 rounded-xl border border-green-700 bg-gray-750 p-4">
-                <div className="text-green-400 text-xs font-semibold uppercase tracking-wider mb-3">New Unit</div>
-                <div className="flex gap-3 items-end">
-                  <div className="flex-1">
-                    <label className="block text-gray-500 text-xs mb-1">Unit Number</label>
-                    <input
-                      type="text"
-                      value={newNumber}
-                      onChange={e => setNewNumber(e.target.value)}
-                      onKeyDown={e => { if (e.key === 'Enter') handleAddUnit(); if (e.key === 'Escape') setAddingUnit(false); }}
-                      placeholder="e.g. Medic 1, Cart 1"
-                      autoFocus
-                      className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-green-500 placeholder-gray-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-gray-500 text-xs mb-1">Type</label>
-                    <div className="flex gap-1">
-                      {UNIT_TYPES.map(t => (
-                        <button key={t} onClick={() => setNewType(t)}
-                          className={`px-2.5 py-2 rounded-lg text-xs font-bold transition-colors
-                            ${newType === t
-                              ? (t === 'ALS' ? 'bg-red-600 text-white' : t === 'BLS' ? 'bg-blue-600 text-white' : 'bg-green-700 text-white')
-                              : 'bg-gray-700 text-gray-400 hover:bg-gray-600'}`}>
-                          {t}
+                {/* Step 1: preset picker */}
+                {!newPreset && (
+                  <>
+                    <div className="text-green-400 text-xs font-semibold uppercase tracking-wider mb-3">What type of unit?</div>
+                    <div className="grid grid-cols-4 gap-2">
+                      {UNIT_PRESETS.map(p => (
+                        <button
+                          key={p.key}
+                          onClick={() => selectPreset(p)}
+                          className="py-3 rounded-xl bg-gray-700 hover:bg-gray-600 border border-gray-600 hover:border-green-600 text-white font-bold text-sm transition-all"
+                        >
+                          {p.key === 'Medic' ? '🚑' : p.key === 'Cart' ? '🛺' : p.key === '555' ? '🚒' : '➕'}
+                          <div className="text-xs mt-1">{p.key}</div>
                         </button>
                       ))}
                     </div>
-                  </div>
-                </div>
-                {addError && <p className="text-red-400 text-xs mt-2">{addError}</p>}
-                <div className="flex gap-2 mt-3">
-                  <button onClick={() => { setAddingUnit(false); setNewNumber(''); setAddError(''); }}
-                    className="flex-1 py-2 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded-lg transition-colors">
-                    Cancel
-                  </button>
-                  <button onClick={handleAddUnit} disabled={addSaving}
-                    className="flex-1 py-2 bg-green-700 hover:bg-green-600 disabled:bg-green-900 text-white font-semibold text-sm rounded-lg transition-colors">
-                    {addSaving ? 'Adding…' : 'Add'}
-                  </button>
-                </div>
+                    <button
+                      onClick={cancelAdd}
+                      className="w-full mt-3 py-2 text-gray-500 hover:text-gray-300 text-sm transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </>
+                )}
+
+                {/* Step 2: name + confirm */}
+                {newPreset && (
+                  <>
+                    <div className="flex items-center gap-2 mb-3">
+                      <button onClick={() => { setNewPreset(null); setAddError(''); }}
+                        className="text-gray-500 hover:text-gray-300 text-sm transition-colors">←</button>
+                      <div className="text-green-400 text-xs font-semibold uppercase tracking-wider">
+                        {newPreset === 'Other' ? 'New Unit' : `Adding ${newNumber}`}
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      {/* Custom number (Other only) */}
+                      {newPreset === 'Other' && (
+                        <div>
+                          <label className="block text-gray-500 text-xs mb-1">Unit Number</label>
+                          <div className="flex gap-2 items-center">
+                            <input
+                              type="text"
+                              value={newNumber}
+                              onChange={e => setNewNumber(e.target.value)}
+                              placeholder="e.g. Medic 3, Bike 1"
+                              autoFocus
+                              className="flex-1 bg-gray-700 text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-green-500 placeholder-gray-500"
+                            />
+                            <div className="flex gap-1 flex-shrink-0">
+                              {UNIT_TYPES.map(t => (
+                                <button key={t} onClick={() => setNewType(t)}
+                                  className={`px-2.5 py-2 rounded-lg text-xs font-bold transition-colors
+                                    ${newType === t
+                                      ? (t === 'ALS' ? 'bg-red-600 text-white' : t === 'BLS' ? 'bg-blue-600 text-white' : 'bg-green-700 text-white')
+                                      : 'bg-gray-700 text-gray-400 hover:bg-gray-600'}`}>
+                                  {t}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Medic name — skip for Cart */}
+                      {newType !== 'Cart' && (
+                        <div>
+                          <label className="block text-gray-500 text-xs mb-1">Medic Name</label>
+                          <input
+                            ref={nameInputRef}
+                            type="text"
+                            value={newCrew}
+                            onChange={e => setNewCrew(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter') handleAddUnit(); if (e.key === 'Escape') cancelAdd(); }}
+                            placeholder="Who's on this unit?"
+                            autoFocus={newPreset !== 'Other'}
+                            className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-green-500 placeholder-gray-500"
+                          />
+                        </div>
+                      )}
+                    </div>
+
+                    {addError && <p className="text-red-400 text-xs mt-2">{addError}</p>}
+
+                    <div className="flex gap-2 mt-3">
+                      <button onClick={cancelAdd}
+                        className="flex-1 py-2 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded-lg transition-colors">
+                        Cancel
+                      </button>
+                      <button onClick={handleAddUnit} disabled={addSaving}
+                        className="flex-1 py-2 bg-green-700 hover:bg-green-600 disabled:bg-green-900 text-white font-semibold text-sm rounded-lg transition-colors">
+                        {addSaving ? 'Adding…' : 'Add'}
+                      </button>
+                    </div>
+                  </>
+                )}
               </div>
             )}
 
@@ -313,7 +361,6 @@ export default function ShiftSetup({ token, onShiftStarted, onViewHistory }) {
                   <div key={u.id}
                     className={`rounded-xl border transition-all ${inService ? 'border-gray-600 bg-gray-750' : 'border-gray-700 bg-gray-800/50'}`}>
 
-                    {/* Unit header row */}
                     <div className="flex items-center gap-3 p-4">
                       <span className="text-xl flex-shrink-0">{TYPE_ICONS[activeType] || '🚑'}</span>
                       <div className="flex-1 min-w-0">
@@ -337,7 +384,6 @@ export default function ShiftSetup({ token, onShiftStarted, onViewHistory }) {
                       </button>
                     </div>
 
-                    {/* Editable fields — only when in service */}
                     {inService && (
                       <div className="px-4 pb-4 space-y-3 border-t border-gray-700 pt-3">
                         <div className="flex gap-3 items-start">
@@ -385,7 +431,6 @@ export default function ShiftSetup({ token, onShiftStarted, onViewHistory }) {
                           </div>
                         </div>
 
-                        {/* GPS Tracker — collapsed unless opened */}
                         {editingGpsId === u.id ? (
                           <div className="flex gap-2 items-end">
                             <div className="flex-1">
@@ -434,7 +479,6 @@ export default function ShiftSetup({ token, onShiftStarted, onViewHistory }) {
           <div className="px-6 py-5 border-t border-gray-700">
             {error && <p className="text-red-400 text-sm mb-3">{error}</p>}
 
-            {/* Inline uncrewed warning — replaces window.confirm */}
             {uncrewedWarning && (
               <div className="mb-4 rounded-xl border border-yellow-700 bg-yellow-900/20 p-4">
                 <div className="text-yellow-300 font-semibold text-sm mb-1">⚠ Some units have no medic assigned</div>
