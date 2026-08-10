@@ -2,6 +2,13 @@
 @tailwind components;
 @tailwind utilities;
 
+/* iOS safe area — pushes content below the status bar / notch / Dynamic Island.
+   env() returns 0px on desktop and Android, so this has no effect there. */
+body {
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
 /* Mapbox overrides */
 .mapboxgl-ctrl-logo { display: none !important; }
 .mapboxgl-ctrl-attrib { display: none !important; }
