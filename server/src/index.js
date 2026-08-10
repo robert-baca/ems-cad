@@ -150,6 +150,7 @@ async function initDb() {
   await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS chief_complaint TEXT`);
   await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS notes TEXT`);
   await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS park_zone TEXT`);
+  await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS additional_unit_timestamps JSONB DEFAULT '{}'`);
   await pool.query(`ALTER TABLE locations ADD COLUMN IF NOT EXISTS location_type TEXT DEFAULT 'permanent'`);
   await pool.query(`ALTER TABLE units ADD COLUMN IF NOT EXISTS tracki_device_id TEXT`);
   await pool.query(`ALTER TABLE units ADD COLUMN IF NOT EXISTS tracker_name TEXT`);
@@ -228,7 +229,8 @@ async function initDb() {
     additional_unit_ids: r.additional_unit_ids || [],
     mutual_aid_agencies: r.mutual_aid_agencies || [],
     co_unit_ids:         r.co_unit_ids         || [],
-    additional_units_added_at: r.additional_units_added_at || {}
+    additional_units_added_at:   r.additional_units_added_at   || {},
+    additional_unit_timestamps:  r.additional_unit_timestamps  || {}
   }));
   // Query global max so call numbers never reset after a restart
   const maxRes = await pool.query('SELECT MAX(call_number) AS max_num FROM calls');
@@ -277,8 +279,8 @@ async function saveCall(call) {
       cleared_at, available_at, closed_at,
       disposition, close_notes, comments, narrative, additional_unit_ids, response_mode,
       parent_call_id, mutual_aid_agencies, co_unit_ids, additional_units_added_at,
-      chief_complaint, notes)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34)
+      chief_complaint, notes, additional_unit_timestamps)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35)
     ON CONFLICT (id) DO UPDATE SET
       status=EXCLUDED.status, call_type=EXCLUDED.call_type, priority=EXCLUDED.priority,
       location_name=EXCLUDED.location_name, park_zone=EXCLUDED.park_zone,
@@ -294,7 +296,8 @@ async function saveCall(call) {
       additional_unit_ids=EXCLUDED.additional_unit_ids, response_mode=EXCLUDED.response_mode,
       parent_call_id=EXCLUDED.parent_call_id, mutual_aid_agencies=EXCLUDED.mutual_aid_agencies,
       co_unit_ids=EXCLUDED.co_unit_ids, additional_units_added_at=EXCLUDED.additional_units_added_at,
-      chief_complaint=EXCLUDED.chief_complaint, notes=EXCLUDED.notes
+      chief_complaint=EXCLUDED.chief_complaint, notes=EXCLUDED.notes,
+      additional_unit_timestamps=EXCLUDED.additional_unit_timestamps
   `, [call.id, call.call_number, call.status, call.call_type, call.priority,
       call.location_name, call.park_zone || null,
       call.location_lat, call.location_lng, call.assigned_unit_id,
@@ -308,7 +311,8 @@ async function saveCall(call) {
       JSON.stringify(call.mutual_aid_agencies || []),
       JSON.stringify(call.co_unit_ids || []),
       JSON.stringify(call.additional_units_added_at || {}),
-      call.chief_complaint || null, call.notes || null]);
+      call.chief_complaint || null, call.notes || null,
+      JSON.stringify(call.additional_unit_timestamps || {})]);
 }
 
 async function saveLocation(loc) {
@@ -514,6 +518,34 @@ const VALID_UNIT_STATUSES = new Set([
   'on_scene', 'patient_contact', 'transporting', 'cleared', 'out_of_service'
 ]);
 
+// Derives call.status from whichever timestamp was set last.
+const TS_TO_STATUS = [
+  ['closed_at',           'closed'],
+  ['available_at',        'available'],
+  ['cleared_at',          'cleared'],
+  ['transporting_at',     'transporting'],
+  ['patient_contact_at',  'patient_contact'],
+  ['on_scene_at',         'on_scene'],
+  ['en_route_at',         'en_route'],
+  ['acknowledged_at',     'acknowledged'],
+  ['dispatched_at',       'dispatched'],
+];
+function recalcCallStatus(call) {
+  for (const [field, status] of TS_TO_STATUS) {
+    if (call[field]) return status;
+  }
+  return 'pending';
+}
+
+// Maps unit status values to their additional_unit_timestamps field name
+const UNIT_STATUS_TO_TS_FIELD = {
+  en_route:        'en_route_at',
+  on_scene:        'on_scene_at',
+  patient_contact: 'patient_contact_at',
+  transporting:    'transporting_at',
+  cleared:         'cleared_at',
+};
+
 // ── Units ─────────────────────────────────────────────────────────
 app.get('/api/units', verifyToken, (req, res) => {
   res.json(units.map(u => ({ ...u, password_hash: undefined })));
@@ -535,6 +567,27 @@ app.patch('/api/units/:id/status', verifyToken, async (req, res) => {
   saveUnit(unit).catch(console.error);
   io.to('dispatchers').emit('unit:status_change', { unit_id: unit.id, status: unit.status });
   io.to(`crew:${unit.id}`).emit('unit:status_change', { unit_id: unit.id, status: unit.status });
+
+  // Record milestone timestamp for additional units on active calls
+  const tsField = UNIT_STATUS_TO_TS_FIELD[unit.status];
+  if (tsField) {
+    const activeCall = calls.find(c =>
+      c.assigned_unit_id !== unit.id &&
+      (c.additional_unit_ids || []).includes(unit.id) &&
+      c.status !== 'closed'
+    );
+    if (activeCall) {
+      if (!activeCall.additional_unit_timestamps) activeCall.additional_unit_timestamps = {};
+      if (!activeCall.additional_unit_timestamps[unit.id]) activeCall.additional_unit_timestamps[unit.id] = {};
+      activeCall.additional_unit_timestamps[unit.id][tsField] = new Date().toISOString();
+      saveCall(activeCall).catch(console.error);
+      io.to('dispatchers').emit('call:updated', {
+        call_id: activeCall.id,
+        changes: { additional_unit_timestamps: activeCall.additional_unit_timestamps }
+      });
+    }
+  }
+
   res.json({ ok: true, unit });
 });
 
@@ -849,8 +902,12 @@ app.post('/api/calls/:id/add-unit', verifyToken, async (req, res) => {
   if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
   const call = calls.find(c => c.id === req.params.id);
   if (!call) return res.status(404).json({ error: 'Not found' });
-  const { unit_id } = req.body;
+  const { unit_id, initial_status } = req.body;
   if (!unit_id) return res.status(400).json({ error: 'unit_id required' });
+
+  const joinStatus = (initial_status && VALID_UNIT_STATUSES.has(initial_status))
+    ? initial_status
+    : 'dispatched';
 
   const conflict = getUnitActiveCall(unit_id, req.params.id);
   if (conflict) return res.status(409).json({ error: `Unit already on call #${conflict.call_number}` });
@@ -863,9 +920,6 @@ app.post('/api/calls/:id/add-unit', verifyToken, async (req, res) => {
   }
   const unit = units.find(u => u.id === unit_id);
   if (unit) {
-    // Start the additional unit at the current call status so they join the flow at the right point.
-    // 'pending' has no unit equivalent → use 'dispatched'; closed should never reach here.
-    const joinStatus = call.status === 'pending' ? 'dispatched' : call.status;
     unit.status = joinStatus;
     saveUnit(unit).catch(console.error);
     io.to('dispatchers').emit('unit:status_change', { unit_id: unit.id, status: joinStatus });
@@ -1500,6 +1554,21 @@ app.patch('/api/calls/:id/timestamps', verifyToken, async (req, res) => {
   Object.entries(req.body).forEach(([k, v]) => {
     if (ALLOWED.includes(k)) { call[k] = v; changes[k] = v; }
   });
+
+  // Recalc call.status from remaining timestamps and sync primary unit
+  const newStatus = recalcCallStatus(call);
+  if (newStatus !== call.status) {
+    call.status = newStatus;
+    changes.status = newStatus;
+    const primaryUnit = units.find(u => u.id === call.assigned_unit_id);
+    if (primaryUnit && newStatus !== 'pending' && newStatus !== 'closed') {
+      primaryUnit.status = newStatus;
+      saveUnit(primaryUnit).catch(console.error);
+      io.to('dispatchers').emit('unit:status_change', { unit_id: primaryUnit.id, status: newStatus });
+      io.to(`crew:${primaryUnit.id}`).emit('unit:status_change', { unit_id: primaryUnit.id, status: newStatus });
+    }
+  }
+
   saveCall(call).catch(console.error);
   if (Object.keys(changes).length) {
     io.to('dispatchers').emit('call:updated', { call_id: call.id, changes });

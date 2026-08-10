@@ -48,8 +48,8 @@ export const updateCallNarrative = (callId, narrative) =>
   api.patch(`/calls/${callId}/narrative`, { narrative });
 export const updateCallLocation = (callId, data) =>
   api.patch(`/calls/${callId}/location`, data);
-export const addUnitToCall = (callId, unitId) =>
-  api.post(`/calls/${callId}/add-unit`, { unit_id: unitId });
+export const addUnitToCall = (callId, unitId, initialStatus = 'dispatched') =>
+  api.post(`/calls/${callId}/add-unit`, { unit_id: unitId, initial_status: initialStatus });
 export const removeUnitFromCall = (callId, unitId) =>
   api.delete(`/calls/${callId}/units/${unitId}`);
 export const updateCallPriority = (callId, priority) =>

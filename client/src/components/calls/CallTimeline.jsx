@@ -150,22 +150,63 @@ function TimeRow({ step, ts, isLast, prevTs, nextTs, onUpdate, onClear, baseDate
   );
 }
 
-export default function CallTimeline({ call, onTimestampUpdate }) {
+const ADDITIONAL_TS_LABELS = {
+  en_route_at:        'En Route',
+  on_scene_at:        'On Scene',
+  patient_contact_at: 'Patient Contact',
+  transporting_at:    'Transporting',
+  cleared_at:         'Cleared',
+};
+
+export default function CallTimeline({ call, units = [], onTimestampUpdate }) {
+  const additionalUnitIds = call.additional_unit_ids || [];
+  const additionalUnitTimestamps = call.additional_unit_timestamps || {};
+
+  const additionalUnitsWithTs = additionalUnitIds
+    .map(id => ({
+      unit: units.find(u => u.id === id),
+      ts: additionalUnitTimestamps[id] || {},
+      id,
+    }))
+    .filter(({ ts }) => Object.keys(ts).length > 0);
+
   return (
-    <div className="space-y-0.5">
-      {STEPS.map((step, i) => (
-        <TimeRow
-          key={step.tsField}
-          step={step}
-          ts={call[step.tsField]}
-          isLast={i === STEPS.length - 1}
-          prevTs={i > 0 ? call[STEPS[i - 1].tsField] : null}
-          nextTs={i < STEPS.length - 1 ? call[STEPS[i + 1].tsField] : null}
-          onUpdate={(field, iso) => onTimestampUpdate?.(field, iso)}
-          onClear={(field) => onTimestampUpdate?.(field, null)}
-          baseDate={call.received_at}
-        />
-      ))}
+    <div className="space-y-4">
+      <div className="space-y-0.5">
+        {STEPS.map((step, i) => (
+          <TimeRow
+            key={step.tsField}
+            step={step}
+            ts={call[step.tsField]}
+            isLast={i === STEPS.length - 1}
+            prevTs={i > 0 ? call[STEPS[i - 1].tsField] : null}
+            nextTs={i < STEPS.length - 1 ? call[STEPS[i + 1].tsField] : null}
+            onUpdate={(field, iso) => onTimestampUpdate?.(field, iso)}
+            onClear={(field) => onTimestampUpdate?.(field, null)}
+            baseDate={call.received_at}
+          />
+        ))}
+      </div>
+
+      {additionalUnitsWithTs.length > 0 && (
+        <div className="space-y-2">
+          <div className="text-gray-500 text-xs uppercase tracking-wider">Additional Unit Milestones</div>
+          {additionalUnitsWithTs.map(({ unit, ts, id }) => (
+            <div key={id} className="bg-gray-700/50 rounded-lg p-2.5 space-y-1">
+              <div className="text-white text-xs font-semibold">{unit ? unit.unit_number : id}</div>
+              {Object.entries(ts)
+                .filter(([field]) => ADDITIONAL_TS_LABELS[field])
+                .sort(([, a], [, b]) => new Date(a) - new Date(b))
+                .map(([field, iso]) => (
+                  <div key={field} className="flex justify-between items-center">
+                    <span className="text-gray-400 text-xs">{ADDITIONAL_TS_LABELS[field]}</span>
+                    <span className="text-green-400 text-xs font-mono">{fmtTime(iso)}</span>
+                  </div>
+                ))}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

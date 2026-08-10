@@ -41,6 +41,7 @@ export default function CallDetail({
   const [addingUnit,    setAddingUnit]    = useState(false);
   const [selectedUnitId, setSelectedUnitId] = useState('');
   const [addUnitId,      setAddUnitId]      = useState('');
+  const [addUnitStatus,  setAddUnitStatus]  = useState('dispatched');
   const [showCloseModal, setShowCloseModal] = useState(false);
   const [narrative, setNarrative]         = useState(call.narrative || '');
   const [addingAid,       setAddingAid]       = useState(false);
@@ -64,6 +65,7 @@ export default function CallDetail({
     setAddingUnit(false);
     setSelectedUnitId('');
     setAddUnitId('');
+    setAddUnitStatus('dispatched');
     setShowCloseModal(false);
     setNarrative(call.narrative || '');
     setAddingAid(false);
@@ -107,9 +109,10 @@ export default function CallDetail({
 
   const handleAddUnit = () => {
     if (!addUnitId) return;
-    onAddUnit?.(call.id, addUnitId);
+    onAddUnit?.(call.id, addUnitId, addUnitStatus);
     setAddingUnit(false);
     setAddUnitId('');
+    setAddUnitStatus('dispatched');
   };
 
   return (
@@ -514,7 +517,7 @@ export default function CallDetail({
               <div className="bg-gray-700 rounded-xl p-3 space-y-2">
                 <div className="flex items-center justify-between">
                   <div className="text-gray-400 text-xs uppercase tracking-wider">Add Unit</div>
-                  <button onClick={() => { setAddingUnit(false); setAddUnitId(''); }}
+                  <button onClick={() => { setAddingUnit(false); setAddUnitId(''); setAddUnitStatus('dispatched'); }}
                     className="text-gray-500 hover:text-gray-300 text-sm leading-none">✕</button>
                 </div>
                 {availableUnits.length === 0 ? (
@@ -533,6 +536,20 @@ export default function CallDetail({
                     ))}
                   </div>
                 )}
+                <div>
+                  <div className="text-gray-500 text-xs mb-1">Starting status</div>
+                  <div className="flex gap-1.5">
+                    {['dispatched', 'en_route', 'on_scene'].map(s => (
+                      <button key={s} type="button"
+                        onClick={() => setAddUnitStatus(s)}
+                        className={`flex-1 py-1 rounded-lg text-xs font-semibold transition-colors
+                          ${addUnitStatus === s ? 'text-white' : 'bg-gray-600 text-gray-400 hover:bg-gray-500'}`}
+                        style={addUnitStatus === s ? { backgroundColor: STATUS_COLORS[s] } : undefined}>
+                        {STATUS_LABELS[s]}
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 <button onClick={handleAddUnit} disabled={!addUnitId}
                   className="w-full py-1.5 bg-blue-700 hover:bg-blue-600 disabled:bg-gray-600 text-white text-xs font-bold rounded-lg transition-colors">
                   Add to Call
@@ -620,6 +637,7 @@ export default function CallDetail({
             </div>
             <CallTimeline
               call={call}
+              units={units}
               onTimestampUpdate={(field, iso) => onTimestampUpdate?.(call.id, field, iso)}
             />
           </>

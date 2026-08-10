@@ -133,13 +133,13 @@ export function useCalls() {
     }
   }, []);
 
-  const addUnitToCall = useCallback(async (callId, unitId) => {
+  const addUnitToCall = useCallback(async (callId, unitId, initialStatus = 'dispatched') => {
     setCalls(prev => prev.map(c =>
       c.id === callId
         ? { ...c, additional_unit_ids: [...(c.additional_unit_ids || []).filter(id => id !== unitId), unitId] }
         : c
     ));
-    try { await apiAddUnitToCall(callId, unitId); } catch {}
+    try { await apiAddUnitToCall(callId, unitId, initialStatus); } catch {}
   }, []);
 
   const removeUnitFromCall = useCallback(async (callId, unitId) => {
