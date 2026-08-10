@@ -27,7 +27,7 @@ workflows:
         script: |
           cd client
           npx cap sync ios
-      - name: Fetch signing files and build
+      - name: Build and export iOS IPA
         script: |
           keychain initialize
           app-store-connect fetch-signing-files \
@@ -41,6 +41,7 @@ workflows:
 
           PROFILE=$(ls ~/Library/MobileDevice/Provisioning\ Profiles/*.mobileprovision 2>/dev/null | head -1)
           UUID=$(python3 -c "import subprocess,plistlib; data=subprocess.check_output(['security','cms','-D','-i','$PROFILE']); print(plistlib.loads(data)['UUID'])")
+          PROFILE_NAME=$(python3 -c "import subprocess,plistlib; data=subprocess.check_output(['security','cms','-D','-i','$PROFILE']); print(plistlib.loads(data)['Name'])")
           CERT=$(security find-identity -v -p codesigning | grep "iPhone Distribution" | head -1 | grep -o '".*"' | tr -d '"')
 
           xcodebuild \
@@ -53,20 +54,30 @@ workflows:
             CODE_SIGN_IDENTITY="$CERT" \
             PROVISIONING_PROFILE="$UUID" \
             DEVELOPMENT_TEAM=$APPLE_TEAM_ID
-      - name: Export IPA
-        script: |
-          cat > /tmp/ExportOptions.plist << EOF
+
+          cat > /tmp/ExportOptions.plist << PLIST_EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
             <key>method</key>
-            <string>app-store</string>
+            <string>app-store-connect</string>
             <key>teamID</key>
             <string>$APPLE_TEAM_ID</string>
+            <key>signingStyle</key>
+            <string>manual</string>
+            <key>signingCertificate</key>
+            <string>$CERT</string>
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>$BUNDLE_ID</key>
+              <string>$PROFILE_NAME</string>
+            </dict>
           </dict>
           </plist>
-          EOF
+          PLIST_EOF
+
+          mkdir -p build/ios/ipa
           xcodebuild \
             -exportArchive \
             -archivePath /tmp/App.xcarchive \
