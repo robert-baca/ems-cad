@@ -43,7 +43,8 @@ workflows:
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
-            DEVELOPMENT_TEAM=$APPLE_TEAM_ID
+            DEVELOPMENT_TEAM=$APPLE_TEAM_ID \
+            CURRENT_PROJECT_VERSION=$BUILD_NUMBER
           echo "$CERT_PRIVATE_KEY_B64" | base64 -d > /tmp/cert_key.pem
           app-store-connect fetch-signing-files \
             "$BUNDLE_ID" \
