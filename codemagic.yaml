@@ -7,7 +7,7 @@ workflows:
       node: 22
       xcode: latest
       groups:
-        - Secret
+        - secret
       vars:
         APP_STORE_CONNECT_ISSUER_ID: "2dddf940-2d08-4205-b6bd-e5f94d86b2a4"
         APP_STORE_CONNECT_KEY_IDENTIFIER: "P4Y42BF394"
