@@ -5,6 +5,7 @@ import { useUnits } from '../hooks/useUnits';
 import { useCalls } from '../hooks/useCalls';
 import { useSocket } from '../hooks/useSocket';
 import { useCrewGps } from '../hooks/useCrewGps';
+import { useCrewNotifications } from '../hooks/useCrewNotifications';
 import { apiBase } from '../lib/native';
 import ActiveCall from '../components/crew/ActiveCall';
 import StatusButtons from '../components/crew/StatusButtons';
@@ -177,6 +178,7 @@ export default function CrewMobile() {
   const [showCaseHistory,  setShowCaseHistory]  = useState(false);
   const [showBeacon,       setShowBeacon]       = useState(false);
   const isNative = !!(window.Capacitor?.isNativePlatform?.());
+  const { scheduleNotif } = useCrewNotifications();
   const [showNativeSetup,  setShowNativeSetup]  = useState(
     isNative && !localStorage.getItem('native_setup_done')
   );
@@ -234,7 +236,13 @@ export default function CrewMobile() {
     'call:created':        handleCallCreated,
     'call:updated':        handleCallUpdated,
     'call:status_change':  handleCallStatusChange,
-    'call:assigned_to_me': handleCallCreated,
+    'call:assigned_to_me': (call) => {
+      handleCallCreated(call);
+      scheduleNotif(
+        `📡 New Call — Case #${call.call_number}`,
+        `${call.call_type} · ${call.location_name || 'Unknown location'}`
+      );
+    },
     'call:comment_added':  handleCommentAdded,
     'shift:ended':         () => { setUnits([]); setCalls([]); setShiftEnded(true); }
   });
