@@ -1,6 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
 import Login from './pages/Login';
+import SSOLanding from './pages/SSOLanding';
 import DispatcherDashboard from './pages/DispatcherDashboard';
 import DisplayBoard from './pages/DisplayBoard';
 import CrewMobile from './pages/CrewMobile';
@@ -15,6 +16,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/sso" element={<SSOLanding />} />
       <Route
         path="/dispatcher"
         element={

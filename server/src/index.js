@@ -457,6 +457,58 @@ app.post('/api/auth/crew-login', async (req, res) => {
   }
 });
 
+// ── SSO — sfotems.com single sign-on ─────────────────────────────
+// dest=dispatcher: validates can_dispatch flag, issues dispatcher JWT
+// dest=crew: issues pre-auth crew JWT (caller still picks a unit via /crew/select-unit)
+// dest=display: caller should just navigate to /display directly (no server auth needed)
+const EMS_PORTAL = process.env.EMS_PORTAL_URL || 'https://sfotems.com';
+app.post('/api/auth/sso', async (req, res) => {
+  const { token, dest } = req.body;
+  if (!token || !dest) return res.status(400).json({ error: 'token and dest required' });
+
+  let identity;
+  try {
+    const r = await fetch(`${EMS_PORTAL}/api/resolve-session`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    });
+    const data = await r.json();
+    if (!data.valid) return res.status(401).json({ error: 'Session invalid or expired — please log in to sfotems.com again' });
+    identity = data;
+  } catch (err) {
+    console.error('[sso] resolve-session failed:', err.message);
+    return res.status(503).json({ error: 'Could not verify identity — please try again' });
+  }
+
+  if (dest === 'dispatcher') {
+    if (!identity.can_dispatch && identity.access_role !== 'admin') {
+      return res.status(403).json({ error: 'Your account does not have dispatcher access' });
+    }
+    const cadToken = signToken({
+      dispatcher_id: `sso:${identity.id}`,
+      username: identity.name,
+      role: 'dispatcher',
+      sso: true,
+    });
+    return res.json({ token: cadToken, user: { role: 'dispatcher', username: identity.name, name: identity.name } });
+  }
+
+  if (dest === 'crew') {
+    // Pre-auth token — no unit assigned yet; caller uses /crew/select-unit to complete login
+    const cadToken = signToken({
+      personnel_id: identity.id,
+      name: identity.name,
+      username: identity.name,
+      role: 'crew',
+      sso: true,
+    });
+    return res.json({ token: cadToken, user: { role: 'crew', name: identity.name, sso: true } });
+  }
+
+  return res.status(400).json({ error: 'Unknown dest — expected dispatcher, crew, or display' });
+});
+
 const VALID_UNIT_STATUSES = new Set([
   'available', 'dispatched', 'acknowledged', 'en_route',
   'on_scene', 'patient_contact', 'transporting', 'cleared', 'out_of_service'
