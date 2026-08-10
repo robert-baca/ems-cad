@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { apiBase } from '../lib/native';
 
 export function useLocations() {
   const { user } = useAuth();
@@ -9,7 +10,7 @@ export function useLocations() {
   // Load permanent locations from DB on mount
   useEffect(() => {
     if (!user?.token) return;
-    fetch('/api/locations', { headers: { Authorization: `Bearer ${user.token}` } })
+    fetch(`${apiBase()}/locations`, { headers: { Authorization: `Bearer ${user.token}` } })
       .then(r => r.json())
       .then(data => { if (Array.isArray(data)) setPermanent(data); })
       .catch(() => {});
@@ -23,7 +24,7 @@ export function useLocations() {
   const addLocation = useCallback(async (name, lat, lng, color = '#f59e0b', locationType = 'shift') => {
     if (locationType === 'permanent') {
       try {
-        const res = await fetch('/api/locations', {
+        const res = await fetch(`${apiBase()}/locations`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user?.token}` },
           body: JSON.stringify({ name, lat, lng, color, location_type: 'permanent' })
@@ -42,7 +43,7 @@ export function useLocations() {
     setPermanent(prev => prev.filter(l => l.id !== id));
     setShift(prev =>     prev.filter(l => l.id !== id));
     if (isPermanent) {
-      fetch(`/api/locations/${id}`, {
+      fetch(`${apiBase()}/locations/${id}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${user?.token}` }
       }).catch(() => {});

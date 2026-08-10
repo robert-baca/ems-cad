@@ -9,12 +9,13 @@ export function useSocket(handlers = {}) {
   handlersRef.current = handlers;
 
   useEffect(() => {
-    const stored = localStorage.getItem('cad_user');
-    const u = stored ? JSON.parse(stored) : null;
-    const token = u?.token || null;
+    const getUser = () => {
+      const stored = localStorage.getItem('cad_user');
+      try { return stored ? JSON.parse(stored) : null; } catch { return null; }
+    };
 
     socketRef.current = io(sockUrl(), {
-      auth: { token },
+      auth: (cb) => { const u = getUser(); cb({ token: u?.token || null }); },
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000
     });
@@ -23,6 +24,7 @@ export function useSocket(handlers = {}) {
 
     socket.on('connect', () => {
       setIsConnected(true);
+      const u = getUser();
       if (u?.role === 'dispatcher') {
         socket.emit('join:dispatcher');
       } else if (u?.role === 'crew' && u?.unit_id) {

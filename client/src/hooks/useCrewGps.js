@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { registerPlugin } from '@capacitor/core';
-import { apiBase } from '../lib/native';
+import { apiBase, PROD_URL } from '../lib/native';
 
-const PROD_URL = 'https://cad.sfotems.com';
 const STALE_MS = 3 * 60 * 1000;
 
 const isNative = () => !!(window.Capacitor?.isNativePlatform?.());
@@ -48,34 +47,44 @@ export function useCrewGps({ token, unit, enabled = true }) {
         } catch {}
       };
 
+      let cancelled = false;
+
       const startTracking = async () => {
         // Request permissions
         try {
           const { Geolocation } = await import('@capacitor/geolocation');
-          await Geolocation.requestPermissions({ permissions: ['location'] });
+          const status = await Geolocation.requestPermissions({ permissions: ['location'] });
+          if (!cancelled) setBgPermNeeded(status.location !== 'granted');
         } catch {}
+        if (cancelled) return;
         try {
           const { LocalNotifications } = await import('@capacitor/local-notifications');
           await LocalNotifications.requestPermissions();
         } catch {}
+        if (cancelled) return;
 
         // Start native foreground service — posts GPS directly without JS involvement
         try {
           await getTracker().startTracking({ token, serverUrl: PROD_URL });
-          setGpsStatus('native service running');
+          if (!cancelled) setGpsStatus('native service running');
         } catch (e) {
+          if (cancelled) return;
           // Fall back to JS watchPosition if native service fails
           setGpsStatus('falling back to foreground GPS...');
           try {
             const { Geolocation } = await import('@capacitor/geolocation');
             const id = await Geolocation.watchPosition(
               { enableHighAccuracy: true },
-              (pos) => { if (pos) postGpsJs(pos.coords.latitude, pos.coords.longitude); }
+              (pos) => { if (pos && !cancelled) postGpsJs(pos.coords.latitude, pos.coords.longitude); }
             );
+            if (cancelled) {
+              import('@capacitor/geolocation').then(({ Geolocation: G }) => G.clearWatch({ id }).catch(() => {})).catch(() => {});
+              return;
+            }
             watchIdRef.current = `geo:${id}`;
             setGpsStatus('foreground GPS active');
           } catch (e2) {
-            setGpsStatus(`GPS unavailable: ${e2.message}`);
+            if (!cancelled) setGpsStatus(`GPS unavailable: ${e2.message}`);
           }
         }
       };
@@ -83,6 +92,7 @@ export function useCrewGps({ token, unit, enabled = true }) {
       startTracking();
 
       return () => {
+        cancelled = true;
         // Always stop the native service
         try { getTracker().stopTracking(); } catch {}
         // Stop JS fallback if it was used

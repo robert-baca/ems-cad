@@ -249,6 +249,7 @@ export default function DispatcherDashboard() {
     const call = await dispatchCall(payload);
     setNewCallPin(null);
     if (call) { setSelectedCallId(call.id); setShowHistory(false); }
+    return call;
   };
 
   // Still checking for shift

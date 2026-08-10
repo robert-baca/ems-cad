@@ -603,7 +603,8 @@ export default function CallDetail({
         <CloseCallModal
           call={call}
           onConfirm={async (id, disposition, notes) => {
-            await onCloseCall?.(id, disposition, notes);
+            const err = await onCloseCall?.(id, disposition, notes);
+            if (err) return;
             setShowCloseModal(false);
             onClose?.();
           }}

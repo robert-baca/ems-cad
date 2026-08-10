@@ -17,7 +17,8 @@ function parseJwtExp(token) {
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(() => {
     const stored = localStorage.getItem('cad_user');
-    return stored ? JSON.parse(stored) : null;
+    if (!stored) return null;
+    try { return JSON.parse(stored); } catch { localStorage.removeItem('cad_user'); return null; }
   });
   const refreshTimerRef = useRef(null);
 
@@ -38,7 +39,9 @@ export function AuthProvider({ children }) {
     const tryRefresh = async () => {
       const stored = localStorage.getItem('cad_user');
       if (!stored) return;
-      const { token } = JSON.parse(stored);
+      let parsed;
+      try { parsed = JSON.parse(stored); } catch { localStorage.removeItem('cad_user'); return; }
+      const { token } = parsed;
       if (!token) return;
       const exp = parseJwtExp(token);
       if (!exp) return;

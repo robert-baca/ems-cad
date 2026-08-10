@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { apiBase } from '../lib/native';
 
 const TYPE_ICONS = { ALS: '🚑', BLS: '🚐', Cart: '🛺' };
 const UNIT_TYPES = ['ALS', 'BLS', 'Cart'];
@@ -20,7 +21,7 @@ export default function ShiftSetup({ token, onShiftStarted, onViewHistory }) {
   const [addSaving,   setAddSaving]   = useState(false);
 
   useEffect(() => {
-    fetch('/api/units', { headers: { Authorization: `Bearer ${token}` } })
+    fetch(`${apiBase()}/units`, { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.json())
       .then(data => {
         if (!Array.isArray(data)) return;
@@ -36,7 +37,7 @@ export default function ShiftSetup({ token, onShiftStarted, onViewHistory }) {
 
   const handleDeviceChange = async (unit_id, device_id) => {
     updateStaffing(unit_id, 'tracki_device_id', device_id);
-    await fetch(`/api/units/${unit_id}`, {
+    await fetch(`${apiBase()}/units/${unit_id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ tracki_device_id: device_id || null })
@@ -52,7 +53,7 @@ export default function ShiftSetup({ token, onShiftStarted, onViewHistory }) {
     setAddSaving(true);
     setAddError('');
     try {
-      const res = await fetch('/api/units', {
+      const res = await fetch(`${apiBase()}/units`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ unit_number: newNumber.trim(), unit_name: newNumber.trim(), unit_type: newType })
@@ -74,7 +75,7 @@ export default function ShiftSetup({ token, onShiftStarted, onViewHistory }) {
   const handleRemoveUnit = (unit_id) => {
     setUnits(prev => prev.filter(u => u.id !== unit_id));
     setStaffing(prev => { const next = { ...prev }; delete next[unit_id]; return next; });
-    fetch(`/api/units/${unit_id}`, {
+    fetch(`${apiBase()}/units/${unit_id}`, {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${token}` }
     }).catch(() => {});
@@ -100,7 +101,7 @@ export default function ShiftSetup({ token, onShiftStarted, onViewHistory }) {
         in_service: staffing[u.id]?.in_service ?? true,
         station:    staffing[u.id]?.station || ''
       }));
-      const res  = await fetch('/api/shift/start', {
+      const res  = await fetch(`${apiBase()}/shift/start`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body:    JSON.stringify({ shift_label: label, unit_staffing })

@@ -117,6 +117,11 @@ function Compass({ target, onBack, token }) {
   const [staleLabel,     setStaleLabel]     = useState(null);
   const [noCompass,      setNoCompass]      = useState(false);
   const [noGps,          setNoGps]          = useState(false);
+  // iOS 13+ requires requestPermission() to be called from a user-gesture handler.
+  // Start as 'needed' when the API exists so we show a tap-to-enable button first.
+  const [compassPermission, setCompassPermission] = useState(
+    typeof DeviceOrientationEvent?.requestPermission === 'function' ? 'needed' : 'granted'
+  );
   const pollRef    = useRef(null);
   const watchRef   = useRef(null);
   const headingRef = useRef(null);
@@ -133,8 +138,21 @@ function Compass({ target, onBack, token }) {
     return () => { if (watchRef.current != null) navigator.geolocation.clearWatch(watchRef.current); };
   }, []);
 
-  // Device compass — prefer absolute (true north), ignore relative if absolute fires
+  const requestCompassPermission = async () => {
+    try {
+      const s = await DeviceOrientationEvent.requestPermission();
+      setCompassPermission(s === 'granted' ? 'granted' : 'denied');
+      if (s !== 'granted') setNoCompass(true);
+    } catch {
+      setCompassPermission('denied');
+      setNoCompass(true);
+    }
+  };
+
+  // Device compass — only attach listeners after permission is confirmed granted
   useEffect(() => {
+    if (compassPermission !== 'granted') return;
+
     let gotAbsolute = false;
     let gotReading  = false;
 
@@ -159,12 +177,6 @@ function Compass({ target, onBack, token }) {
       if (h != null) apply(h);
     };
 
-    if (typeof DeviceOrientationEvent?.requestPermission === 'function') {
-      DeviceOrientationEvent.requestPermission()
-        .then(s => { if (s !== 'granted') setNoCompass(true); })
-        .catch(() => setNoCompass(true));
-    }
-
     window.addEventListener('deviceorientationabsolute', absHandler, true);
     window.addEventListener('deviceorientation',         relHandler, true);
     const timeout = setTimeout(() => { if (!gotReading) setNoCompass(true); }, 3000);
@@ -174,7 +186,7 @@ function Compass({ target, onBack, token }) {
       window.removeEventListener('deviceorientation',         relHandler, true);
       clearTimeout(timeout);
     };
-  }, []);
+  }, [compassPermission]);
 
   // Poll target position every 2s
   useEffect(() => {
@@ -229,8 +241,23 @@ function Compass({ target, onBack, token }) {
       {/* Body */}
       <div className="flex-1 flex flex-col items-center justify-center gap-5 px-6">
 
+        {/* iOS compass permission prompt */}
+        {compassPermission === 'needed' && (
+          <div className="flex flex-col items-center gap-3">
+            <div className="text-gray-300 text-sm text-center">
+              Tap to enable the compass sensor
+            </div>
+            <button
+              onClick={requestCompassPermission}
+              className="px-6 py-3 bg-green-700 hover:bg-green-600 text-white font-bold rounded-2xl text-sm transition-colors"
+            >
+              Enable Compass
+            </button>
+          </div>
+        )}
+
         {/* Status messages */}
-        {noCompass ? (
+        {compassPermission !== 'needed' && noCompass ? (
           <div className="text-amber-400 text-sm text-center bg-amber-900/30 border border-amber-700/50 rounded-xl px-4 py-2">
             No compass sensor on this device
           </div>

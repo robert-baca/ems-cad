@@ -7,7 +7,7 @@
   },
   "plugins": {
     "Geolocation": {
-      "permissions": ["location", "coarseLocation"]
+      "permissions": ["location", "coarseLocation", "backgroundLocation"]
     }
   }
 }
