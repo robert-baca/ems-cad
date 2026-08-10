@@ -40,11 +40,9 @@ workflows:
             -configuration Release \
             -archivePath /tmp/App.xcarchive \
             archive \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath /tmp/key.p8 \
-            -authenticationKeyID "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
-            -authenticationKeyIssuerID "$APP_STORE_CONNECT_ISSUER_ID" \
-            CODE_SIGN_STYLE=Automatic \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
             DEVELOPMENT_TEAM=$APPLE_TEAM_ID
           cat > /tmp/ExportOptions.plist << 'PLIST_EOF'
           <?xml version="1.0" encoding="UTF-8"?>
