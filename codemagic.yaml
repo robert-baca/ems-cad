@@ -44,7 +44,25 @@ workflows:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
             DEVELOPMENT_TEAM=$APPLE_TEAM_ID
-          cat > /tmp/ExportOptions.plist << 'PLIST_EOF'
+          openssl genrsa -out /tmp/cert_key.pem 2048
+          app-store-connect fetch-signing-files \
+            "$BUNDLE_ID" \
+            --type IOS_APP_STORE \
+            --create \
+            --issuer-id "$APP_STORE_CONNECT_ISSUER_ID" \
+            --key-id "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
+            --private-key @file:/tmp/key.p8 \
+            --certificate-key @file:/tmp/cert_key.pem
+          keychain add-certificates
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          find "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles" \
+            -name "*.mobileprovision" \
+            -exec cp {} "$HOME/Library/MobileDevice/Provisioning Profiles/" \;
+          PROFILE=$(ls "$HOME/Library/MobileDevice/Provisioning Profiles/"*.mobileprovision | head -1)
+          PROFILE_NAME=$(python3 -c "import subprocess,plistlib; data=subprocess.check_output(['security','cms','-D','-i','${PROFILE}']); print(plistlib.loads(data)['Name'])")
+          CERT=$(security find-identity -v -p codesigning | grep "Apple Distribution" | head -1 | grep -o '".*"' | tr -d '"')
+          echo "Profile: $PROFILE_NAME  Cert: $CERT"
+          cat > /tmp/ExportOptions.plist << PLIST_EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
@@ -52,9 +70,14 @@ workflows:
             <key>method</key>
             <string>app-store-connect</string>
             <key>teamID</key>
-            <string>4K6T694JM2</string>
+            <string>${APPLE_TEAM_ID}</string>
             <key>signingStyle</key>
-            <string>automatic</string>
+            <string>manual</string>
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>${BUNDLE_ID}</key>
+              <string>${PROFILE_NAME}</string>
+            </dict>
           </dict>
           </plist>
           PLIST_EOF
@@ -62,11 +85,7 @@ workflows:
             -exportArchive \
             -archivePath /tmp/App.xcarchive \
             -exportPath build/ios/ipa \
-            -exportOptionsPlist /tmp/ExportOptions.plist \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath /tmp/key.p8 \
-            -authenticationKeyID "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
-            -authenticationKeyIssuerID "$APP_STORE_CONNECT_ISSUER_ID"
+            -exportOptionsPlist /tmp/ExportOptions.plist
           app-store-connect publish \
             --path build/ios/ipa/*.ipa \
             --issuer-id "$APP_STORE_CONNECT_ISSUER_ID" \
