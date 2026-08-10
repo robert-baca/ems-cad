@@ -29,6 +29,7 @@ workflows:
           npx cap sync ios
       - name: Build and export iOS IPA
         script: |
+          echo "$APP_STORE_CONNECT_PRIVATE_KEY_B64" | base64 -d > /tmp/key.p8
           keychain initialize
           app-store-connect fetch-signing-files \
             "$BUNDLE_ID" \
@@ -36,14 +37,13 @@ workflows:
             --create \
             --issuer-id "$APP_STORE_CONNECT_ISSUER_ID" \
             --key-id "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
-            --private-key "$APP_STORE_CONNECT_PRIVATE_KEY"
+            --private-key @file:/tmp/key.p8
           keychain add-certificates
-
           PROFILE=$(ls ~/Library/MobileDevice/Provisioning\ Profiles/*.mobileprovision 2>/dev/null | head -1)
           UUID=$(python3 -c "import subprocess,plistlib; data=subprocess.check_output(['security','cms','-D','-i','$PROFILE']); print(plistlib.loads(data)['UUID'])")
           PROFILE_NAME=$(python3 -c "import subprocess,plistlib; data=subprocess.check_output(['security','cms','-D','-i','$PROFILE']); print(plistlib.loads(data)['Name'])")
           CERT=$(security find-identity -v -p codesigning | grep "iPhone Distribution" | head -1 | grep -o '".*"' | tr -d '"')
-
+          echo "UUID=$UUID  PROFILE_NAME=$PROFILE_NAME  CERT=$CERT"
           xcodebuild \
             -project client/ios/App/App.xcodeproj \
             -scheme App \
@@ -54,7 +54,6 @@ workflows:
             CODE_SIGN_IDENTITY="$CERT" \
             PROVISIONING_PROFILE="$UUID" \
             DEVELOPMENT_TEAM=$APPLE_TEAM_ID
-
           cat > /tmp/ExportOptions.plist << PLIST_EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -74,7 +73,6 @@ workflows:
           </dict>
           </plist>
           PLIST_EOF
-
           security unlock-keychain -p "" ~/Library/Keychains/build.keychain 2>/dev/null || true
           mkdir -p build/ios/ipa
           xcodebuild \
@@ -82,13 +80,11 @@ workflows:
             -archivePath /tmp/App.xcarchive \
             -exportPath build/ios/ipa \
             -exportOptionsPlist /tmp/ExportOptions.plist
+          app-store-connect publish \
+            --path build/ios/ipa/*.ipa \
+            --issuer-id "$APP_STORE_CONNECT_ISSUER_ID" \
+            --key-id "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
+            --private-key @file:/tmp/key.p8
     artifacts:
       - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
-    publishing:
-      app_store_connect:
-        api_key: $APP_STORE_CONNECT_PRIVATE_KEY
-        key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
-        issuer_id: $APP_STORE_CONNECT_ISSUER_ID
-        submit_to_testflight: true
-        submit_to_app_store: false
