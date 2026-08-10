@@ -31,7 +31,9 @@ workflows:
           npx cap sync ios
       - name: Build and export iOS IPA
         script: |
+          echo "DEBUG key_b64 length=${#APP_STORE_CONNECT_PRIVATE_KEY_B64}"
           echo "$APP_STORE_CONNECT_PRIVATE_KEY_B64" | base64 -d > /tmp/key.p8
+          echo "DEBUG key.p8 bytes=$(wc -c < /tmp/key.p8)"
           keychain initialize
           app-store-connect fetch-signing-files \
             "$BUNDLE_ID" \
