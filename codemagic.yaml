@@ -52,23 +52,11 @@ workflows:
             -archivePath /tmp/App.xcarchive \
             archive \
             DEVELOPMENT_TEAM=$APPLE_TEAM_ID
-          cat > /tmp/ExportOptions.plist << 'PLIST_EOF'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>method</key>
-            <string>app-store-connect</string>
-            <key>teamID</key>
-            <string>4K6T694JM2</string>
-          </dict>
-          </plist>
-          PLIST_EOF
           xcodebuild \
             -exportArchive \
             -archivePath /tmp/App.xcarchive \
             -exportPath build/ios/ipa \
-            -exportOptionsPlist /tmp/ExportOptions.plist
+            -exportOptionsPlist /Users/builder/export_options.plist
           app-store-connect publish \
             --path build/ios/ipa/*.ipa \
             --issuer-id "$APP_STORE_CONNECT_ISSUER_ID" \
