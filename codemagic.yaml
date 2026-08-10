@@ -66,8 +66,6 @@ workflows:
             <string>$APPLE_TEAM_ID</string>
             <key>signingStyle</key>
             <string>manual</string>
-            <key>signingCertificate</key>
-            <string>$CERT</string>
             <key>provisioningProfiles</key>
             <dict>
               <key>$BUNDLE_ID</key>
@@ -77,6 +75,7 @@ workflows:
           </plist>
           PLIST_EOF
 
+          security unlock-keychain -p "" ~/Library/Keychains/build.keychain 2>/dev/null || true
           mkdir -p build/ios/ipa
           xcodebuild \
             -exportArchive \
