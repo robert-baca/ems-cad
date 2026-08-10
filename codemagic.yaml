@@ -43,22 +43,16 @@ workflows:
             --private-key @file:/tmp/key.p8 \
             --certificate-key @file:/tmp/cert_key.pem
           keychain add-certificates
-          PROFILE=$(ls ~/Library/MobileDevice/Provisioning\ Profiles/*.mobileprovision 2>/dev/null | head -1)
-          UUID=$(python3 -c "import subprocess,plistlib; data=subprocess.check_output(['security','cms','-D','-i','$PROFILE']); print(plistlib.loads(data)['UUID'])")
-          PROFILE_NAME=$(python3 -c "import subprocess,plistlib; data=subprocess.check_output(['security','cms','-D','-i','$PROFILE']); print(plistlib.loads(data)['Name'])")
-          CERT=$(security find-identity -v -p codesigning | grep "iPhone Distribution" | head -1 | grep -o '".*"' | tr -d '"')
-          echo "UUID=$UUID  PROFILE_NAME=$PROFILE_NAME  CERT=$CERT"
+          xcode-project use-profiles
+          mkdir -p build/ios/ipa
           xcodebuild \
             -project client/ios/App/App.xcodeproj \
             -scheme App \
             -configuration Release \
             -archivePath /tmp/App.xcarchive \
             archive \
-            CODE_SIGN_STYLE=Manual \
-            CODE_SIGN_IDENTITY="$CERT" \
-            PROVISIONING_PROFILE="$UUID" \
             DEVELOPMENT_TEAM=$APPLE_TEAM_ID
-          cat > /tmp/ExportOptions.plist << PLIST_EOF
+          cat > /tmp/ExportOptions.plist << 'PLIST_EOF'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
@@ -66,19 +60,10 @@ workflows:
             <key>method</key>
             <string>app-store-connect</string>
             <key>teamID</key>
-            <string>$APPLE_TEAM_ID</string>
-            <key>signingStyle</key>
-            <string>manual</string>
-            <key>provisioningProfiles</key>
-            <dict>
-              <key>$BUNDLE_ID</key>
-              <string>$PROFILE_NAME</string>
-            </dict>
+            <string>4K6T694JM2</string>
           </dict>
           </plist>
           PLIST_EOF
-          security unlock-keychain -p "" ~/Library/Keychains/build.keychain 2>/dev/null || true
-          mkdir -p build/ios/ipa
           xcodebuild \
             -exportArchive \
             -archivePath /tmp/App.xcarchive \
