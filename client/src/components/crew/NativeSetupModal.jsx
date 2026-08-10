@@ -12,7 +12,7 @@ const STEPS = [
     key: 'notifications',
     icon: '🔔',
     title: 'Notifications',
-    body: 'Required for the GPS tracking service to keep running in the background.',
+    body: 'Required so your phone alerts you with sound and vibration when dispatch assigns you a call.',
     button: 'Allow Notifications',
   },
   {
@@ -40,6 +40,10 @@ export default function NativeSetupModal({ onDone }) {
       } else if (current.key === 'notifications') {
         const { LocalNotifications } = await import('@capacitor/local-notifications');
         await LocalNotifications.requestPermissions();
+        // Create the channel immediately after permission is granted so it exists
+        // with IMPORTANCE_MAX before any call notification is ever scheduled.
+        const { createNotifChannel } = await import('../../hooks/useCrewNotifications');
+        await createNotifChannel();
       }
       // battery step: instructions only, no plugin needed
     } catch {}
