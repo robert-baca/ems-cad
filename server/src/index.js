@@ -147,6 +147,9 @@ async function initDb() {
   await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS co_unit_ids JSONB DEFAULT '[]'`);
   await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS assigned_unit_number TEXT`);
   await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS additional_units_added_at JSONB DEFAULT '{}'`);
+  await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS chief_complaint TEXT`);
+  await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS notes TEXT`);
+  await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS park_zone TEXT`);
   await pool.query(`ALTER TABLE locations ADD COLUMN IF NOT EXISTS location_type TEXT DEFAULT 'permanent'`);
   await pool.query(`ALTER TABLE units ADD COLUMN IF NOT EXISTS tracki_device_id TEXT`);
   await pool.query(`ALTER TABLE units ADD COLUMN IF NOT EXISTS tracker_name TEXT`);
@@ -268,18 +271,19 @@ async function deleteUnitFromDb(id) {
 
 async function saveCall(call) {
   await pool.query(`
-    INSERT INTO calls (id, call_number, status, call_type, priority, location_name,
+    INSERT INTO calls (id, call_number, status, call_type, priority, location_name, park_zone,
       location_lat, location_lng, assigned_unit_id, assigned_unit_number, received_at, dispatched_at, acknowledged_at,
       en_route_at, on_scene_at, patient_contact_at, arrived_first_aid_at, transporting_at,
       cleared_at, available_at, closed_at,
       disposition, close_notes, comments, narrative, additional_unit_ids, response_mode,
-      parent_call_id, mutual_aid_agencies, co_unit_ids, additional_units_added_at)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31)
+      parent_call_id, mutual_aid_agencies, co_unit_ids, additional_units_added_at,
+      chief_complaint, notes)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34)
     ON CONFLICT (id) DO UPDATE SET
       status=EXCLUDED.status, call_type=EXCLUDED.call_type, priority=EXCLUDED.priority,
-      location_name=EXCLUDED.location_name, location_lat=EXCLUDED.location_lat,
-      location_lng=EXCLUDED.location_lng, assigned_unit_id=EXCLUDED.assigned_unit_id,
-      assigned_unit_number=EXCLUDED.assigned_unit_number,
+      location_name=EXCLUDED.location_name, park_zone=EXCLUDED.park_zone,
+      location_lat=EXCLUDED.location_lat, location_lng=EXCLUDED.location_lng,
+      assigned_unit_id=EXCLUDED.assigned_unit_id, assigned_unit_number=EXCLUDED.assigned_unit_number,
       dispatched_at=EXCLUDED.dispatched_at, acknowledged_at=EXCLUDED.acknowledged_at,
       en_route_at=EXCLUDED.en_route_at, on_scene_at=EXCLUDED.on_scene_at,
       patient_contact_at=EXCLUDED.patient_contact_at,
@@ -289,9 +293,11 @@ async function saveCall(call) {
       comments=EXCLUDED.comments, narrative=EXCLUDED.narrative,
       additional_unit_ids=EXCLUDED.additional_unit_ids, response_mode=EXCLUDED.response_mode,
       parent_call_id=EXCLUDED.parent_call_id, mutual_aid_agencies=EXCLUDED.mutual_aid_agencies,
-      co_unit_ids=EXCLUDED.co_unit_ids, additional_units_added_at=EXCLUDED.additional_units_added_at
+      co_unit_ids=EXCLUDED.co_unit_ids, additional_units_added_at=EXCLUDED.additional_units_added_at,
+      chief_complaint=EXCLUDED.chief_complaint, notes=EXCLUDED.notes
   `, [call.id, call.call_number, call.status, call.call_type, call.priority,
-      call.location_name, call.location_lat, call.location_lng, call.assigned_unit_id,
+      call.location_name, call.park_zone || null,
+      call.location_lat, call.location_lng, call.assigned_unit_id,
       call.assigned_unit_number || null,
       call.received_at, call.dispatched_at, call.acknowledged_at, call.en_route_at,
       call.on_scene_at, call.patient_contact_at, call.arrived_first_aid_at || null,
@@ -301,7 +307,8 @@ async function saveCall(call) {
       call.response_mode || null, call.parent_call_id || null,
       JSON.stringify(call.mutual_aid_agencies || []),
       JSON.stringify(call.co_unit_ids || []),
-      JSON.stringify(call.additional_units_added_at || {})]);
+      JSON.stringify(call.additional_units_added_at || {}),
+      call.chief_complaint || null, call.notes || null]);
 }
 
 async function saveLocation(loc) {
@@ -1363,6 +1370,21 @@ app.patch('/api/calls/:id/location', verifyToken, async (req, res) => {
   if (park_zone     !== undefined) { call.park_zone     = park_zone;     changes.park_zone     = park_zone;     }
   if (location_lat  !== undefined) { call.location_lat  = location_lat;  changes.location_lat  = location_lat;  }
   if (location_lng  !== undefined) { call.location_lng  = location_lng;  changes.location_lng  = location_lng;  }
+  saveCall(call).catch(console.error);
+  io.to('dispatchers').emit('call:updated', { call_id: call.id, changes });
+  if (call.assigned_unit_id) io.to(`crew:${call.assigned_unit_id}`).emit('call:updated', { call_id: call.id, changes });
+  res.json({ ok: true });
+});
+
+app.patch('/api/calls/:id/details', verifyToken, async (req, res) => {
+  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
+  const call = calls.find(c => c.id === req.params.id);
+  if (!call) return res.status(404).json({ error: 'Not found' });
+  const { call_type, chief_complaint, notes } = req.body;
+  const changes = {};
+  if (call_type       !== undefined) { call.call_type       = call_type;       changes.call_type       = call_type; }
+  if (chief_complaint !== undefined) { call.chief_complaint = chief_complaint;  changes.chief_complaint = chief_complaint; }
+  if (notes           !== undefined) { call.notes           = notes;            changes.notes           = notes; }
   saveCall(call).catch(console.error);
   io.to('dispatchers').emit('call:updated', { call_id: call.id, changes });
   if (call.assigned_unit_id) io.to(`crew:${call.assigned_unit_id}`).emit('call:updated', { call_id: call.id, changes });
