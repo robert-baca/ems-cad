@@ -30,7 +30,14 @@ workflows:
       - name: Write API key
         script: |
           mkdir -p ~/.appstoreconnect/private_keys
-          echo -n "$APP_STORE_CONNECT_PRIVATE_KEY" > ~/.appstoreconnect/private_keys/AuthKey_${APP_STORE_CONNECT_KEY_IDENTIFIER}.p8
+          python3 -c "
+import os, sys
+key = os.environ['APP_STORE_CONNECT_PRIVATE_KEY']
+key = key.replace('\\\\n', '\n')
+if not key.endswith('\n'):
+    key += '\n'
+sys.stdout.write(key)
+" > ~/.appstoreconnect/private_keys/AuthKey_${APP_STORE_CONNECT_KEY_IDENTIFIER}.p8
       - name: Archive iOS app
         script: |
           xcodebuild \
