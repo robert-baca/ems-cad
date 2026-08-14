@@ -169,7 +169,7 @@ export default function DispatcherDashboard() {
       }
     },
     'shift:started':       ({ shift, units: u }) => { setCurrentShift(shift); if (setUnits) setUnits(u); },
-    'shift:ended':         ({ units: u, ...summary }) => { setShiftSummary(summary); setCurrentShift(null); setCalls([]); setSelectedCallId(null); if (u) setUnits(u); },
+    'shift:ended':         ({ units: u, open_calls, ...summary }) => { setShiftSummary(summary); setCurrentShift(null); setCalls(open_calls || []); setSelectedCallId(null); if (u) setUnits(u); },
     'gps:unknown_device':  ({ device_id }) => setUnknownGpsDevice(device_id)
   });
 
@@ -181,7 +181,7 @@ export default function DispatcherDashboard() {
   const handleEndShift = async () => {
     const openCalls = calls.filter(c => c.status !== 'closed');
     const confirmMsg = openCalls.length > 0
-      ? `There ${openCalls.length === 1 ? 'is 1 active call' : `are ${openCalls.length} active calls`} still open.\n\nEnd shift anyway and generate the day summary?`
+      ? `There ${openCalls.length === 1 ? 'is 1 active call' : `are ${openCalls.length} active calls`} still open.\n\nThey'll carry over to the next shift so they can still be closed out. End shift and generate the day summary?`
       : 'End shift and generate the day summary?';
     if (!window.confirm(confirmMsg)) return;
     setEndingShift(true);

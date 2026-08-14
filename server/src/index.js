@@ -518,6 +518,11 @@ const VALID_UNIT_STATUSES = new Set([
   'on_scene', 'patient_contact', 'transporting', 'cleared', 'out_of_service'
 ]);
 
+const VALID_CALL_STATUSES = new Set([
+  'pending', 'dispatched', 'acknowledged', 'en_route', 'on_scene',
+  'patient_contact', 'transporting', 'cleared', 'available', 'closed'
+]);
+
 // Derives call.status from whichever timestamp was set last.
 const TS_TO_STATUS = [
   ['closed_at',           'closed'],
@@ -610,6 +615,8 @@ app.post('/api/units', verifyToken, async (req, res) => {
   const { unit_number, unit_name, unit_type = 'ALS', tracker_name } = req.body;
   if (!unit_number?.trim() || !unit_name?.trim())
     return res.status(400).json({ error: 'unit_number and unit_name are required' });
+  if (units.some(u => u.unit_number.trim().toLowerCase() === unit_number.trim().toLowerCase()))
+    return res.status(409).json({ error: `A unit named "${unit_number.trim()}" already exists` });
   const newUnit = {
     id:              `u-${Date.now()}`,
     unit_number:     unit_number.trim(),
@@ -639,7 +646,11 @@ app.put('/api/units/:id', verifyToken, async (req, res) => {
   if (!unit) return res.status(404).json({ error: 'Not found' });
 
   const { unit_number, unit_name, unit_type, password, tracker_name } = req.body;
-  if (unit_number !== undefined)    unit.unit_number  = unit_number;
+  if (unit_number !== undefined) {
+    if (units.some(u => u.id !== unit.id && u.unit_number.trim().toLowerCase() === unit_number.trim().toLowerCase()))
+      return res.status(409).json({ error: `A unit named "${unit_number.trim()}" already exists` });
+    unit.unit_number = unit_number;
+  }
   if (unit_name   !== undefined)    unit.unit_name    = unit_name;
   if (unit_type   !== undefined)    unit.unit_type    = unit_type;
   if (password)                     unit.password_hash = bcrypt.hashSync(password, 8);
@@ -803,6 +814,10 @@ app.post('/api/calls', verifyToken, async (req, res) => {
     const conflict = getUnitActiveCall(req.body.assigned_unit_id);
     if (conflict) return res.status(409).json({ error: `Unit already on call #${conflict.call_number}` });
   }
+  for (const uid of additionalIds) {
+    const conflict = getUnitActiveCall(uid);
+    if (conflict) return res.status(409).json({ error: `Unit already on call #${conflict.call_number}` });
+  }
   const id         = `call-${Date.now()}`;
   const callNumber = nextCallNum++;
   const now        = new Date().toISOString();
@@ -957,6 +972,7 @@ app.delete('/api/calls/:id/units/:unit_id', verifyToken, async (req, res) => {
 app.patch('/api/calls/:id/status', verifyToken, async (req, res) => {
   const call = calls.find(c => c.id === req.params.id);
   if (!call) return res.status(404).json({ error: 'Not found' });
+  if (req.user.role === 'overwatch') return res.status(403).json({ error: 'Forbidden' });
 
   if (req.user.role === 'crew') {
     const allIds = [call.assigned_unit_id, ...(call.additional_unit_ids || [])];
@@ -966,6 +982,8 @@ app.patch('/api/calls/:id/status', verifyToken, async (req, res) => {
     const closingWithDisposition = req.body.status === 'closed' && req.body.disposition;
     if (!CREW_ALLOWED.includes(req.body.status) && !closingWithDisposition)
       return res.status(403).json({ error: 'Forbidden' });
+  } else if (!VALID_CALL_STATUSES.has(req.body.status)) {
+    return res.status(400).json({ error: 'Invalid status' });
   }
 
   const TS_MAP = {
@@ -1134,7 +1152,12 @@ app.post('/api/shift/start', verifyToken, async (req, res) => {
     unit.crew    = crew    || null;
     unit.station = station || null;
     if (unit_type) unit.unit_type = unit_type;
-    unit.status = in_service ? 'available' : 'out_of_service';
+    // Don't clobber the status of a unit still working a call carried over from
+    // the previous shift (e.g. still transporting) — the in-service toggle only
+    // applies to units that aren't tied to a still-open call.
+    if (!getUnitActiveCall(unit.id)) {
+      unit.status = in_service ? 'available' : 'out_of_service';
+    }
     saveUnit(unit).catch(console.error);
   });
 
@@ -1193,11 +1216,24 @@ app.post('/api/shift/end', verifyToken, async (req, res) => {
     calls:                shiftCalls
   };
 
-  // Clear calls (shift-scoped) but keep unit records — deleting/recreating them
-  // every shift broke crew login sessions, GPS tracker assignments, and any
+  // Clear closed calls (shift-scoped) but keep unit records — deleting/recreating
+  // units every shift broke crew login sessions, GPS tracker assignments, and any
   // custom unit passwords. Just take everyone off-service for the next shift setup.
-  calls = [];
+  //
+  // Calls still open at shift end (e.g. a unit still transporting) are NOT discarded —
+  // wiping them left no way to ever record a disposition/closed_at for that call. They
+  // carry over into the next shift so a dispatcher can still close them out properly,
+  // and the unit(s) working them keep their real status instead of being forced
+  // 'out_of_service' out from under an active call.
+  const openCalls   = calls.filter(c => c.status !== 'closed');
+  const busyUnitIds = new Set();
+  openCalls.forEach(c => {
+    if (c.assigned_unit_id) busyUnitIds.add(c.assigned_unit_id);
+    (c.additional_unit_ids || []).forEach(id => busyUnitIds.add(id));
+  });
+  calls = openCalls;
   units.forEach(u => {
+    if (busyUnitIds.has(u.id)) return;
     u.status          = 'out_of_service';
     u.tracking_active = false;
     saveUnit(u).catch(console.error);
@@ -1205,9 +1241,9 @@ app.post('/api/shift/end', verifyToken, async (req, res) => {
 
   currentShift = null;
   const sanitizedUnits = units.map(u => ({ ...u, password_hash: undefined }));
-  io.to('dispatchers').emit('shift:ended', { ...summary, units: sanitizedUnits });
+  io.to('dispatchers').emit('shift:ended', { ...summary, units: sanitizedUnits, open_calls: openCalls });
   units.forEach(u => io.to(`crew:${u.id}`).emit('shift:ended', { units: sanitizedUnits }));
-  res.json(summary);
+  res.json({ ...summary, open_calls: openCalls });
 });
 
 app.patch('/api/shift/units/:unit_id', verifyToken, async (req, res) => {

@@ -22,8 +22,8 @@ export default function EditUnitModal({ unit, onSave, onDelete, onClose }) {
         unit_type:   unitType
       });
       onClose();
-    } catch {
-      setError('Failed to save. Try again.');
+    } catch (err) {
+      setError(err?.response?.data?.error || 'Failed to save. Try again.');
     } finally {
       setSaving(false);
     }

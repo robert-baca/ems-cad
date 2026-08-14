@@ -24,8 +24,8 @@ export default function CloseCallModal({ call, onConfirm, onClose }) {
     setError('');
     try {
       await onConfirm(call.id, disposition, comment.trim());
-    } catch {
-      setError('Failed to close call. Try again.');
+    } catch (err) {
+      setError(err?.message || 'Failed to close call. Try again.');
       setClosing(false);
     }
   };

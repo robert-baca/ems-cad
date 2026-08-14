@@ -42,6 +42,10 @@ export default function CallDetail({
   const [selectedUnitId, setSelectedUnitId] = useState('');
   const [addUnitId,      setAddUnitId]      = useState('');
   const [addUnitStatus,  setAddUnitStatus]  = useState('dispatched');
+  const [assignSubmitting, setAssignSubmitting] = useState(false);
+  const [assignError,      setAssignError]      = useState('');
+  const [addUnitSubmitting, setAddUnitSubmitting] = useState(false);
+  const [addUnitError,      setAddUnitError]      = useState('');
   const [showCloseModal, setShowCloseModal] = useState(false);
   const [narrative, setNarrative]         = useState(call.narrative || '');
   const [addingAid,       setAddingAid]       = useState(false);
@@ -66,6 +70,10 @@ export default function CallDetail({
     setSelectedUnitId('');
     setAddUnitId('');
     setAddUnitStatus('dispatched');
+    setAssignSubmitting(false);
+    setAssignError('');
+    setAddUnitSubmitting(false);
+    setAddUnitError('');
     setShowCloseModal(false);
     setNarrative(call.narrative || '');
     setAddingAid(false);
@@ -100,16 +108,24 @@ export default function CallDetail({
     !(call.additional_unit_ids || []).includes(u.id)
   );
 
-  const handleAssign = () => {
-    if (!selectedUnitId) return;
-    onAssignUnit?.(call.id, selectedUnitId);
+  const handleAssign = async () => {
+    if (!selectedUnitId || assignSubmitting) return;
+    setAssignSubmitting(true);
+    setAssignError('');
+    const err = await onAssignUnit?.(call.id, selectedUnitId);
+    setAssignSubmitting(false);
+    if (err) { setAssignError(err); return; }
     setAssigningUnit(false);
     setSelectedUnitId('');
   };
 
-  const handleAddUnit = () => {
-    if (!addUnitId) return;
-    onAddUnit?.(call.id, addUnitId, addUnitStatus);
+  const handleAddUnit = async () => {
+    if (!addUnitId || addUnitSubmitting) return;
+    setAddUnitSubmitting(true);
+    setAddUnitError('');
+    const err = await onAddUnit?.(call.id, addUnitId, addUnitStatus);
+    setAddUnitSubmitting(false);
+    if (err) { setAddUnitError(err); return; }
     setAddingUnit(false);
     setAddUnitId('');
     setAddUnitStatus('dispatched');
@@ -189,18 +205,19 @@ export default function CallDetail({
               <div className="flex gap-2">
                 <button
                   onClick={handleAssign}
-                  disabled={!selectedUnitId}
+                  disabled={!selectedUnitId || assignSubmitting}
                   className="flex-1 py-1.5 bg-green-700 hover:bg-green-600 disabled:bg-gray-600 text-white text-xs font-bold rounded-lg transition-colors"
                 >
-                  Dispatch
+                  {assignSubmitting ? 'Dispatching…' : 'Dispatch'}
                 </button>
                 <button
-                  onClick={() => { setAssigningUnit(false); setSelectedUnitId(''); }}
+                  onClick={() => { setAssigningUnit(false); setSelectedUnitId(''); setAssignError(''); }}
                   className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs rounded-lg transition-colors"
                 >
                   ✕
                 </button>
               </div>
+              {assignError && <p className="text-red-400 text-xs">{assignError}</p>}
             </div>
           ) : (
             <button
@@ -425,10 +442,11 @@ export default function CallDetail({
                     ))}
                   </div>
                 )}
-                <button onClick={handleAssign} disabled={!selectedUnitId}
+                <button onClick={handleAssign} disabled={!selectedUnitId || assignSubmitting}
                   className="w-full py-1.5 bg-green-700 hover:bg-green-600 disabled:bg-gray-600 text-white text-xs font-bold rounded-lg transition-colors">
-                  Reassign
+                  {assignSubmitting ? 'Reassigning…' : 'Reassign'}
                 </button>
+                {assignError && <p className="text-red-400 text-xs">{assignError}</p>}
               </div>
             )}
 
@@ -517,7 +535,7 @@ export default function CallDetail({
               <div className="bg-gray-700 rounded-xl p-3 space-y-2">
                 <div className="flex items-center justify-between">
                   <div className="text-gray-400 text-xs uppercase tracking-wider">Add Unit</div>
-                  <button onClick={() => { setAddingUnit(false); setAddUnitId(''); setAddUnitStatus('dispatched'); }}
+                  <button onClick={() => { setAddingUnit(false); setAddUnitId(''); setAddUnitStatus('dispatched'); setAddUnitError(''); }}
                     className="text-gray-500 hover:text-gray-300 text-sm leading-none">✕</button>
                 </div>
                 {availableUnits.length === 0 ? (
@@ -550,10 +568,11 @@ export default function CallDetail({
                     ))}
                   </div>
                 </div>
-                <button onClick={handleAddUnit} disabled={!addUnitId}
+                <button onClick={handleAddUnit} disabled={!addUnitId || addUnitSubmitting}
                   className="w-full py-1.5 bg-blue-700 hover:bg-blue-600 disabled:bg-gray-600 text-white text-xs font-bold rounded-lg transition-colors">
-                  Add to Call
+                  {addUnitSubmitting ? 'Adding…' : 'Add to Call'}
                 </button>
+                {addUnitError && <p className="text-red-400 text-xs">{addUnitError}</p>}
               </div>
             )}
 
@@ -687,7 +706,7 @@ export default function CallDetail({
           call={call}
           onConfirm={async (id, disposition, notes) => {
             const err = await onCloseCall?.(id, disposition, notes);
-            if (err) return;
+            if (err) throw new Error(err);
             setShowCloseModal(false);
             onClose?.();
           }}

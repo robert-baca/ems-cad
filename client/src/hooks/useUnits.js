@@ -48,15 +48,24 @@ export function useUnits() {
   }, []);
 
   const addUnit = useCallback(async (data) => {
-    try {
-      await apiCreateUnit(data);
-      // socket 'unit:updated' event will add it via handleUnitUpdated
-    } catch {}
+    // Let the caller (AddUnitModal) catch failures — e.g. a duplicate unit_number
+    // rejected by the server — so it can show an error instead of closing silently.
+    await apiCreateUnit(data);
+    // socket 'unit:updated' event will add it via handleUnitUpdated
   }, []);
 
   const editUnit = useCallback(async (unitId, data) => {
-    setUnits(prev => prev.map(u => u.id === unitId ? { ...u, ...data } : u));
-    try { await apiEditUnit(unitId, data); } catch {}
+    let snapshot = null;
+    setUnits(prev => {
+      snapshot = prev.find(u => u.id === unitId) || null;
+      return prev.map(u => u.id === unitId ? { ...u, ...data } : u);
+    });
+    try {
+      await apiEditUnit(unitId, data);
+    } catch (err) {
+      if (snapshot) setUnits(prev => prev.map(u => u.id === unitId ? snapshot : u));
+      throw err;
+    }
   }, []);
 
   const removeUnit = useCallback(async (unitId) => {

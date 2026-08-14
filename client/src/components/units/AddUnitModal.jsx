@@ -30,8 +30,8 @@ export default function AddUnitModal({ onAdd, onClose, trackers = [], units = []
         tracker_name: trackerName || null
       });
       onClose();
-    } catch {
-      setError('Failed to add unit. Try again.');
+    } catch (err) {
+      setError(err?.response?.data?.error || 'Failed to add unit. Try again.');
       setSaving(false);
     }
   };

@@ -56,17 +56,27 @@ export function useCalls() {
   // first-time assignment bumps the call to 'dispatched' — swapping a unit
   // mid-call (e.g. while en route) must leave the call's status alone.
   const assignUnit = useCallback(async (callId, unitId) => {
-    setCalls(prev => prev.map(c =>
-      c.id === callId
-        ? {
-            ...c,
-            assigned_unit_id: unitId,
-            status: c.status === 'pending' ? 'dispatched' : c.status,
-            dispatched_at: c.dispatched_at || new Date().toISOString()
-          }
-        : c
-    ));
-    try { await assignCall(callId, unitId); } catch {}
+    let snapshot = null;
+    setCalls(prev => {
+      snapshot = prev.find(c => c.id === callId) || null;
+      return prev.map(c =>
+        c.id === callId
+          ? {
+              ...c,
+              assigned_unit_id: unitId,
+              status: c.status === 'pending' ? 'dispatched' : c.status,
+              dispatched_at: c.dispatched_at || new Date().toISOString()
+            }
+          : c
+      );
+    });
+    try {
+      await assignCall(callId, unitId);
+      return null;
+    } catch (err) {
+      if (snapshot) setCalls(prev => prev.map(c => c.id === callId ? snapshot : c));
+      return err?.response?.data?.error || 'Failed to assign unit';
+    }
   }, []);
 
   const advanceStatus = useCallback(async (callId, status) => {
@@ -134,12 +144,22 @@ export function useCalls() {
   }, []);
 
   const addUnitToCall = useCallback(async (callId, unitId, initialStatus = 'dispatched') => {
-    setCalls(prev => prev.map(c =>
-      c.id === callId
-        ? { ...c, additional_unit_ids: [...(c.additional_unit_ids || []).filter(id => id !== unitId), unitId] }
-        : c
-    ));
-    try { await apiAddUnitToCall(callId, unitId, initialStatus); } catch {}
+    let snapshot = null;
+    setCalls(prev => {
+      snapshot = prev.find(c => c.id === callId) || null;
+      return prev.map(c =>
+        c.id === callId
+          ? { ...c, additional_unit_ids: [...(c.additional_unit_ids || []).filter(id => id !== unitId), unitId] }
+          : c
+      );
+    });
+    try {
+      await apiAddUnitToCall(callId, unitId, initialStatus);
+      return null;
+    } catch (err) {
+      if (snapshot) setCalls(prev => prev.map(c => c.id === callId ? snapshot : c));
+      return err?.response?.data?.error || 'Failed to add unit';
+    }
   }, []);
 
   const removeUnitFromCall = useCallback(async (callId, unitId) => {

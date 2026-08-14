@@ -20,7 +20,9 @@ function sortUnits(units) {
 
 const TYPE_BADGE = { ALS: 'bg-red-900/50 text-red-300', BLS: 'bg-blue-900/50 text-blue-300', Cart: 'bg-green-900/50 text-green-300' };
 
-const ON_CALL_STATUSES = new Set(['dispatched', 'en_route', 'on_scene', 'patient_contact']);
+// 'cleared' is deliberately excluded — a cleared unit is treated as available
+// for a new dispatch elsewhere in the app (CallDetail/NewCallModal availableUnits).
+const ON_CALL_STATUSES = new Set(['dispatched', 'en_route', 'on_scene', 'patient_contact', 'transporting']);
 
 function UnitCard({ unit, activeCall, isSelected, onClick, onHistory, onEdit, onToggleOos, onFlyTo, onClearGps, onToggleTracking, readOnly }) {
   const trackPending = useRef(false);
