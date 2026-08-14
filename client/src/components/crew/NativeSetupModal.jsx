@@ -28,27 +28,16 @@ export default function NativeSetupModal({ onDone }) {
   const [step, setStep]       = useState(0);
   const [loading, setLoading] = useState(false);
   const [done, setDone]       = useState(false);
+  // Set when a permission request comes back denied — the step's button turns into
+  // an explicit "continue anyway" so a denial is never silently skipped past.
+  const [permWarning, setPermWarning] = useState('');
+  const [awaitingAck, setAwaitingAck] = useState(false);
 
   const current = STEPS[step];
 
-  const handleStep = async () => {
-    setLoading(true);
-    try {
-      if (current.key === 'location') {
-        const { Geolocation } = await import('@capacitor/geolocation');
-        await Geolocation.requestPermissions({ permissions: ['location'] });
-      } else if (current.key === 'notifications') {
-        const { LocalNotifications } = await import('@capacitor/local-notifications');
-        await LocalNotifications.requestPermissions();
-        // Create the channel immediately after permission is granted so it exists
-        // with IMPORTANCE_MAX before any call notification is ever scheduled.
-        const { createNotifChannel } = await import('../../hooks/useCrewNotifications');
-        await createNotifChannel();
-      }
-      // battery step: instructions only, no plugin needed
-    } catch {}
-    setLoading(false);
-
+  const advance = () => {
+    setPermWarning('');
+    setAwaitingAck(false);
     if (step < STEPS.length - 1) {
       setStep(s => s + 1);
     } else {
@@ -56,6 +45,45 @@ export default function NativeSetupModal({ onDone }) {
       localStorage.setItem('native_setup_done', '1');
       onDone();
     }
+  };
+
+  const handleStep = async () => {
+    if (awaitingAck) { advance(); return; }
+    setLoading(true);
+    setPermWarning('');
+    try {
+      if (current.key === 'location') {
+        const { Geolocation } = await import('@capacitor/geolocation');
+        const status = await Geolocation.requestPermissions({ permissions: ['location'] });
+        if (status.location !== 'granted') {
+          setLoading(false);
+          setPermWarning("Location wasn't granted — GPS tracking won't work until you allow it. You can retry, or continue and fix it later from the GPS banner.");
+          setAwaitingAck(true);
+          return;
+        }
+      } else if (current.key === 'notifications') {
+        const { LocalNotifications } = await import('@capacitor/local-notifications');
+        const status = await LocalNotifications.requestPermissions();
+        if (status.display !== 'granted') {
+          setLoading(false);
+          setPermWarning("Notifications weren't granted — you won't get alert sounds for new calls. You can retry, or continue and fix it later.");
+          setAwaitingAck(true);
+          return;
+        }
+        // Create the channel immediately after permission is granted so it exists
+        // with IMPORTANCE_MAX before any call notification is ever scheduled.
+        const { createNotifChannel } = await import('../../hooks/useCrewNotifications');
+        await createNotifChannel();
+      }
+      // battery step: instructions only, no plugin needed
+    } catch {
+      setLoading(false);
+      setPermWarning('Something went wrong requesting this permission — you can grant it later from Settings.');
+      setAwaitingAck(true);
+      return;
+    }
+    setLoading(false);
+    advance();
   };
 
   if (done) return null;
@@ -88,12 +116,18 @@ export default function NativeSetupModal({ onDone }) {
           Step {step + 1} of {STEPS.length}
         </div>
 
+        {permWarning && (
+          <div className="text-amber-400 text-xs text-center bg-amber-900/30 border border-amber-700/50 rounded-xl px-4 py-2 mb-4">
+            {permWarning}
+          </div>
+        )}
+
         <button
           onClick={handleStep}
           disabled={loading}
           className="w-full py-4 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 text-white font-bold text-base rounded-2xl transition-colors"
         >
-          {loading ? 'Opening…' : current.button}
+          {loading ? 'Opening…' : awaitingAck ? 'Continue Anyway →' : current.button}
         </button>
 
         {step === STEPS.length - 1 && (

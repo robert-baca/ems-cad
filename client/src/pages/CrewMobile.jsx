@@ -6,7 +6,6 @@ import { useCalls } from '../hooks/useCalls';
 import { useSocket } from '../hooks/useSocket';
 import { useCrewGps } from '../hooks/useCrewGps';
 import { useCrewNotifications } from '../hooks/useCrewNotifications';
-import { apiBase } from '../lib/native';
 import ActiveCall from '../components/crew/ActiveCall';
 import StatusButtons from '../components/crew/StatusButtons';
 import CrewCaseHistory from '../components/crew/CrewCaseHistory';
@@ -88,6 +87,8 @@ function fmtTime(iso) {
 
 function CrewChat({ call, myUnit, onSend }) {
   const [text, setText] = useState('');
+  const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState('');
   const listRef = useRef(null);
   const comments = call.comments || [];
   const isCompleted = call.status === 'closed';
@@ -96,10 +97,14 @@ function CrewChat({ call, myUnit, onSend }) {
     if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
   }, [comments.length]);
 
-  const submit = () => {
+  const submit = async () => {
     const trimmed = text.trim();
-    if (!trimmed) return;
-    onSend(trimmed);
+    if (!trimmed || sending) return;
+    setSending(true);
+    setSendError('');
+    const err = await onSend(trimmed);
+    setSending(false);
+    if (err) { setSendError(err); return; }
     setText('');
   };
 
@@ -135,6 +140,9 @@ function CrewChat({ call, myUnit, onSend }) {
         )}
       </div>
 
+      {sendError && (
+        <div className="px-3 pb-1.5 text-red-400 text-xs">{sendError}</div>
+      )}
       <div className="px-3 pb-3 flex gap-2">
         <input
           type="text"
@@ -146,10 +154,10 @@ function CrewChat({ call, myUnit, onSend }) {
         />
         <button
           onClick={submit}
-          disabled={!text.trim()}
+          disabled={!text.trim() || sending}
           className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-600 text-white text-sm rounded-xl transition-colors font-semibold"
         >
-          Send
+          {sending ? '…' : 'Send'}
         </button>
       </div>
     </div>
@@ -170,6 +178,8 @@ export default function CrewMobile() {
   const [statusLoading,    setStatusLoading]    = useState(false);
   const [statusError,      setStatusError]      = useState(null);
   const [backupRequested,  setBackupRequested]  = useState(false);
+  const [backupSubmitting, setBackupSubmitting] = useState(false);
+  const [backupError,      setBackupError]      = useState('');
   const [lastActiveCallId, setLastActiveCallId] = useState(null);
   const [dismissedCallId,  setDismissedCallId]  = useState(null);
   const [showDisposition,  setShowDisposition]  = useState(false);
@@ -225,6 +235,8 @@ export default function CrewMobile() {
   // Reset backup button when active call changes
   useEffect(() => {
     setBackupRequested(false);
+    setBackupSubmitting(false);
+    setBackupError('');
   }, [myActiveCall?.id]);
 
   const { bgPermNeeded, openGpsSettings, gpsStatus } = useCrewGps({ token: user?.token, unit: myUnit, enabled: !!myUnit });
@@ -265,21 +277,25 @@ export default function CrewMobile() {
     }
   };
 
+  // Only flips backupRequested once the server has actually confirmed the message —
+  // never optimistically, since a false "Backup Requested" is worse than no request
+  // at all (dispatch never sees it, but the crew member thinks help is coming).
   const handleRequestBackup = useCallback(async () => {
-    if (!myActiveCall || !myUnit) return;
+    if (!myActiveCall || !myUnit || backupSubmitting) return;
     const next = !backupRequested;
-    setBackupRequested(next);
     const text = next
       ? `🆘 BACKUP REQUESTED — ${myUnit.unit_number}`
       : `✅ Backup no longer needed — ${myUnit.unit_number}`;
-    try {
-      await fetch(`${apiBase()}/calls/${myActiveCall.id}/comments`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user?.token}` },
-        body: JSON.stringify({ text })
-      });
-    } catch {}
-  }, [backupRequested, myActiveCall, myUnit, user?.token]);
+    setBackupSubmitting(true);
+    setBackupError('');
+    const err = await addComment(myActiveCall.id, text, myUnit.unit_number);
+    setBackupSubmitting(false);
+    if (err) {
+      setBackupError(next ? 'Backup request failed to send — tap to try again' : 'Failed to cancel — tap to try again');
+      return;
+    }
+    setBackupRequested(next);
+  }, [backupRequested, backupSubmitting, myActiveCall, myUnit, addComment]);
 
   const beaconActive   = !!myUnit?.beacon_active;
   const othersBeaconing = units.some(u => u.beacon_active && u.id !== myUnit?.id);
@@ -508,16 +524,22 @@ export default function CrewMobile() {
 
       {/* SOS button — fixed to bottom, only when on an active (non-closed) call */}
       {myActiveCall && (
-        <div className="flex-shrink-0 p-3 border-t border-gray-700 bg-gray-900">
+        <div className="flex-shrink-0 p-3 border-t border-gray-700 bg-gray-900 space-y-1.5">
+          {backupError && (
+            <div className="text-red-400 text-xs text-center font-medium">{backupError}</div>
+          )}
           <button
             onClick={handleRequestBackup}
-            className={`w-full py-4 rounded-xl font-black text-base tracking-wide transition-all active:scale-95
+            disabled={backupSubmitting}
+            className={`w-full py-4 rounded-xl font-black text-base tracking-wide transition-all active:scale-95 disabled:opacity-60
               ${backupRequested
                 ? 'bg-green-800 border border-green-600 text-green-300'
                 : 'bg-red-600 hover:bg-red-500 text-white shadow-lg shadow-red-900/50'
               }`}
           >
-            {backupRequested ? '✓ Backup Requested — Tap to Cancel' : '🆘 Request Backup'}
+            {backupSubmitting
+              ? (backupRequested ? 'Cancelling…' : 'Sending…')
+              : backupRequested ? '✓ Backup Requested — Tap to Cancel' : '🆘 Request Backup'}
           </button>
         </div>
       )}

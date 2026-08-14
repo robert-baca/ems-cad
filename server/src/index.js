@@ -1048,9 +1048,14 @@ app.post('/api/calls/:id/comments', verifyToken, async (req, res) => {
   call.comments.push(comment);
   saveCall(call).catch(console.error);
   io.to('dispatchers').emit('call:comment_added', { call_id: call.id, comment });
-  if (call.assigned_unit_id) {
-    io.to(`crew:${call.assigned_unit_id}`).emit('call:comment_added', { call_id: call.id, comment });
-  }
+  // Every unit on the call gets the message, not just the primary — otherwise
+  // backup/additional units' chat pane never sees dispatch's replies, the
+  // primary unit's messages, or even their own sent message (the client has
+  // no optimistic local update and relies entirely on this echo).
+  const commentUnitIds = [call.assigned_unit_id, ...(call.additional_unit_ids || [])].filter(Boolean);
+  commentUnitIds.forEach(uid => {
+    io.to(`crew:${uid}`).emit('call:comment_added', { call_id: call.id, comment });
+  });
   res.json(comment);
 });
 

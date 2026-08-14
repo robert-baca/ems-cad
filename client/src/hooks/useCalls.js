@@ -204,7 +204,10 @@ export function useCalls() {
     try {
       await apiAddComment(callId, text, author);
       // server emits 'call:comment_added' which handleCommentAdded will pick up
-    } catch {}
+      return null;
+    } catch (err) {
+      return err?.response?.data?.error || 'Failed to send';
+    }
   }, []);
 
   return {

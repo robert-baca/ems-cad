@@ -12,6 +12,14 @@ function getTracker() {
   return _tracker;
 }
 
+// Already an installed+synced native dependency (see package.json / capacitor.plugins.json)
+// even though nothing else in the app calls it — its only job here is the settings deep link.
+let _bgGeo = null;
+function getBackgroundGeolocation() {
+  if (!_bgGeo) _bgGeo = registerPlugin('BackgroundGeolocation');
+  return _bgGeo;
+}
+
 export function useCrewGps({ token, unit, enabled = true }) {
   const unitRef     = useRef(unit);
   const wakeLockRef = useRef(null);
@@ -138,5 +146,10 @@ export function useCrewGps({ token, unit, enabled = true }) {
     }
   }, [enabled, token]);
 
-  return { bgPermNeeded, openGpsSettings: () => {}, gpsStatus };
+  const openGpsSettings = () => {
+    if (!isNative()) return;
+    getBackgroundGeolocation().openSettings().catch(e => console.warn('[gps] openSettings failed', e));
+  };
+
+  return { bgPermNeeded, openGpsSettings, gpsStatus };
 }
