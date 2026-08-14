@@ -4,7 +4,7 @@ import { STATUS_COLORS, STATUS_LABELS } from '../../data/mockData';
 const PRIORITY_LABELS = { 1: 'P1 — High Acuity', 2: 'P2 — Medium Acuity', 3: 'P3 — Low Acuity' };
 
 
-export default function ActiveCall({ call, myUnit, units = [], isCompleted = false, onDismiss }) {
+export default function ActiveCall({ call, myUnit, units = [], isCompleted = false, onDismiss, locations = [] }) {
   if (!call) {
     return (
       <div className="bg-gray-800 rounded-2xl p-6 text-center border border-gray-700">
@@ -55,7 +55,7 @@ export default function ActiveCall({ call, myUnit, units = [], isCompleted = fal
 
         {/* In-park mini map */}
         {hasLocation && (
-          <CrewMap call={call} myUnit={myUnit} />
+          <CrewMap call={call} myUnit={myUnit} locations={locations} />
         )}
 
         {/* Chief complaint */}

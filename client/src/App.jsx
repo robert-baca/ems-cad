@@ -3,6 +3,7 @@ import { useAuth } from './context/AuthContext';
 import Login from './pages/Login';
 import SSOLanding from './pages/SSOLanding';
 import DispatcherDashboard from './pages/DispatcherDashboard';
+import WayfindingAdmin from './pages/WayfindingAdmin';
 import DisplayBoard from './pages/DisplayBoard';
 import CrewMobile from './pages/CrewMobile';
 
@@ -34,6 +35,14 @@ export default function App() {
         }
       />
       <Route path="/display" element={<DisplayBoard />} />
+      <Route
+        path="/wayfinding"
+        element={
+          <ProtectedRoute>
+            <WayfindingAdmin />
+          </ProtectedRoute>
+        }
+      />
       <Route path="*" element={<Navigate to="/login" replace />} />
     </Routes>
   );

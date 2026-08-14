@@ -3,6 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { useUnits } from '../hooks/useUnits';
 import { useCalls } from '../hooks/useCalls';
+import { useLocations } from '../hooks/useLocations';
 import { useSocket } from '../hooks/useSocket';
 import { useCrewGps } from '../hooks/useCrewGps';
 import { useCrewNotifications } from '../hooks/useCrewNotifications';
@@ -174,6 +175,10 @@ export default function CrewMobile() {
     handleCallCreated, handleCallUpdated, handleCallStatusChange, handleCommentAdded,
     advanceStatus, addComment, closeCall
   } = useCalls();
+  // Only permanent landmarks are shown to crew — shift-scoped pins are more likely
+  // a dispatcher's today-only staging note than a durable park landmark.
+  const { locations } = useLocations();
+  const landmarkLocations = locations.filter(l => l.locationType === 'permanent');
 
   const [statusLoading,    setStatusLoading]    = useState(false);
   const [statusError,      setStatusError]      = useState(null);
@@ -411,6 +416,7 @@ export default function CrewMobile() {
           units={units}
           isCompleted={callIsCompleted}
           onDismiss={() => setDismissedCallId(myCall?.id)}
+          locations={landmarkLocations}
         />
 
         {callIsCompleted && myCall && (

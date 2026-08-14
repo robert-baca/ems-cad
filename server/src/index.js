@@ -85,6 +85,7 @@ let units        = [];
 let calls        = [];
 let locations    = [];
 let trackers     = [];
+let parkPaths    = [];
 let currentShift = null;
 let nextCallNum  = 100;
 const unknownGpsDevices  = new Set();
@@ -215,6 +216,24 @@ async function initDb() {
     CREATE INDEX IF NOT EXISTS gps_history_call_id_idx ON gps_history(call_id)
   `);
 
+  // ── Wayfinding path curation (admin-only tool, fed by real crew GPS history) ──
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS park_paths (
+      id TEXT PRIMARY KEY,
+      name TEXT,
+      coordinates JSONB NOT NULL,
+      created_at TEXT,
+      created_by TEXT
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT,
+      updated_at TEXT
+    )
+  `);
+
   const unitsRes = await pool.query('SELECT * FROM units ORDER BY unit_number');
   units = unitsRes.rows.map(u => ({ ...u, tracking_active: false }));
 
@@ -246,7 +265,10 @@ async function initDb() {
   const trackersRes = await pool.query('SELECT * FROM trackers ORDER BY name');
   trackers = trackersRes.rows;
 
-  console.log(`[db] loaded ${units.length} units, ${calls.length} calls, ${locations.length} locations, ${trackers.length} trackers, shift: ${currentShift?.shift_label || 'none'}`);
+  const parkPathsRes = await pool.query('SELECT * FROM park_paths ORDER BY created_at');
+  parkPaths = parkPathsRes.rows.map(p => ({ ...p, coordinates: p.coordinates || [] }));
+
+  console.log(`[db] loaded ${units.length} units, ${calls.length} calls, ${locations.length} locations, ${trackers.length} trackers, ${parkPaths.length} park paths, shift: ${currentShift?.shift_label || 'none'}`);
 }
 
 async function saveUnit(unit) {
@@ -337,6 +359,17 @@ async function saveTracker(t) {
 
 async function deleteTrackerFromDb(id) {
   await pool.query('DELETE FROM trackers WHERE id=$1', [id]);
+}
+
+async function saveParkPath(p) {
+  await pool.query(`
+    INSERT INTO park_paths (id, name, coordinates, created_at, created_by) VALUES ($1,$2,$3,$4,$5)
+    ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name, coordinates=EXCLUDED.coordinates
+  `, [p.id, p.name, JSON.stringify(p.coordinates), p.created_at, p.created_by]);
+}
+
+async function deleteParkPathFromDb(id) {
+  await pool.query('DELETE FROM park_paths WHERE id=$1', [id]);
 }
 
 async function saveShift(shift) {
@@ -510,7 +543,22 @@ app.post('/api/auth/sso', async (req, res) => {
     return res.json({ token: cadToken, user: { role: 'crew', name: identity.name, sso: true } });
   }
 
-  return res.status(400).json({ error: 'Unknown dest — expected dispatcher, crew, or display' });
+  if (dest === 'wayfinding') {
+    // Admin-only, and a dedicated role — this token can't reach any other
+    // dispatcher/crew endpoint, only the wayfinding ones below.
+    if (identity.access_role !== 'admin') {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+    const cadToken = signToken({
+      admin_id: identity.id,
+      name: identity.name,
+      role: 'wayfinding_admin',
+      sso: true,
+    });
+    return res.json({ token: cadToken, user: { role: 'wayfinding_admin', name: identity.name, sso: true } });
+  }
+
+  return res.status(400).json({ error: 'Unknown dest — expected dispatcher, crew, display, or wayfinding' });
 });
 
 const VALID_UNIT_STATUSES = new Set([
@@ -1423,6 +1471,76 @@ app.get('/api/calls/:id/gps-track', verifyToken, async (req, res) => {
       [req.params.id]
     );
     res.json(rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Wayfinding path curation (admin-only) ──────────────────────────
+// Raw GPS history across every call, for the review map's "real crew
+// walks" overlay. Capped so the payload can't grow unbounded as data
+// accumulates over months.
+app.get('/api/wayfinding/traces', verifyToken, async (req, res) => {
+  if (req.user.role !== 'wayfinding_admin') return res.status(403).json({ error: 'Forbidden' });
+  try {
+    const { rows } = await pool.query(
+      `SELECT call_id, unit_id, unit_number, lat, lng, recorded_at
+       FROM gps_history ORDER BY recorded_at DESC LIMIT 20000`
+    );
+    res.json(rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/park-paths', verifyToken, (req, res) => {
+  res.json(parkPaths);
+});
+
+app.post('/api/park-paths', verifyToken, async (req, res) => {
+  if (req.user.role !== 'wayfinding_admin') return res.status(403).json({ error: 'Forbidden' });
+  const { name, coordinates } = req.body;
+  if (!Array.isArray(coordinates) || coordinates.length < 2)
+    return res.status(400).json({ error: 'coordinates must have at least 2 points' });
+  const path = {
+    id: `path-${Date.now()}`,
+    name: name?.trim() || null,
+    coordinates,
+    created_at: new Date().toISOString(),
+    created_by: req.user.name || null
+  };
+  parkPaths.push(path);
+  await saveParkPath(path).catch(console.error);
+  res.status(201).json(path);
+});
+
+app.delete('/api/park-paths/:id', verifyToken, async (req, res) => {
+  if (req.user.role !== 'wayfinding_admin') return res.status(403).json({ error: 'Forbidden' });
+  const idx = parkPaths.findIndex(p => p.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'Not found' });
+  parkPaths.splice(idx, 1);
+  deleteParkPathFromDb(req.params.id).catch(console.error);
+  res.json({ ok: true });
+});
+
+app.get('/api/wayfinding/settings', verifyToken, async (req, res) => {
+  try {
+    const { rows } = await pool.query("SELECT value FROM app_settings WHERE key = 'wayfinding_enabled'");
+    res.json({ enabled: rows[0]?.value === 'true' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.put('/api/wayfinding/settings', verifyToken, async (req, res) => {
+  if (req.user.role !== 'wayfinding_admin') return res.status(403).json({ error: 'Forbidden' });
+  const enabled = !!req.body.enabled;
+  try {
+    await pool.query(`
+      INSERT INTO app_settings (key, value, updated_at) VALUES ('wayfinding_enabled', $1, $2)
+      ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=EXCLUDED.updated_at
+    `, [String(enabled), new Date().toISOString()]);
+    res.json({ enabled });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

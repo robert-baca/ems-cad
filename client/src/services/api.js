@@ -64,6 +64,14 @@ export const addCallComment = (callId, text, author) =>
   api.post(`/calls/${callId}/comments`, { text, author });
 export const getCallGpsTrack = (callId) => api.get(`/calls/${callId}/gps-track`);
 
+// ── Wayfinding path curation (admin-only) ────────────────────────────
+export const getWayfindingTraces  = () => api.get('/wayfinding/traces');
+export const getParkPaths         = () => api.get('/park-paths');
+export const createParkPath       = (name, coordinates) => api.post('/park-paths', { name, coordinates });
+export const deleteParkPath       = (id) => api.delete(`/park-paths/${id}`);
+export const getWayfindingSettings = () => api.get('/wayfinding/settings');
+export const setWayfindingEnabled  = (enabled) => api.put('/wayfinding/settings', { enabled });
+
 // ── Trackers ───────────────────────────────────────────────────────
 export const getTrackers = () => api.get('/trackers');
 export const createTracker = (name, device_id) => api.post('/trackers', { name, device_id });

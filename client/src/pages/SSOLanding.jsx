@@ -61,6 +61,12 @@ export default function SSOLanding() {
           setShiftUnits(Array.isArray(units) ? units : []);
           setStep('pick');
         }
+
+        if (dest === 'wayfinding') {
+          login({ ...data.user, token: data.token });
+          navigate('/wayfinding', { replace: true });
+          return;
+        }
       } catch (err) {
         setErrorMsg('Could not connect — please try again.');
         setStep('error');
