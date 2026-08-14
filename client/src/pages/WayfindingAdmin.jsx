@@ -113,6 +113,29 @@ export default function WayfindingAdmin() {
     return () => { map.remove(); mapRef.current = null; mapReadyRef.current = false; };
   }, []);
 
+  // Group by call, sort by time, and drop GPS-glitch points (implausible
+  // speed jumps) before anything renders or feeds the suggestion algorithm —
+  // memoized since this walks up to 20k points and shouldn't re-run on every
+  // unrelated re-render (e.g. typing a path name).
+  const cleanedByCall = useMemo(() => {
+    if (!traces) return {};
+    const byCall = {};
+    traces.forEach(p => {
+      if (!byCall[p.call_id]) byCall[p.call_id] = [];
+      byCall[p.call_id].push(p);
+    });
+    const result = {};
+    Object.entries(byCall).forEach(([callId, pts]) => {
+      const sorted = [...pts]
+        .sort((a, b) => new Date(a.recorded_at) - new Date(b.recorded_at))
+        .map(p => ({ lat: parseFloat(p.lat), lng: parseFloat(p.lng), recorded_at: p.recorded_at }));
+      result[callId] = cleanTrace(sorted);
+    });
+    return result;
+  }, [traces]);
+
+  const allCleanedPoints = useMemo(() => Object.values(cleanedByCall).flat(), [cleanedByCall]);
+
   // Keep the click dispatcher pointed at the latest drawing/suggest state.
   // Picking the two suggest endpoints hands off into the normal drawing/review
   // flow — the suggested line is edited/saved exactly like a hand-drawn one.
@@ -142,29 +165,6 @@ export default function WayfindingAdmin() {
       setDrawPoints(prev => [...prev, lngLat]);
     };
   }, [drawing, suggestMode, suggestStart, allCleanedPoints]);
-
-  // Group by call, sort by time, and drop GPS-glitch points (implausible
-  // speed jumps) before anything renders or feeds the suggestion algorithm —
-  // memoized since this walks up to 20k points and shouldn't re-run on every
-  // unrelated re-render (e.g. typing a path name).
-  const cleanedByCall = useMemo(() => {
-    if (!traces) return {};
-    const byCall = {};
-    traces.forEach(p => {
-      if (!byCall[p.call_id]) byCall[p.call_id] = [];
-      byCall[p.call_id].push(p);
-    });
-    const result = {};
-    Object.entries(byCall).forEach(([callId, pts]) => {
-      const sorted = [...pts]
-        .sort((a, b) => new Date(a.recorded_at) - new Date(b.recorded_at))
-        .map(p => ({ lat: parseFloat(p.lat), lng: parseFloat(p.lng), recorded_at: p.recorded_at }));
-      result[callId] = cleanTrace(sorted);
-    });
-    return result;
-  }, [traces]);
-
-  const allCleanedPoints = useMemo(() => Object.values(cleanedByCall).flat(), [cleanedByCall]);
 
   // Render every historical call's cleaned GPS trace, overlaid — busy real
   // paths visually stand out where enough calls have happened near them.
