@@ -34,7 +34,10 @@ public class GpsTrackerService extends Service {
 
     private static final float MIN_DISTANCE_M  = 5f;
     private static final long  MIN_INTERVAL_MS = 900L;
-    private static final long  HEARTBEAT_MS    = 30_000L; // force-post every 30s even if stationary
+    // Force-post on this interval even while stationary. This is also the worst-case
+    // delay before a dispatcher sees a position after toggling tracking on, since the
+    // server doesn't push anything itself — it just waits for the phone's next post.
+    private static final long  HEARTBEAT_MS    = 5_000L;
     private static final int   MAX_QUEUE       = 100; // ~100 seconds of offline points
     // Raw GPS near rides/structures can report a low-accuracy fix that barely
     // moves fix-to-fix even while someone's actually walking — this drops
