@@ -17,7 +17,7 @@ public class LocationAuthPlugin: CAPPlugin, CAPBridgedPlugin {
     ]
 
     @objc func getStatus(_ call: CAPPluginCall) {
-        let status = CLLocationManager().authorizationStatus()
+        let status = CLLocationManager().authorizationStatus
         let value: String
         switch status {
         case .authorizedAlways: value = "always"
