@@ -126,13 +126,24 @@ public class GpsTrackerService extends Service {
     }
 
     private void onLocation(Location loc) {
-        if (loc.hasAccuracy() && loc.getAccuracy() > MAX_ACCURACY_M) return;
-
         long now = System.currentTimeMillis();
         if (now - lastPostMs < MIN_INTERVAL_MS) return;
 
-        boolean heartbeatDue = (now - lastHeartbeatMs) >= HEARTBEAT_MS;
-        if (!Double.isNaN(lastLat)) {
+        boolean heartbeatDue   = (now - lastHeartbeatMs) >= HEARTBEAT_MS;
+        boolean accurateEnough = !loc.hasAccuracy() || loc.getAccuracy() <= MAX_ACCURACY_M;
+
+        // A degraded fix (common near the park's large steel structures/rides —
+        // exactly where units walk while responding to a call) used to be dropped
+        // unconditionally, which meant a unit stuck in a bad-accuracy zone stopped
+        // posting *at all* until it cleared the obstruction — looking frozen on
+        // dispatch's map for the whole response instead of just less precise.
+        // Only suppress it between heartbeats now; the heartbeat always gets through.
+        if (!accurateEnough && !heartbeatDue) return;
+
+        // Movement-distance dedup only makes sense with a trustworthy fix — skip it
+        // for degraded ones so a heartbeat-forced post isn't blocked by a bogus
+        // "hasn't moved" reading computed from an inaccurate position.
+        if (accurateEnough && !Double.isNaN(lastLat)) {
             float[] result = new float[1];
             Location.distanceBetween(lastLat, lastLng, loc.getLatitude(), loc.getLongitude(), result);
             if (result[0] < MIN_DISTANCE_M && !heartbeatDue) return;

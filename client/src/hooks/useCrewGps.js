@@ -110,6 +110,8 @@ export function useCrewGps({ token, unit, enabled = true }) {
           stale:              true,
           distanceFilter:     0,
         };
+        const HEARTBEAT_MS = 5000;
+        let lastPostMs = 0;
         const cb = (location, error) => {
           if (cancelled) return;
           if (error) {
@@ -119,9 +121,16 @@ export function useCrewGps({ token, unit, enabled = true }) {
           setBgPermNeeded(false);
           if (!location) return;
           // Matches the Android tracker's accuracy filter — near large structures
-          // a degraded fix can otherwise get posted just as trustingly as a good
-          // one, freezing the pin while still refreshing "last seen."
-          if (location.accuracy != null && location.accuracy > 50) return;
+          // (e.g. walking to a call through the park's rides) a degraded fix used
+          // to be dropped unconditionally, which meant NO fix got through for as
+          // long as the unit stayed in a bad-accuracy zone — freezing the pin for
+          // the whole response instead of just being less precise. A heartbeat
+          // fallback still lets a degraded fix through periodically so the pin
+          // keeps moving.
+          const accurateEnough = location.accuracy == null || location.accuracy <= 50;
+          const heartbeatDue = Date.now() - lastPostMs >= HEARTBEAT_MS;
+          if (!accurateEnough && !heartbeatDue) return;
+          lastPostMs = Date.now();
           postGpsJs(location.latitude, location.longitude);
         };
 
