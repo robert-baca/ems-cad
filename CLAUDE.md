@@ -102,7 +102,6 @@ cad-system/
 | `DATABASE_URL` | PostgreSQL connection string |
 | `JWT_SECRET` | Signs all JWTs |
 | `DISPLAY_PIN` | PIN for display board access |
-| `GPS_WEBHOOK_SECRET` | Authenticates GPS webhook from Tracki devices |
 | `SUPABASE_URL` | `https://okffzzlydmrcjfjwfdam.supabase.co` |
 | `SUPABASE_SERVICE_KEY` | `sb_secret_...` format key (new format, not legacy JWT) |
 
@@ -135,9 +134,15 @@ Crew can toggle a beacon on their unit. Other crew open "Find a Medic", see unit
 ---
 
 ## GPS Tracking
-- Native Android GPS background service (Java) posts to `GET /api/gps/update?id=&lat=&lng=&secret=`
-- Server updates unit's `last_lat`, `last_lng`, `last_gps_at` in DB and in-memory, broadcasts `unit:updated`
-- `GPS_WEBHOOK_SECRET` must match `?secret=` query param on the Tracki/GPS device URL
+GPS is always-on for the whole shift — there's no dispatcher-side toggle. The only thing that can stop
+a unit's location from showing is the crew member opting out themselves.
+
+- Android: native foreground service (`GpsTrackerService.java`) posts `POST /api/crew/gps` on a 5s heartbeat via `FusedLocationProviderClient`
+- iOS: JS-side `useCrewGps.js` uses `BackgroundGeolocation.addWatcher()`, also posts to `POST /api/crew/gps`
+- Both platforms filter fixes with accuracy worse than 50m before posting
+- `PATCH /api/crew/gps-sharing` — crew-only self-service opt-out (`unit.gps_sharing_disabled`); this is the *only* thing `applyGpsUpdate()` checks before accepting a ping
+- Each post also carries `gpsPermission`/`gps_permission_status` — the actual OS-level permission tier (`always`/`whenInUse`/`denied`/etc on iOS via the native `LocationAuthPlugin`, permission+battery-optimization status on Android via `GpsPermissionStatus.java`) — so dispatch can see which phones are misconfigured (e.g. iOS stuck on "While Using") without walking around checking each one
+- `GET|POST /api/gps/traccar` — separate mechanism for the Traccar Client phone app (OsmAnd protocol), unrelated to the crew app's own GPS reporting above
 
 ---
 
@@ -149,8 +154,9 @@ unit: {
   status,           // 'available' | 'dispatched' | 'on_scene' | 'transport' | 'out_of_service'
   crew,             // crew member name string
   station,
-  tracki_device_id,
   last_lat, last_lng, last_gps_at,
+  gps_sharing_disabled,  // bool — crew opted out of location sharing; in-memory only
+  gps_permission_status, // 'always'/'whenInUse'/'ok'/'denied'/etc — in-memory only
   password_hash,    // legacy unit password (not used for crew login anymore)
   profile,          // JSONB — unit profile info
   beacon_active     // bool — in-memory only, not persisted to DB
