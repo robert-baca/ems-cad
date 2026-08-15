@@ -1,6 +1,7 @@
 import { useState } from 'react';
+import { Capacitor, registerPlugin } from '@capacitor/core';
 
-const STEPS = [
+const ALL_STEPS = [
   {
     key: 'location',
     icon: '📍',
@@ -21,8 +22,19 @@ const STEPS = [
     title: 'Unrestricted Battery',
     body: 'Go to Settings → Apps → this app → Battery → set to Unrestricted. This prevents Android from killing GPS.',
     button: 'Got it',
+    androidOnly: true,
   },
 ];
+
+// There's no "Unrestricted Battery" setting on iOS — showing that step there
+// would just be confusing.
+const STEPS = ALL_STEPS.filter(s => !s.androidOnly || Capacitor.getPlatform() === 'android');
+
+let _bgGeo = null;
+function getBackgroundGeolocation() {
+  if (!_bgGeo) _bgGeo = registerPlugin('BackgroundGeolocation');
+  return _bgGeo;
+}
 
 export default function NativeSetupModal({ onDone }) {
   const [step, setStep]       = useState(0);
@@ -60,6 +72,20 @@ export default function NativeSetupModal({ onDone }) {
           setPermWarning("Location wasn't granted — GPS tracking won't work until you allow it. You can retry, or continue and fix it later from the GPS banner.");
           setAwaitingAck(true);
           return;
+        }
+        // iOS only ever grants "While Using" from the request above — Apple requires
+        // a separate follow-up request to offer the "Always" upgrade. Ask for it here,
+        // in the same flow, right while the crew member is paying attention, instead
+        // of leaving it to whenever GPS tracking happens to start on its own later.
+        if (Capacitor.getPlatform() === 'ios') {
+          try {
+            const bgGeo = getBackgroundGeolocation();
+            const watcherId = await bgGeo.addWatcher({ requestPermissions: true, stale: true }, () => {});
+            await bgGeo.removeWatcher({ id: watcherId });
+          } catch {
+            // Not fatal — declining the upgrade just leaves it at "While Using";
+            // the GPS banner catches that later and offers a Settings shortcut.
+          }
         }
       } else if (current.key === 'notifications') {
         const { LocalNotifications } = await import('@capacitor/local-notifications');

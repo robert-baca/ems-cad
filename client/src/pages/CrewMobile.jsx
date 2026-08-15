@@ -244,7 +244,10 @@ export default function CrewMobile() {
     setBackupError('');
   }, [myActiveCall?.id]);
 
-  const { bgPermNeeded, openGpsSettings, gpsStatus } = useCrewGps({ token: user?.token, unit: myUnit, enabled: !!myUnit });
+  // Held off while the one-time setup screen is up — its own "Grant Location" step
+  // already drives the permission request; letting this hook fire at the same time
+  // races it and can cause iOS to drop or reorder the While-Using/Always dialogs.
+  const { bgPermNeeded, openGpsSettings, gpsStatus } = useCrewGps({ token: user?.token, unit: myUnit, enabled: !!myUnit && !showNativeSetup });
 
   useSocket({
     'unit:gps_update':     handleGpsUpdate,
