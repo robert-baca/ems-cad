@@ -249,6 +249,32 @@ export default function CrewMobile() {
   // races it and can cause iOS to drop or reorder the While-Using/Always dialogs.
   const { bgPermNeeded, openGpsSettings, gpsStatus } = useCrewGps({ token: user?.token, unit: myUnit, enabled: !!myUnit && !showNativeSetup });
 
+  // Android hardware back button — Capacitor gives no handling for this out of the
+  // box, so by default it falls through to the OS and exits the app entirely. Close
+  // whichever full-screen overlay is open instead; with nothing open, minimize to
+  // the home screen (standard Android behavior) rather than killing the app.
+  // A ref (kept fresh every render) avoids the listener closing over stale state,
+  // since it's registered once on mount.
+  const closeTopOverlayRef = useRef(null);
+  closeTopOverlayRef.current = () => {
+    if (showDisposition)  { setShowDisposition(false); return true; }
+    if (showCaseSummary)  { setShowCaseSummary(false); return true; }
+    if (showCaseHistory)  { setShowCaseHistory(false); return true; }
+    if (showBeacon)       { setShowBeacon(false); return true; }
+    return false;
+  };
+
+  useEffect(() => {
+    if (!isNative) return;
+    let handle;
+    import('@capacitor/app').then(({ App }) => {
+      App.addListener('backButton', () => {
+        if (!closeTopOverlayRef.current?.()) App.minimizeApp();
+      }).then(h => { handle = h; });
+    });
+    return () => handle?.remove();
+  }, [isNative]);
+
   useSocket({
     'unit:gps_update':     handleGpsUpdate,
     'unit:status_change':  handleStatusChange,
