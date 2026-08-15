@@ -12,6 +12,7 @@ export default function GpsTrackTab({ call }) {
   const mapRef       = useRef(null);
   const [points,  setPoints]  = useState(null); // null = loading
   const [error,   setError]   = useState(null);
+  const [mapFailed, setMapFailed] = useState(false);
 
   useEffect(() => {
     setPoints(null);
@@ -34,16 +35,31 @@ export default function GpsTrackTab({ call }) {
     // Clean up any previous map instance
     if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; }
 
+    // A missing/invalid Mapbox token throws from inside this effect, which
+    // React's error boundaries don't catch (effects run outside the render
+    // phase) — fail to a plain message instead of an uncaught, app-wide error.
+    if (!mapboxgl.accessToken) {
+      setMapFailed(true);
+      return;
+    }
+
     const center = (call.location_lat && call.location_lng)
       ? [call.location_lng, call.location_lat]
       : PARK_CENTER;
 
-    const map = new mapboxgl.Map({
-      container: containerRef.current,
-      style: 'mapbox://styles/mapbox/satellite-streets-v12',
-      center,
-      zoom: 17,
-    });
+    let map;
+    try {
+      map = new mapboxgl.Map({
+        container: containerRef.current,
+        style: 'mapbox://styles/mapbox/satellite-streets-v12',
+        center,
+        zoom: 17,
+      });
+    } catch (e) {
+      console.error('[GpsTrackTab] init failed', e);
+      setMapFailed(true);
+      return;
+    }
     mapRef.current = map;
     map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), 'top-right');
 
@@ -151,7 +167,13 @@ export default function GpsTrackTab({ call }) {
       </div>
 
       {/* Map */}
-      <div ref={containerRef} className="w-full rounded-xl overflow-hidden" style={{ height: '280px' }} />
+      {mapFailed ? (
+        <div className="w-full rounded-xl overflow-hidden bg-gray-800 flex items-center justify-center text-gray-500 text-xs" style={{ height: '280px' }}>
+          Map unavailable
+        </div>
+      ) : (
+        <div ref={containerRef} className="w-full rounded-xl overflow-hidden" style={{ height: '280px' }} />
+      )}
 
       {/* Stats */}
       <div className="text-xs text-gray-500 flex justify-between">

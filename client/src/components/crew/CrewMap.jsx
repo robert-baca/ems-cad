@@ -49,21 +49,39 @@ export default function CrewMap({ call, myUnit, locations = [] }) {
   const [expanded,  setExpanded]  = useState(false);
 
   const hasCall = !!(call?.location_lat && call?.location_lng);
+  const [mapFailed, setMapFailed] = useState(false);
 
   // Init map once
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
+    // A missing/invalid Mapbox token throws from inside this effect, which
+    // React's error boundaries don't catch (effects run outside the render
+    // phase) — left unguarded, this took down GPS tracking along with it,
+    // since it's the first map the crew app ever creates and only happens
+    // the moment a call goes active. Fail to a plain "unavailable" state
+    // instead of letting it become an uncaught, app-wide JS error.
+    if (!mapboxgl.accessToken) {
+      setMapFailed(true);
+      return;
+    }
 
     const center = hasCall ? [call.location_lng, call.location_lat] : PARK_CENTER;
 
-    const map = new mapboxgl.Map({
-      container: containerRef.current,
-      style: 'mapbox://styles/mapbox/satellite-streets-v12',
-      center,
-      zoom: 17,
-      interactive: true,
-      attributionControl: false
-    });
+    let map;
+    try {
+      map = new mapboxgl.Map({
+        container: containerRef.current,
+        style: 'mapbox://styles/mapbox/satellite-streets-v12',
+        center,
+        zoom: 17,
+        interactive: true,
+        attributionControl: false
+      });
+    } catch (e) {
+      console.error('[CrewMap] init failed', e);
+      setMapFailed(true);
+      return;
+    }
     mapRef.current = map;
 
     map.on('load', () => {
@@ -198,7 +216,13 @@ export default function CrewMap({ call, myUnit, locations = [] }) {
         : 'relative rounded-xl overflow-hidden border border-gray-600'}
       style={expanded ? undefined : { height: 190 }}
     >
-      <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
+      {mapFailed ? (
+        <div className="w-full h-full flex items-center justify-center bg-gray-800 text-gray-500 text-xs px-4 text-center">
+          Map unavailable
+        </div>
+      ) : (
+        <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
+      )}
 
       {distFt != null && (
         <div className="absolute bottom-2 left-2 bg-black/70 backdrop-blur-sm text-white text-xs font-semibold px-2.5 py-1 rounded-full pointer-events-none select-none">
