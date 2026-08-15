@@ -1457,6 +1457,18 @@ app.post('/api/crew/gps', verifyToken, (req, res) => {
   const lat = parseFloat(req.body.lat);
   const lng = parseFloat(req.body.lng);
   if (!lat || !lng) return res.status(400).json({ error: 'lat and lng required' });
+
+  // iOS only — lets dispatch see which phones are still stuck at "While Using"
+  // (GPS drops the moment the screen locks) instead of "Always," without
+  // walking around checking every phone. In-memory only, like tracking_active/
+  // beacon_active — live device state, not meaningful to keep after a restart.
+  // Only broadcast when it actually changes; this arrives on every GPS post.
+  const { gpsPermission } = req.body;
+  if (gpsPermission && gpsPermission !== unit.gps_permission_status) {
+    unit.gps_permission_status = gpsPermission;
+    io.to('dispatchers').emit('unit:updated', { ...unit, password_hash: undefined });
+  }
+
   applyGpsUpdate(unit, lat, lng, new Date().toISOString());
   res.json({ ok: true });
 });

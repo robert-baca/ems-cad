@@ -78,6 +78,14 @@ function UnitCard({ unit, activeCall, isSelected, onClick, onHistory, onEdit, on
               {gpsStale ? `GPS stale · ${gpsAgeMin}m ago` : `GPS · ${gpsAgeMin}m ago`}
             </div>
           )}
+          {unit.gps_permission_status && unit.gps_permission_status !== 'always' && (
+            <div
+              className="text-amber-400 text-xs mt-0.5 font-medium"
+              title="GPS will stop updating once their screen locks until this is fixed"
+            >
+              ⚠ iOS location: {unit.gps_permission_status === 'whenInUse' ? 'While Using only' : unit.gps_permission_status}
+            </div>
+          )}
         </button>
 
         {/* Edit button on hover (hidden for overwatch) */}

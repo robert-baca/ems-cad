@@ -23,6 +23,17 @@ function getBackgroundGeolocation() {
   return _bgGeo;
 }
 
+// iOS-only custom plugin (client/ios/App/App/LocationAuthPlugin.swift) — the only way
+// to tell "While Using" apart from "Always", since neither @capacitor/geolocation nor
+// the background-geolocation plugin expose that distinction to JS. Reported alongside
+// every GPS post so dispatch can see which phones are stuck at While Using (GPS drops
+// the moment the screen locks) without having to check each one by hand.
+let _locationAuth = null;
+function getLocationAuth() {
+  if (!_locationAuth) _locationAuth = registerPlugin('LocationAuth');
+  return _locationAuth;
+}
+
 export function useCrewGps({ token, unit, enabled = true }) {
   const unitRef     = useRef(unit);
   const wakeLockRef = useRef(null);
@@ -50,10 +61,14 @@ export function useCrewGps({ token, unit, enabled = true }) {
     if (isNative()) {
       const postGpsJs = async (lat, lng) => {
         try {
+          let gpsPermission;
+          if (Capacitor.getPlatform() === 'ios') {
+            try { gpsPermission = (await getLocationAuth().getStatus()).status; } catch {}
+          }
           await fetch(`${apiBase()}/crew/gps`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-            body: JSON.stringify({ lat, lng })
+            body: JSON.stringify({ lat, lng, gpsPermission })
           });
         } catch {}
       };
