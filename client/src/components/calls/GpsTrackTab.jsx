@@ -17,8 +17,14 @@ export default function GpsTrackTab({ call }) {
     setPoints(null);
     setError(null);
     getCallGpsTrack(call.id)
-      .then(r => setPoints(r.data))
-      .catch(e => setError(e.message));
+      .then(r => {
+        // A non-array body (e.g. an HTML error page from a proxy/host in
+        // front of the API) would otherwise reach the .forEach()/.map()
+        // calls below and throw a raw, user-visible JS error.
+        if (!Array.isArray(r.data)) throw new Error('Unexpected response');
+        setPoints(r.data);
+      })
+      .catch(() => setError('Could not load GPS track for this case.'));
   }, [call.id]);
 
   // Build/rebuild map whenever points arrive

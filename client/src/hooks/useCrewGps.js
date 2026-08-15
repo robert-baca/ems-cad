@@ -78,6 +78,7 @@ export function useCrewGps({ token, unit, enabled = true }) {
       };
 
       let cancelled = false;
+      let stationaryIntervalId = null;
       const platform = Capacitor.getPlatform();
 
       const startForegroundFallback = async () => {
@@ -142,6 +143,21 @@ export function useCrewGps({ token, unit, enabled = true }) {
             if (cancelled) { bgGeo.removeWatcher({ id }).catch(() => {}); return; }
             watchIdRef.current = id;
             setGpsStatus('background GPS active');
+
+            // CoreLocation's continuous watcher can go quiet indefinitely once the
+            // phone is stationary (screen locked, sitting at a post) — there's no
+            // OS-level guarantee of a periodic callback the way Android's foreground
+            // service has a timed heartbeat. If dispatch clears a stale pin while
+            // the phone genuinely isn't moving, nothing would ever post again. Poll
+            // for a one-shot fix on an interval as a backstop.
+            stationaryIntervalId = setInterval(async () => {
+              if (cancelled) return;
+              try {
+                const { Geolocation } = await import('@capacitor/geolocation');
+                const pos = await Geolocation.getCurrentPosition({ enableHighAccuracy: false, timeout: 10000 });
+                if (!cancelled && pos) postGpsJs(pos.coords.latitude, pos.coords.longitude);
+              } catch {}
+            }, 30000);
             return;
           } catch (e) {
             if (attempt < 7) await new Promise(r => setTimeout(r, 500));
@@ -180,6 +196,7 @@ export function useCrewGps({ token, unit, enabled = true }) {
 
       return () => {
         cancelled = true;
+        if (stationaryIntervalId) clearInterval(stationaryIntervalId);
         const id = watchIdRef.current;
 
         if (platform === 'ios') {

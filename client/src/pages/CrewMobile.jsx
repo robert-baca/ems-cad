@@ -10,6 +10,7 @@ import { useCrewNotifications } from '../hooks/useCrewNotifications';
 import ActiveCall from '../components/crew/ActiveCall';
 import StatusButtons from '../components/crew/StatusButtons';
 import CrewCaseHistory from '../components/crew/CrewCaseHistory';
+import ErrorBoundary from '../components/ErrorBoundary';
 import CallSummaryModal from '../components/calls/CallSummaryModal';
 import NativeSetupModal from '../components/crew/NativeSetupModal';
 import BeaconMode from '../components/crew/BeaconMode';
@@ -579,18 +580,22 @@ export default function CrewMobile() {
       </div>
 
       {showCaseSummary && myCall && (
-        <CallSummaryModal
-          call={myCall}
-          units={units}
-          onClose={() => setShowCaseSummary(false)}
-        />
+        <ErrorBoundary onClose={() => setShowCaseSummary(false)}>
+          <CallSummaryModal
+            call={myCall}
+            units={units}
+            onClose={() => setShowCaseSummary(false)}
+          />
+        </ErrorBoundary>
       )}
 
       {showCaseHistory && (
-        <CrewCaseHistory
-          units={units}
-          onClose={() => setShowCaseHistory(false)}
-        />
+        <ErrorBoundary onClose={() => setShowCaseHistory(false)}>
+          <CrewCaseHistory
+            units={units}
+            onClose={() => setShowCaseHistory(false)}
+          />
+        </ErrorBoundary>
       )}
 
       {showBeacon && (
