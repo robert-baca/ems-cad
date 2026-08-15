@@ -62,9 +62,13 @@ export function useCrewGps({ token, unit, enabled = true }) {
       const postGpsJs = async (lat, lng) => {
         try {
           let gpsPermission;
-          if (Capacitor.getPlatform() === 'ios') {
-            try { gpsPermission = (await getLocationAuth().getStatus()).status; } catch {}
-          }
+          try {
+            if (Capacitor.getPlatform() === 'ios') {
+              gpsPermission = (await getLocationAuth().getStatus()).status;
+            } else {
+              gpsPermission = (await getTracker().getStatus()).status;
+            }
+          } catch {}
           await fetch(`${apiBase()}/crew/gps`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },

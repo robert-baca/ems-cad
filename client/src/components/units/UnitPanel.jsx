@@ -5,6 +5,18 @@ import AddUnitModal from './AddUnitModal';
 
 const TYPE_ICONS = { ALS: '🚑', BLS: '🚐', Cart: '🛺', Bike: '🚴' };
 
+// gps_permission_status values, iOS (LocationAuthPlugin) and Android
+// (GpsPermissionStatus) — 'always'/'ok' both mean "nothing to fix" and are
+// filtered out before this ever gets consulted.
+const GPS_PERMISSION_LABELS = {
+  whenInUse: 'While Using only — locks up once the screen locks',
+  denied: 'location denied',
+  restricted: 'location restricted',
+  notDetermined: 'location not yet granted',
+  no_permission: 'location permission not granted',
+  battery_restricted: 'battery optimization not disabled — may get killed in the background',
+};
+
 const TYPE_ORDER = { ALS: 0, BLS: 1, Cart: 2, Bike: 3 };
 const STATUS_PRIORITY = { dispatched: 0, en_route: 0, on_scene: 0, patient_contact: 0, available: 1, cleared: 2, out_of_service: 3 };
 
@@ -78,12 +90,12 @@ function UnitCard({ unit, activeCall, isSelected, onClick, onHistory, onEdit, on
               {gpsStale ? `GPS stale · ${gpsAgeMin}m ago` : `GPS · ${gpsAgeMin}m ago`}
             </div>
           )}
-          {unit.gps_permission_status && unit.gps_permission_status !== 'always' && (
+          {unit.gps_permission_status && unit.gps_permission_status !== 'always' && unit.gps_permission_status !== 'ok' && (
             <div
               className="text-amber-400 text-xs mt-0.5 font-medium"
-              title="GPS will stop updating once their screen locks until this is fixed"
+              title="GPS tracking on this phone may be unreliable until this is fixed"
             >
-              ⚠ iOS location: {unit.gps_permission_status === 'whenInUse' ? 'While Using only' : unit.gps_permission_status}
+              ⚠ {GPS_PERMISSION_LABELS[unit.gps_permission_status] ?? unit.gps_permission_status}
             </div>
           )}
         </button>

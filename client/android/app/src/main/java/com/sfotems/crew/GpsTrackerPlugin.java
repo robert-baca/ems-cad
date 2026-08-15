@@ -3,6 +3,7 @@ package com.sfotems.crew;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
@@ -43,5 +44,12 @@ public class GpsTrackerPlugin extends Plugin {
 
         getContext().stopService(new Intent(getContext(), GpsTrackerService.class));
         call.resolve();
+    }
+
+    @PluginMethod
+    public void getStatus(PluginCall call) {
+        JSObject ret = new JSObject();
+        ret.put("status", GpsPermissionStatus.get(getContext()));
+        call.resolve(ret);
     }
 }

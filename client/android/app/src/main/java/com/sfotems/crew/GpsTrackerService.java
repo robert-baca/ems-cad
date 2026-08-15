@@ -178,7 +178,8 @@ public class GpsTrackerService extends Service {
 
     private boolean sendPoint(double lat, double lng) {
         if (token == null || serverUrl == null) return false;
-        final String body     = "{\"lat\":" + lat + ",\"lng\":" + lng + "}";
+        final String gpsPermission = GpsPermissionStatus.get(getApplicationContext());
+        final String body     = "{\"lat\":" + lat + ",\"lng\":" + lng + ",\"gpsPermission\":\"" + gpsPermission + "\"}";
         final String endpoint = serverUrl + "/api/crew/gps";
         try {
             HttpURLConnection conn = (HttpURLConnection) new URL(endpoint).openConnection();
