@@ -25,7 +25,7 @@ export default function DisplayBoard() {
   useEffect(() => {
     const displayToken = sessionStorage.getItem('display_token');
     if (!displayToken) {
-      navigate('/login');
+      navigate('/login', { state: { forceRole: 'display' } });
       return;
     }
 
@@ -33,7 +33,7 @@ export default function DisplayBoard() {
 
     socket.on('error:auth', () => {
       sessionStorage.removeItem('display_token');
-      navigate('/login');
+      navigate('/login', { state: { forceRole: 'display' } });
     });
 
     // Join on every connect so the room is re-joined after reconnects

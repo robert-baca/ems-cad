@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { apiBase, isNative } from '../lib/native';
 
@@ -302,15 +302,20 @@ function CrewLogin({ onBack, onSuccess }) {
 export default function Login() {
   const { user, login } = useAuth();
   const navigate  = useNavigate();
+  const location  = useLocation();
+  const forceRole = location.state?.forceRole;
 
-  // Auto-redirect if already logged in
+  // Auto-redirect if already logged in — unless we were sent here explicitly
+  // for another role (e.g. the display board bouncing back after its token
+  // expired). A stale dispatcher/crew session in localStorage on a shared or
+  // kiosk browser shouldn't hijack that.
   useEffect(() => {
-    if (!user) return;
+    if (!user || forceRole) return;
     if (user.role === 'crew')       navigate('/crew',       { replace: true });
     else if (user.role === 'dispatcher') navigate('/dispatcher', { replace: true });
-  }, [user]);
+  }, [user, forceRole]);
 
-  const [role,     setRole]    = useState(() => localStorage.getItem(LAST_ROLE_KEY) === 'crew' ? 'crew' : null);
+  const [role,     setRole]    = useState(() => forceRole || (localStorage.getItem(LAST_ROLE_KEY) === 'crew' ? 'crew' : null));
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [pin,      setPin]     = useState('');
