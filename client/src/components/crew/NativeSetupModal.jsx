@@ -80,7 +80,15 @@ export default function NativeSetupModal({ onDone }) {
         if (Capacitor.getPlatform() === 'ios') {
           try {
             const bgGeo = getBackgroundGeolocation();
-            const watcherId = await bgGeo.addWatcher({ requestPermissions: true, stale: true }, () => {});
+            // backgroundMessage is what tells the native plugin to request
+            // "Always" rather than "When In Use" (see ios/Plugin/Swift/Plugin.swift) —
+            // without it this silently re-requests While-Using and does nothing.
+            const watcherId = await bgGeo.addWatcher({
+              requestPermissions: true,
+              stale: true,
+              backgroundMessage: 'EMS Crew GPS is active.',
+              backgroundTitle: 'EMS Crew Tracking',
+            }, () => {});
             await bgGeo.removeWatcher({ id: watcherId });
           } catch {
             // Not fatal — declining the upgrade just leaves it at "While Using";
