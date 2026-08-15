@@ -65,7 +65,7 @@ export default function NewCallModal({ pin, units, onDispatch, onClose, parentCa
       priority:     Number(form.priority)
     });
     setLoading(false);
-    if (result === null) { setError('Failed to dispatch — check connection and try again.'); return; }
+    if (!result || result.error) { setError(result?.error || 'Failed to dispatch — check connection and try again.'); return; }
     onClose();
   };
 

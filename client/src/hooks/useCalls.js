@@ -46,8 +46,11 @@ export function useCalls() {
     try {
       const res = await createCall(data);
       return res.data; // socket will add it via handleCallCreated
-    } catch {
-      return null;
+    } catch (err) {
+      // Surface the server's actual reason (e.g. 403 Forbidden, 409 unit
+      // already on a call) instead of a generic message that only fits
+      // real network failures.
+      return { error: err?.response?.data?.error || 'Failed to dispatch — check connection and try again.' };
     }
   }, []);
 

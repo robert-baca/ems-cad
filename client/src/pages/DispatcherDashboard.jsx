@@ -248,7 +248,7 @@ export default function DispatcherDashboard() {
     setSplitParentId(null);
     const call = await dispatchCall(payload);
     setNewCallPin(null);
-    if (call) { setSelectedCallId(call.id); setShowHistory(false); }
+    if (call && !call.error) { setSelectedCallId(call.id); setShowHistory(false); }
     return call;
   };
 

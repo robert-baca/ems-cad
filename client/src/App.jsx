@@ -7,9 +7,14 @@ import WayfindingAdmin from './pages/WayfindingAdmin';
 import DisplayBoard from './pages/DisplayBoard';
 import CrewMobile from './pages/CrewMobile';
 
-function ProtectedRoute({ children }) {
+// `allow` restricts the route to specific roles — without it, any logged-in
+// session could land on e.g. /dispatcher with the wrong role (say, a crew
+// session on a shared device) and render the full dashboard while every
+// dispatcher-only request silently 403s server-side.
+function ProtectedRoute({ children, allow }) {
   const { user } = useAuth();
   if (!user) return <Navigate to="/login" replace />;
+  if (allow && !allow.includes(user.role)) return <Navigate to="/login" replace />;
   return children;
 }
 
@@ -21,7 +26,7 @@ export default function App() {
       <Route
         path="/dispatcher"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute allow={['dispatcher', 'overwatch']}>
             <DispatcherDashboard />
           </ProtectedRoute>
         }
@@ -29,7 +34,7 @@ export default function App() {
       <Route
         path="/crew"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute allow={['crew']}>
             <CrewMobile />
           </ProtectedRoute>
         }
@@ -38,7 +43,7 @@ export default function App() {
       <Route
         path="/wayfinding"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute allow={['wayfinding_admin']}>
             <WayfindingAdmin />
           </ProtectedRoute>
         }
