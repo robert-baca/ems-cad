@@ -188,7 +188,7 @@ function UnitCard({ unit, activeCall, isSelected, onClick, onHistory, onEdit, on
   );
 }
 
-export default function UnitPanel({ units, calls, selectedUnitId, onSelectUnit, onUnitHistory, onEditUnit, onRemoveUnit, onAddUnit, onStatusChange, onClearGps, onToggleTracking, onFlyTo, trackers = [], readOnly = false }) {
+export default function UnitPanel({ units, calls, selectedUnitId, onSelectUnit, onUnitHistory, onEditUnit, onRemoveUnit, onAddUnit, onStatusChange, onClearGps, onToggleTracking, onFlyTo, readOnly = false }) {
   const [editingUnit,  setEditingUnit]  = useState(null);
   const [showAddUnit,  setShowAddUnit]  = useState(false);
 
@@ -297,7 +297,6 @@ export default function UnitPanel({ units, calls, selectedUnitId, onSelectUnit, 
           onSave={handleSave}
           onDelete={handleDelete}
           onClose={() => setEditingUnit(null)}
-          trackers={trackers}
           units={units}
         />
       )}
@@ -306,8 +305,6 @@ export default function UnitPanel({ units, calls, selectedUnitId, onSelectUnit, 
         <AddUnitModal
           onAdd={onAddUnit}
           onClose={() => setShowAddUnit(false)}
-          trackers={trackers}
-          units={units}
         />
       )}
     </>

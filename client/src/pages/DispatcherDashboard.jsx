@@ -5,7 +5,7 @@ import { useUnits } from '../hooks/useUnits';
 import { useCalls } from '../hooks/useCalls';
 import { useLocations } from '../hooks/useLocations';
 import { useSocket } from '../hooks/useSocket';
-import { getTrackers, createTracker, updateTracker, deleteTracker, getCallHistory } from '../services/api';
+import { getCallHistory } from '../services/api';
 import ParkMap from '../components/map/ParkMap';
 import MapContextMenu from '../components/map/MapContextMenu';
 import UnitPanel from '../components/units/UnitPanel';
@@ -66,14 +66,12 @@ export default function DispatcherDashboard() {
   const [showHistoryModal,  setShowHistoryModal]    = useState(false);
   const [historyUnit,       setHistoryUnit]         = useState(null);
   const [flyToTarget,       setFlyToTarget]         = useState(null);
-  const [unknownGpsDevice,  setUnknownGpsDevice]   = useState(null);
   const [splitParentId,     setSplitParentId]       = useState(null);
   const [showOptions,       setShowOptions]          = useState(false);
   const [overwatchCallId,   setOverwatchCallId]      = useState(null);
   const [leftOpen,          setLeftOpen]             = useState(true);
   const [rightOpen,         setRightOpen]            = useState(true);
   const [sosAlerts,         setSosAlerts]            = useState([]);
-  const [trackers,          setTrackers]             = useState([]);
 
   // Load current shift on mount
   useEffect(() => {
@@ -83,27 +81,6 @@ export default function DispatcherDashboard() {
       .then(data => setCurrentShift(data || null))
       .catch(() => setCurrentShift(null));
   }, [user?.token]);
-
-  // Load trackers on mount
-  useEffect(() => {
-    if (!user?.token) return;
-    getTrackers().then(r => setTrackers(r.data)).catch(() => {});
-  }, [user?.token]);
-
-  const handleAddTracker = useCallback(async (name, device_id) => {
-    const r = await createTracker(name, device_id);
-    setTrackers(prev => [...prev, r.data]);
-  }, []);
-
-  const handleUpdateTracker = useCallback(async (id, data) => {
-    const r = await updateTracker(id, data);
-    setTrackers(prev => prev.map(t => t.id === id ? r.data : t));
-  }, []);
-
-  const handleDeleteTracker = useCallback(async (id) => {
-    await deleteTracker(id);
-    setTrackers(prev => prev.filter(t => t.id !== id));
-  }, []);
 
   const fetchHistory = useCallback(async () => {
     setHistoryLoading(true);
@@ -146,7 +123,7 @@ export default function DispatcherDashboard() {
   }, [currentShift, showNewCallModal, isOverwatch]);
 
   const { isConnected } = useSocket({
-    'init:state':          ({ units: u, calls: c, locations: l, trackers: tr }) => { setUnits(u); setCalls(c); if (l) setPermLocations(l); if (tr) setTrackers(tr); },
+    'init:state':          ({ units: u, calls: c, locations: l }) => { setUnits(u); setCalls(c); if (l) setPermLocations(l); },
     'unit:gps_update':     handleGpsUpdate,
     'unit:status_change':  handleStatusChange,
     'unit:profile_update': handleProfileUpdate,
@@ -169,8 +146,7 @@ export default function DispatcherDashboard() {
       }
     },
     'shift:started':       ({ shift, units: u }) => { setCurrentShift(shift); if (setUnits) setUnits(u); },
-    'shift:ended':         ({ units: u, open_calls, ...summary }) => { setShiftSummary(summary); setCurrentShift(null); setCalls(open_calls || []); setSelectedCallId(null); if (u) setUnits(u); },
-    'gps:unknown_device':  ({ device_id }) => setUnknownGpsDevice(device_id)
+    'shift:ended':         ({ units: u, open_calls, ...summary }) => { setShiftSummary(summary); setCurrentShift(null); setCalls(open_calls || []); setSelectedCallId(null); if (u) setUnits(u); }
   });
 
   const handleShiftStarted = (shift, updatedUnits) => {
@@ -377,14 +353,6 @@ export default function DispatcherDashboard() {
         </div>
       </header>
 
-      {/* ── GPS unknown device banner ─────────────────────────── */}
-      {unknownGpsDevice && (
-        <div className="flex items-center justify-between px-4 py-2 bg-yellow-900/60 border-b border-yellow-700 text-yellow-200 text-xs flex-shrink-0">
-          <span>📡 Unknown GPS device ID: <span className="font-mono font-bold">{unknownGpsDevice}</span> — paste this into Edit Unit → Tracki Device ID</span>
-          <button onClick={() => setUnknownGpsDevice(null)} className="ml-4 text-yellow-400 hover:text-white">✕</button>
-        </div>
-      )}
-
       {/* ── Stale GPS banner ─────────────────────────────────── */}
       {(() => {
         const stale = units.filter(u =>
@@ -420,7 +388,6 @@ export default function DispatcherDashboard() {
             onClearGps={clearGps}
             onToggleTracking={toggleTracking}
             onFlyTo={(unit) => setFlyToTarget({ lat: unit.last_lat, lng: unit.last_lng, _t: Date.now() })}
-            trackers={trackers}
             readOnly={isOverwatch}
           />
         )}
@@ -557,10 +524,6 @@ export default function DispatcherDashboard() {
           onClose={() => setShowOptions(false)}
           locations={locations}
           onRemoveLocation={removeLocation}
-          trackers={trackers}
-          onAddTracker={handleAddTracker}
-          onUpdateTracker={handleUpdateTracker}
-          onDeleteTracker={handleDeleteTracker}
         />
       )}
 

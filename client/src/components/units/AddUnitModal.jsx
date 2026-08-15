@@ -2,20 +2,12 @@ import { useState } from 'react';
 
 const UNIT_TYPES = ['ALS', 'BLS', 'Cart'];
 
-export default function AddUnitModal({ onAdd, onClose, trackers = [], units = [] }) {
+export default function AddUnitModal({ onAdd, onClose }) {
   const [unitNumber,  setUnitNumber]  = useState('');
   const [unitName,    setUnitName]    = useState('');
   const [unitType,    setUnitType]    = useState('ALS');
-  const [trackerName, setTrackerName] = useState('');
   const [saving,      setSaving]      = useState(false);
   const [error,       setError]       = useState('');
-
-  const selectedTracker = trackers.find(t => t.name === trackerName);
-
-  // Map tracker name → unit number for any already-assigned trackers
-  const assignedTo = {};
-  units.forEach(u => { if (u.tracker_name) assignedTo[u.tracker_name] = u.unit_number; });
-  const conflict = trackerName && assignedTo[trackerName];
 
   const handleSave = async () => {
     if (!unitNumber.trim()) { setError('Unit number is required.'); return; }
@@ -26,8 +18,7 @@ export default function AddUnitModal({ onAdd, onClose, trackers = [], units = []
       await onAdd({
         unit_number:  unitNumber.trim(),
         unit_name:    unitName.trim(),
-        unit_type:    unitType,
-        tracker_name: trackerName || null
+        unit_type:    unitType
       });
       onClose();
     } catch (err) {
@@ -84,43 +75,6 @@ export default function AddUnitModal({ onAdd, onClose, trackers = [], units = []
                 </button>
               ))}
             </div>
-          </div>
-
-          <div>
-            <label className="block text-gray-400 text-xs uppercase tracking-wider mb-1.5">GPS Tracker</label>
-            {trackers.length === 0 ? (
-              <div className="text-gray-500 text-xs bg-gray-700 rounded-lg px-3 py-2.5">
-                No trackers configured — add them in Settings ⚙
-              </div>
-            ) : (
-              <>
-                <select
-                  value={trackerName}
-                  onChange={e => setTrackerName(e.target.value)}
-                  className="w-full bg-gray-700 text-white rounded-lg px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="">None</option>
-                  {trackers.map(t => {
-                    const inUse = assignedTo[t.name];
-                    return (
-                      <option key={t.id} value={t.name}>
-                        {t.name}{inUse ? ` — in use by ${inUse}` : ''}
-                      </option>
-                    );
-                  })}
-                </select>
-                {conflict ? (
-                  <p className="text-yellow-400 text-xs mt-1">
-                    ⚠ {trackerName} is already assigned to {conflict}. Saving will move it to this unit.
-                  </p>
-                ) : selectedTracker ? (
-                  <p className="text-green-400 text-xs mt-1">
-                    ✓ GPS tracking via {selectedTracker.name}
-                    {selectedTracker.device_id ? ` (${selectedTracker.device_id})` : ' — no IMEI set yet'}
-                  </p>
-                ) : null}
-              </>
-            )}
           </div>
 
           {error && <p className="text-red-400 text-sm">{error}</p>}

@@ -62,7 +62,6 @@ function warnIfWeak(name, value, fallback) {
 }
 warnIfWeak('JWT_SECRET',          process.env.JWT_SECRET,          undefined);
 warnIfWeak('DISPLAY_PIN',         process.env.DISPLAY_PIN,         undefined);
-warnIfWeak('GPS_WEBHOOK_SECRET',  process.env.GPS_WEBHOOK_SECRET,  undefined);
 
 // ── Database ──────────────────────────────────────────────────────
 const pool = new Pool({
@@ -84,11 +83,9 @@ const overwatches = [
 let units        = [];
 let calls        = [];
 let locations    = [];
-let trackers     = [];
 let parkPaths    = [];
 let currentShift = null;
 let nextCallNum  = 100;
-const unknownGpsDevices  = new Set();
 const gpsDiscardLastLog  = new Map(); // unit_id → last discard log timestamp
 
 // ── DB setup & seed ───────────────────────────────────────────────
@@ -102,7 +99,6 @@ async function initDb() {
       status TEXT DEFAULT 'available',
       crew TEXT,
       station TEXT,
-      tracki_device_id TEXT,
       last_lat DOUBLE PRECISION,
       last_lng DOUBLE PRECISION,
       last_gps_at TEXT,
@@ -153,22 +149,12 @@ async function initDb() {
   await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS park_zone TEXT`);
   await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS additional_unit_timestamps JSONB DEFAULT '{}'`);
   await pool.query(`ALTER TABLE locations ADD COLUMN IF NOT EXISTS location_type TEXT DEFAULT 'permanent'`);
-  await pool.query(`ALTER TABLE units ADD COLUMN IF NOT EXISTS tracki_device_id TEXT`);
-  await pool.query(`ALTER TABLE units ADD COLUMN IF NOT EXISTS tracker_name TEXT`);
   await pool.query(`ALTER TABLE units ADD COLUMN IF NOT EXISTS last_gps_fix_ts TEXT`);
 
   // Prune calls older than 90 days
   const pruneDate = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
   const pruned = await pool.query('DELETE FROM calls WHERE received_at < $1', [pruneDate]);
   if (pruned.rowCount > 0) console.log(`[db] pruned ${pruned.rowCount} calls older than 90 days`);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS trackers (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      device_id TEXT
-    )
-  `);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS locations (
@@ -190,14 +176,6 @@ async function initDb() {
       ended_at TEXT,
       started_by TEXT,
       unit_staffing JSONB DEFAULT '[]'
-    )
-  `);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS trackimo_tokens (
-      key TEXT PRIMARY KEY,
-      value TEXT NOT NULL,
-      updated_at TEXT
     )
   `);
 
@@ -262,29 +240,25 @@ async function initDb() {
   const locsRes = await pool.query("SELECT * FROM locations ORDER BY name");
   locations = locsRes.rows;
 
-  const trackersRes = await pool.query('SELECT * FROM trackers ORDER BY name');
-  trackers = trackersRes.rows;
-
   const parkPathsRes = await pool.query('SELECT * FROM park_paths ORDER BY created_at');
   parkPaths = parkPathsRes.rows.map(p => ({ ...p, coordinates: p.coordinates || [] }));
 
-  console.log(`[db] loaded ${units.length} units, ${calls.length} calls, ${locations.length} locations, ${trackers.length} trackers, ${parkPaths.length} park paths, shift: ${currentShift?.shift_label || 'none'}`);
+  console.log(`[db] loaded ${units.length} units, ${calls.length} calls, ${locations.length} locations, ${parkPaths.length} park paths, shift: ${currentShift?.shift_label || 'none'}`);
 }
 
 async function saveUnit(unit) {
   await pool.query(`
     INSERT INTO units (id, unit_number, unit_name, unit_type, status, crew, station,
-      tracki_device_id, tracker_name, last_lat, last_lng, last_gps_at, last_gps_fix_ts, password_hash, profile)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+      last_lat, last_lng, last_gps_at, last_gps_fix_ts, password_hash, profile)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
     ON CONFLICT (id) DO UPDATE SET
       unit_number=EXCLUDED.unit_number, unit_name=EXCLUDED.unit_name, unit_type=EXCLUDED.unit_type,
       status=EXCLUDED.status, crew=EXCLUDED.crew, station=EXCLUDED.station,
-      tracki_device_id=EXCLUDED.tracki_device_id, tracker_name=EXCLUDED.tracker_name,
       last_lat=EXCLUDED.last_lat, last_lng=EXCLUDED.last_lng,
       last_gps_at=EXCLUDED.last_gps_at, last_gps_fix_ts=EXCLUDED.last_gps_fix_ts,
       password_hash=EXCLUDED.password_hash, profile=EXCLUDED.profile
   `, [unit.id, unit.unit_number, unit.unit_name, unit.unit_type, unit.status,
-      unit.crew, unit.station, unit.tracki_device_id, unit.tracker_name || null, unit.last_lat, unit.last_lng,
+      unit.crew, unit.station, unit.last_lat, unit.last_lng,
       unit.last_gps_at, unit.last_gps_fix_ts || null, unit.password_hash,
       unit.profile ? JSON.stringify(unit.profile) : null]);
 }
@@ -348,17 +322,6 @@ async function saveLocation(loc) {
 
 async function deleteLocationFromDb(id) {
   await pool.query('DELETE FROM locations WHERE id=$1', [id]);
-}
-
-async function saveTracker(t) {
-  await pool.query(`
-    INSERT INTO trackers (id, name, device_id) VALUES ($1,$2,$3)
-    ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name, device_id=EXCLUDED.device_id
-  `, [t.id, t.name, t.device_id]);
-}
-
-async function deleteTrackerFromDb(id) {
-  await pool.query('DELETE FROM trackers WHERE id=$1', [id]);
 }
 
 async function saveParkPath(p) {
@@ -660,7 +623,7 @@ app.put('/api/units/:id/profile', verifyToken, async (req, res) => {
 
 app.post('/api/units', verifyToken, async (req, res) => {
   if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
-  const { unit_number, unit_name, unit_type = 'ALS', tracker_name } = req.body;
+  const { unit_number, unit_name, unit_type = 'ALS' } = req.body;
   if (!unit_number?.trim() || !unit_name?.trim())
     return res.status(400).json({ error: 'unit_number and unit_name are required' });
   if (units.some(u => u.unit_number.trim().toLowerCase() === unit_number.trim().toLowerCase()))
@@ -673,8 +636,6 @@ app.post('/api/units', verifyToken, async (req, res) => {
     status:          'available',
     last_lat:        null,
     last_lng:        null,
-    tracki_device_id: null,
-    tracker_name:    tracker_name || null,
     password_hash:   bcrypt.hashSync('ems2024', 8),
     profile:         null,
     crew:            null,
@@ -693,7 +654,7 @@ app.put('/api/units/:id', verifyToken, async (req, res) => {
   const unit = units.find(u => u.id === req.params.id);
   if (!unit) return res.status(404).json({ error: 'Not found' });
 
-  const { unit_number, unit_name, unit_type, password, tracker_name } = req.body;
+  const { unit_number, unit_name, unit_type, password } = req.body;
   if (unit_number !== undefined) {
     if (units.some(u => u.id !== unit.id && u.unit_number.trim().toLowerCase() === unit_number.trim().toLowerCase()))
       return res.status(409).json({ error: `A unit named "${unit_number.trim()}" already exists` });
@@ -702,21 +663,6 @@ app.put('/api/units/:id', verifyToken, async (req, res) => {
   if (unit_name   !== undefined)    unit.unit_name    = unit_name;
   if (unit_type   !== undefined)    unit.unit_type    = unit_type;
   if (password)                     unit.password_hash = bcrypt.hashSync(password, 8);
-
-  if ('tracker_name' in req.body) {
-    const newTracker = tracker_name || null;
-    // Clear this tracker from any other unit that currently has it
-    if (newTracker) {
-      units.forEach(u => {
-        if (u.id !== unit.id && u.tracker_name === newTracker) {
-          u.tracker_name = null;
-          saveUnit(u).catch(console.error);
-          io.to('dispatchers').emit('unit:updated', { ...u, password_hash: undefined });
-        }
-      });
-    }
-    unit.tracker_name = newTracker;
-  }
 
   await saveUnit(unit).catch(console.error);
   const sanitized = { ...unit, password_hash: undefined };
@@ -1153,7 +1099,7 @@ app.post('/api/crew/add-unit', async (req, res) => {
       id: `u-${Date.now()}`,
       unit_number: unit_number.trim(), unit_name: unit_number.trim(),
       unit_type, status: 'available',
-      last_lat: null, last_lng: null, last_gps_at: null, tracki_device_id: null,
+      last_lat: null, last_lng: null, last_gps_at: null,
       password_hash: null,
       profile: null, crew: null, station: null,
       tracking_active: false
@@ -1380,42 +1326,6 @@ function applyGpsUpdate(unit, lat, lng, timestamp) {
   return true;
 }
 
-function handleUnknownDevice(device_id) {
-  const key = String(device_id);
-  if (!unknownGpsDevices.has(key)) {
-    unknownGpsDevices.add(key);
-    io.to('dispatchers').emit('gps:unknown_device', { device_id: key });
-  }
-}
-
-// ── GPS webhook (Tracki / generic hardware tracker) ───────────────
-// Configure your tracker to POST to: https://<your-domain>/api/gps/webhook?secret=GPS_WEBHOOK_SECRET
-// Set the unit's GPS Device ID to match the tracker's IMEI or device ID.
-app.post('/api/gps/webhook', (req, res) => {
-  const secret = process.env.GPS_WEBHOOK_SECRET;
-  if (secret && req.query.secret !== secret)
-    return res.status(401).json({ error: 'Unauthorized' });
-  const body = req.body;
-  console.log('[gps] incoming ping:', JSON.stringify(body));
-
-  const device_id = body.imei ?? body.device_id ?? body.serial_number ?? body.serial ?? body.tid ?? body.id ?? null;
-  const lat       = parseFloat(body.lat ?? body.latitude  ?? 0);
-  const lng       = parseFloat(body.lng ?? body.longitude ?? body.lon ?? 0);
-  const timestamp = body.timestamp ?? body.gps_time ?? new Date().toISOString();
-
-  const tracker = trackers.find(t => t.device_id && String(t.device_id) === String(device_id));
-  const unit    = tracker ? units.find(u => u.tracker_name === tracker.name) : null;
-  if (unit && lat && lng) {
-    applyGpsUpdate(unit, lat, lng, timestamp);
-    console.log(`[gps] updated ${unit.unit_number} via ${tracker.name} → ${lat}, ${lng}`);
-  } else if (!tracker && device_id !== null) {
-    console.log(`[gps] unknown device_id: ${device_id} — configure in Settings → GPS Trackers`);
-    handleUnknownDevice(device_id);
-  }
-
-  res.json({ ok: true });
-});
-
 // ── Traccar Client GPS (phone-based, OsmAnd protocol) ────────────
 // Crew setup: install Traccar Client, set Protocol=OsmAnd, Server URL=<this server>,
 // Device Identifier=<unit_number>. Interval 30s recommended.
@@ -1582,61 +1492,6 @@ app.delete('/api/locations/:id', verifyToken, async (req, res) => {
   res.json({ ok: true });
 });
 
-// ── Trackers ──────────────────────────────────────────────────────
-app.get('/api/trackers', verifyToken, (req, res) => {
-  if (!['dispatcher', 'overwatch'].includes(req.user.role)) return res.status(403).json({ error: 'Forbidden' });
-  res.json(trackers);
-});
-
-app.post('/api/trackers', verifyToken, async (req, res) => {
-  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
-  const { name, device_id } = req.body;
-  if (!name?.trim()) return res.status(400).json({ error: 'name required' });
-  const t = { id: `tracker-${Date.now()}`, name: name.trim(), device_id: device_id?.trim() || null };
-  trackers.push(t);
-  await saveTracker(t).catch(console.error);
-  res.status(201).json(t);
-});
-
-app.put('/api/trackers/:id', verifyToken, async (req, res) => {
-  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
-  const t = trackers.find(t => t.id === req.params.id);
-  if (!t) return res.status(404).json({ error: 'Not found' });
-  const oldName = t.name;
-  if (req.body.name !== undefined)  t.name      = req.body.name.trim();
-  if ('device_id' in req.body)      t.device_id = req.body.device_id?.trim() || null;
-  await saveTracker(t).catch(console.error);
-  // Keep units in sync when tracker is renamed
-  if (t.name !== oldName) {
-    units.forEach(u => {
-      if (u.tracker_name === oldName) {
-        u.tracker_name = t.name;
-        saveUnit(u).catch(console.error);
-        io.to('dispatchers').emit('unit:updated', { ...u, password_hash: undefined });
-      }
-    });
-  }
-  res.json(t);
-});
-
-app.delete('/api/trackers/:id', verifyToken, async (req, res) => {
-  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
-  const idx = trackers.findIndex(t => t.id === req.params.id);
-  if (idx === -1) return res.status(404).json({ error: 'Not found' });
-  const deletedName = trackers[idx].name;
-  trackers.splice(idx, 1);
-  deleteTrackerFromDb(req.params.id).catch(console.error);
-  // Clear tracker reference from any units that used this tracker
-  units.forEach(u => {
-    if (u.tracker_name === deletedName) {
-      u.tracker_name = null;
-      saveUnit(u).catch(console.error);
-      io.to('dispatchers').emit('unit:updated', { ...u, password_hash: undefined });
-    }
-  });
-  res.json({ ok: true });
-});
-
 app.patch('/api/calls/:id/location', verifyToken, async (req, res) => {
   if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
   const call = calls.find(c => c.id === req.params.id);
@@ -1780,321 +1635,6 @@ app.post('/api/display/auth', (req, res) => {
   res.json({ token });
 });
 
-// ── Trackimo GPS polling ──────────────────────────────────────────
-// plus.trackimo.com v4 API — Bearer token auth, stored in DB
-const TRACKIMO_APP  = 'https://app.trackimo.com';
-const TRACKIMO_PLUS = 'https://plus.trackimo.com';
-let trackimoBearer        = null;
-let trackimoAccountId     = null;
-let trackimoSessionCookie = null;   // fallback: use session cookie if bearer unavailable
-
-async function saveTrackimoToken(key, value) {
-  await pool.query(`
-    INSERT INTO trackimo_tokens (key, value, updated_at) VALUES ($1,$2,$3)
-    ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=EXCLUDED.updated_at
-  `, [key, value, new Date().toISOString()]);
-}
-
-async function loadTrackimoTokens() {
-  const res = await pool.query('SELECT key, value FROM trackimo_tokens');
-  const map = {};
-  res.rows.forEach(r => { map[r.key] = r.value; });
-  return map;
-}
-
-// Try refresh token → new access token; returns true on success
-async function tryRefreshToken() {
-  const stored = await loadTrackimoTokens().catch(() => ({}));
-  const refreshToken = stored.refresh_token;
-  if (!refreshToken || !process.env.TRACKIMO_CLIENT_ID) return false;
-  for (const base of [TRACKIMO_PLUS, TRACKIMO_APP]) {
-    for (const ver of ['v4', 'v3']) {
-      try {
-        const res  = await fetch(`${base}/api/${ver}/oauth2/token`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            client_id:     process.env.TRACKIMO_CLIENT_ID,
-            client_secret: process.env.TRACKIMO_CLIENT_SECRET,
-            grant_type:    'refresh_token',
-            refresh_token: refreshToken
-          })
-        });
-        const data = await res.json().catch(() => ({}));
-        if (data.access_token) {
-          trackimoBearer = data.access_token;
-          await saveTrackimoToken('access_token', data.access_token);
-          if (data.refresh_token) await saveTrackimoToken('refresh_token', data.refresh_token);
-          console.log('[tracki] token refreshed via refresh_token');
-          return true;
-        }
-      } catch {}
-    }
-  }
-  return false;
-}
-
-// Full server-side OAuth2 flow using Trackimo's internal client
-// (discovered by inspecting plus.trackimo.com network traffic — overridable via env vars)
-const TRACKI_INTERNAL_CLIENT   = process.env.TRACKI_INTERNAL_CLIENT   || '9092cd94-a728-47b7-86da-e15c9a3d4cdb';
-const TRACKI_INTERNAL_REDIRECT = `${TRACKIMO_PLUS}/api/internal/v1/oauth_redirect`;
-
-// From official Trackimo API sample (trackimo_api_short.py) — overridable via env var
-const TRACKI_CLIENT_SECRET = process.env.TRACKI_CLIENT_SECRET || '9f540cd42ec8d3bc452ce39cdd3d6de4';
-
-async function trackimoAutoLogin() {
-  const { TRACKIMO_USERNAME, TRACKIMO_PASSWORD } = process.env;
-  if (!TRACKIMO_USERNAME || !TRACKIMO_PASSWORD) return false;
-
-  // Step 1: Login → JSESSIONID + AWSALB cookies
-  const loginRes = await fetch(`${TRACKIMO_PLUS}/api/internal/v2/user/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: TRACKIMO_USERNAME, password: TRACKIMO_PASSWORD })
-  });
-  const rawCookies = (loginRes.headers.getSetCookie?.() || [loginRes.headers.get('set-cookie') || ''])
-    .filter(Boolean).map(c => c.split(';')[0]);
-  await loginRes.text().catch(() => '');
-  if (!loginRes.ok || rawCookies.length === 0) {
-    console.error(`[tracki] login failed (${loginRes.status})`); return false;
-  }
-  const sessionCookie = rawCookies.join('; ');
-  console.log(`[tracki] login OK — ${rawCookies.map(c => c.split('=')[0]).join(', ')}`);
-
-  // Step 2: Get OAuth2 auth code
-  const authParams = new URLSearchParams({
-    client_id:     TRACKI_INTERNAL_CLIENT,
-    redirect_uri:  TRACKI_INTERNAL_REDIRECT,
-    response_type: 'code',
-    scope:         'locations,notifications,devices,accounts,settings,geozones'
-  });
-  const authRes = await fetch(`${TRACKIMO_PLUS}/api/v3/oauth2/auth?${authParams}`, {
-    redirect: 'manual',
-    headers: { Cookie: sessionCookie }
-  });
-  const locationHdr = authRes.headers.get('location') || '';
-  const authCode = locationHdr ? new URL(locationHdr, TRACKIMO_PLUS).searchParams.get('code') : null;
-  console.log(`[tracki] oauth2/auth (${authRes.status}) code=${authCode ? 'ok' : 'missing'}`);
-  if (!authCode) { console.error(`[tracki] no auth code`); return false; }
-
-  // Step 3: Exchange auth code for token (official Python sample format)
-  const tokRes = await fetch(`${TRACKIMO_PLUS}/api/v3/oauth2/token`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Cookie: sessionCookie },
-    body: JSON.stringify({
-      client_id:     TRACKI_INTERNAL_CLIENT,
-      client_secret: TRACKI_CLIENT_SECRET,
-      code:          authCode
-    })
-  });
-  const tokBody = await tokRes.text().catch(() => '');
-  console.log(`[tracki] token exchange (${tokRes.status}): ${tokBody.slice(0, 300)}`);
-  let tokData = {};
-  try { tokData = JSON.parse(tokBody); } catch {}
-  const rawToken = tokData.access_token ?? tokData.token ?? tokData.bearer ?? null;
-  if (!rawToken) { console.error('[tracki] token not found in exchange response'); return false; }
-
-  trackimoBearer = rawToken.startsWith('Bearer ') ? rawToken.slice(7) : rawToken;
-  await saveTrackimoToken('access_token', trackimoBearer).catch(console.error);
-  console.log('[tracki] token acquired successfully');
-  return true;
-}
-
-async function trackimoStartup() {
-  trackimoAccountId = process.env.TRACKIMO_ACCOUNT_ID || null;
-  if (!trackimoAccountId) { console.log('[tracki] set TRACKIMO_ACCOUNT_ID env var'); return; }
-
-  // 1. Manual env var override
-  if (process.env.TRACKIMO_BEARER_TOKEN) {
-    trackimoBearer = process.env.TRACKIMO_BEARER_TOKEN;
-    console.log(`[tracki] using env Bearer token — account_id=${trackimoAccountId}`);
-    return;
-  }
-
-  // 2. Load persisted token/session from DB
-  const stored = await loadTrackimoTokens().catch(() => ({}));
-  if (stored.access_token) {
-    trackimoBearer = stored.access_token;
-    console.log(`[tracki] loaded bearer token from DB — account_id=${trackimoAccountId}`);
-    return;
-  }
-  if (stored.session_cookie) {
-    trackimoSessionCookie = stored.session_cookie;
-    console.log(`[tracki] loaded session cookie from DB — account_id=${trackimoAccountId}`);
-    return;
-  }
-
-  // 3. Auto-login with username/password → OAuth2 flow
-  await trackimoAutoLogin();
-}
-
-async function pollTrackimoLocations() {
-  const assignedTrackers = trackers.filter(t => t.device_id && units.some(u => u.tracker_name === t.name));
-  if (assignedTrackers.length === 0 || (!trackimoBearer && !trackimoSessionCookie) || !trackimoAccountId) return;
-
-  const deviceIds = assignedTrackers.map(t => t.device_id);
-  try {
-    const params = new URLSearchParams({
-      comm_stat: '1',
-      device_ids: deviceIds.join(','),
-      fetch_is_fast_tracking_enabled: 'true'
-    });
-    const pollHeaders = { Accept: 'application/json', 'Content-Type': 'application/json' };
-    if (trackimoBearer)        pollHeaders['Authorization'] = `Bearer ${trackimoBearer}`;
-    if (trackimoSessionCookie) pollHeaders['Cookie']        = trackimoSessionCookie;
-
-    const res = await fetch(
-      `${TRACKIMO_PLUS}/api/v4/accounts/${trackimoAccountId}/locations/filter?${params}`,
-      { headers: pollHeaders }
-    );
-
-    if (res.status === 401 || res.status === 403) {
-      if (process.env.TRACKIMO_BEARER_TOKEN) {
-        console.error('[tracki] manual Bearer token rejected — update TRACKIMO_BEARER_TOKEN in Railway');
-        return;
-      }
-      console.log(`[tracki] auth expired (${res.status}) — re-authenticating`);
-      trackimoBearer = null;
-      trackimoSessionCookie = null;
-      await pool.query("DELETE FROM trackimo_tokens WHERE key IN ('access_token','session_cookie')").catch(() => {});
-      const ok = await trackimoAutoLogin();
-      if (ok) return pollTrackimoLocations();
-      console.error('[tracki] re-auth failed — will retry next poll cycle');
-      return;
-    }
-
-    const payload = await res.json();
-    console.log(`[tracki] poll (${res.status}): ${JSON.stringify(payload).slice(0, 400)}`);
-    const results = Array.isArray(payload) ? payload : (payload.locations || payload.data || []);
-
-    for (const loc of results) {
-      const deviceId = String(loc.device_id ?? loc.id ?? loc.tracki_id ?? '');
-      const lat      = parseFloat(loc.lat ?? loc.latitude  ?? 0);
-      const lng      = parseFloat(loc.lng ?? loc.longitude ?? loc.lon ?? 0);
-      // loc.time is Unix seconds — convert to ISO string so the client doesn't treat it as ms (Jan 1970)
-      const rawTs = loc.timestamp ?? loc.time ?? null;
-      const ts    = rawTs
-        ? (typeof rawTs === 'number' ? new Date(rawTs * 1000).toISOString() : rawTs)
-        : new Date().toISOString();
-      if (!lat || !lng) continue;
-
-      const trk  = trackers.find(t => t.device_id && String(t.device_id) === deviceId);
-      const unit = trk ? units.find(u => u.tracker_name === trk.name) : null;
-      if (unit) {
-        applyGpsUpdate(unit, lat, lng, ts);
-        console.log(`[tracki] ${unit.unit_number} via ${trk.name} → ${lat}, ${lng}`);
-      } else {
-        handleUnknownDevice(deviceId);
-      }
-    }
-  } catch (err) {
-    console.error('[tracki] poll error:', err.message);
-  }
-}
-
-async function startTrackimoPolling() {
-  if (!process.env.TRACKIMO_ACCOUNT_ID && !process.env.TRACKIMO_BEARER_TOKEN && !process.env.TRACKIMO_USERNAME) return;
-  await trackimoStartup();
-  setInterval(pollTrackimoLocations, 15000);
-  await pollTrackimoLocations();
-  console.log('[tracki] polling started — 15 s interval');
-}
-
-// ── Trackimo OAuth2 setup endpoints ──────────────────────────────
-// Dispatcher visits /api/tracki/auth once to connect GPS permanently.
-const TRACKI_REDIRECT = process.env.TRACKIMO_REDIRECT_URI || 'https://ems-cad-production.up.railway.app/api/tracki/callback';
-
-app.get('/api/tracki/auth', verifyToken, (req, res) => {
-  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
-  const clientId = process.env.TRACKIMO_CLIENT_ID;
-  if (!clientId) return res.status(400).send('Set TRACKIMO_CLIENT_ID env var first');
-  const params = new URLSearchParams({
-    client_id: clientId, redirect_uri: TRACKI_REDIRECT,
-    response_type: 'code', scope: 'locations,devices'
-  });
-  // Try plus first (v4), fall back to app (v3)
-  res.redirect(`${TRACKIMO_PLUS}/api/v4/oauth2/auth?${params}`);
-});
-
-app.get('/api/tracki/callback', async (req, res) => {
-  const { code, error } = req.query;
-  if (error) return res.status(400).send(`Trackimo auth error: ${error}`);
-  if (!code)  return res.status(400).send('No auth code — authorization may have failed');
-
-  const clientId     = process.env.TRACKIMO_CLIENT_ID;
-  const clientSecret = process.env.TRACKIMO_CLIENT_SECRET;
-  let success = false;
-
-  for (const base of [TRACKIMO_PLUS, TRACKIMO_APP]) {
-    for (const ver of ['v4', 'v3']) {
-      try {
-        const tokRes  = await fetch(`${base}/api/${ver}/oauth2/token`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, code, redirect_uri: TRACKI_REDIRECT })
-        });
-        const tokData = await tokRes.json().catch(() => ({}));
-        console.log(`[tracki] callback token exchange ${base}/api/${ver} (${tokRes.status}): ${JSON.stringify(tokData).slice(0, 200)}`);
-        if (tokData.access_token) {
-          trackimoBearer = tokData.access_token;
-          await saveTrackimoToken('access_token', tokData.access_token);
-          if (tokData.refresh_token) await saveTrackimoToken('refresh_token', tokData.refresh_token);
-          const aid = tokData.account_id ?? tokData.accountId ?? trackimoAccountId ?? process.env.TRACKIMO_ACCOUNT_ID;
-          if (aid) { trackimoAccountId = String(aid); await saveTrackimoToken('account_id', trackimoAccountId); }
-          console.log('[tracki] OAuth2 authorized — GPS polling active');
-          success = true;
-          break;
-        }
-      } catch (err) { console.error(`[tracki] callback error ${base}:`, err.message); }
-    }
-    if (success) break;
-  }
-
-  if (success) {
-    return res.send(`<html><body style="background:#111;color:#fff;font-family:sans-serif;padding:40px;text-align:center">
-      <h2>✅ GPS Connected!</h2><p>Trackimo is now linked. GPS will update every 15 seconds.</p>
-      <p>You can close this tab.</p></body></html>`);
-  }
-  res.status(500).send('Token exchange failed — the OAuth2 endpoint may need adjustment. Check Railway logs.');
-});
-
-// ── GPS / Trackimo diagnostics ────────────────────────────────────
-app.get('/api/tracki/status', verifyToken, (req, res) => {
-  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
-  const trackedUnits = units
-    .filter(u => u.tracker_name)
-    .map(u => {
-      const t = trackers.find(t => t.name === u.tracker_name);
-      return {
-        unit_number:  u.unit_number,
-        tracker_name: u.tracker_name,
-        device_id:    t?.device_id || null,
-        last_lat:     u.last_lat,
-        last_lng:     u.last_lng,
-        last_gps_at:  u.last_gps_at
-      };
-    });
-  res.json({
-    polling_active:     !!(trackimoBearer || trackimoSessionCookie),
-    has_bearer:         !!trackimoBearer,
-    has_session_cookie: !!trackimoSessionCookie,
-    account_id:         trackimoAccountId,
-    env: {
-      TRACKIMO_ACCOUNT_ID:    !!process.env.TRACKIMO_ACCOUNT_ID,
-      TRACKIMO_BEARER_TOKEN:  !!process.env.TRACKIMO_BEARER_TOKEN,
-      TRACKIMO_USERNAME:      !!process.env.TRACKIMO_USERNAME,
-      GPS_WEBHOOK_SECRET:     !!process.env.GPS_WEBHOOK_SECRET
-    },
-    trackers,
-    tracked_units: trackedUnits
-  });
-});
-
-// Manual poll trigger for testing
-app.post('/api/tracki/poll', verifyToken, async (req, res) => {
-  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
-  await pollTrackimoLocations();
-  res.json({ ok: true, message: 'Poll triggered — check Railway logs' });
-});
-
 // ── Health ────────────────────────────────────────────────────────
 app.get('/api/health', (req, res) => res.json({ status: 'ok', ts: new Date().toISOString() }));
 
@@ -2121,8 +1661,7 @@ io.on('connection', (socket) => {
     socket.emit('init:state', {
       units: units.map(u => ({ ...u, password_hash: undefined })),
       calls,
-      locations,
-      trackers
+      locations
     });
   });
 
@@ -2161,7 +1700,6 @@ initDb()
       console.log(`   Default login — dispatchers: "dispatch" / "ems2024"`);
       console.log(`   Default login — crews: "EMS-1" through "EMS-5" / "ems2024"\n`);
     });
-    startTrackimoPolling();
   })
   .catch(err => {
     console.error('[db] Failed to connect to database:', err.message);

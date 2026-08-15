@@ -72,12 +72,6 @@ export const deleteParkPath       = (id) => api.delete(`/park-paths/${id}`);
 export const getWayfindingSettings = () => api.get('/wayfinding/settings');
 export const setWayfindingEnabled  = (enabled) => api.put('/wayfinding/settings', { enabled });
 
-// ── Trackers ───────────────────────────────────────────────────────
-export const getTrackers = () => api.get('/trackers');
-export const createTracker = (name, device_id) => api.post('/trackers', { name, device_id });
-export const updateTracker = (id, data) => api.put(`/trackers/${id}`, data);
-export const deleteTracker = (id) => api.delete(`/trackers/${id}`);
-
 // ── Auth ───────────────────────────────────────────────────────────
 export const loginDispatcher = (username, password) =>
   api.post('/auth/login', { username, password, role: 'dispatcher' });

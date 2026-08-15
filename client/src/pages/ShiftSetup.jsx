@@ -29,8 +29,6 @@ export default function ShiftSetup({ token, onShiftStarted, onViewHistory }) {
   const [error,     setError]     = useState('');
   const [uncrewedWarning, setUncrewedWarning] = useState(null);
 
-  const [editingGpsId, setEditingGpsId] = useState(null);
-
   // Add unit state
   const [addingUnit, setAddingUnit] = useState(false);
   const [newPreset,  setNewPreset]  = useState(null); // null | preset key
@@ -54,7 +52,6 @@ export default function ShiftSetup({ token, onShiftStarted, onViewHistory }) {
             unit_type:        u.unit_type,
             in_service:       u.status !== 'out_of_service',
             station:          u.station         || '',
-            tracki_device_id: u.tracki_device_id || '',
           };
         });
         setStaffing(initial);
@@ -64,15 +61,6 @@ export default function ShiftSetup({ token, onShiftStarted, onViewHistory }) {
 
   const updateStaffing = (unit_id, field, value) =>
     setStaffing(prev => ({ ...prev, [unit_id]: { ...prev[unit_id], [field]: value } }));
-
-  const handleDeviceChange = async (unit_id, device_id) => {
-    updateStaffing(unit_id, 'tracki_device_id', device_id);
-    await fetch(`${apiBase()}/units/${unit_id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ tracki_device_id: device_id || null })
-    }).catch(() => {});
-  };
 
   const setAllInService = () =>
     setStaffing(prev => {
@@ -119,7 +107,7 @@ export default function ShiftSetup({ token, onShiftStarted, onViewHistory }) {
       setUnits(prev => [...prev, unit]);
       setStaffing(prev => ({
         ...prev,
-        [unit.id]: { crew: newCrew.trim(), unit_type: newType, in_service: true, station: '', tracki_device_id: '' }
+        [unit.id]: { crew: newCrew.trim(), unit_type: newType, in_service: true, station: '' }
       }));
       cancelAdd();
     } catch (err) {
@@ -431,42 +419,6 @@ export default function ShiftSetup({ token, onShiftStarted, onViewHistory }) {
                           </div>
                         </div>
 
-                        {editingGpsId === u.id ? (
-                          <div className="flex gap-2 items-end">
-                            <div className="flex-1">
-                              <label className="block text-gray-500 text-xs mb-1">GPS Device ID</label>
-                              <input
-                                autoFocus
-                                type="text"
-                                value={s.tracki_device_id || ''}
-                                onChange={e => updateStaffing(u.id, 'tracki_device_id', e.target.value)}
-                                onBlur={e => handleDeviceChange(u.id, e.target.value)}
-                                onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') { handleDeviceChange(u.id, s.tracki_device_id || ''); setEditingGpsId(null); } }}
-                                placeholder="Tracki IMEI / Device ID"
-                                className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500 font-mono"
-                              />
-                            </div>
-                            <button
-                              onClick={() => { handleDeviceChange(u.id, s.tracki_device_id || ''); setEditingGpsId(null); }}
-                              className="py-2 px-3 bg-blue-700 hover:bg-blue-600 text-white text-xs font-semibold rounded-lg transition-colors flex-shrink-0">
-                              Done
-                            </button>
-                          </div>
-                        ) : (
-                          <button
-                            onClick={() => setEditingGpsId(u.id)}
-                            className="flex items-center gap-2 text-xs text-gray-500 hover:text-gray-300 transition-colors group"
-                          >
-                            <span>📡</span>
-                            <span>
-                              {s.tracki_device_id
-                                ? <span className="font-mono text-gray-400">{s.tracki_device_id}</span>
-                                : <span className="text-gray-600 group-hover:text-gray-400">Set GPS tracker…</span>
-                              }
-                            </span>
-                            <span className="text-gray-700 group-hover:text-gray-500 text-[10px]">✏</span>
-                          </button>
-                        )}
                       </div>
                     )}
                   </div>
