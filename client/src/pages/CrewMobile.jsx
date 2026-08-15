@@ -420,11 +420,25 @@ export default function CrewMobile() {
               {STATUS_LABELS[myUnit.status] || 'Unknown'}
             </div>
           </div>
-          {myUnit.last_gps_at && (
-            <div className="ml-auto flex items-center gap-1">
-              <div className="w-1.5 h-1.5 rounded-full bg-green-400" />
-              <span className="text-green-400 text-xs">GPS</span>
-            </div>
+          {isNative ? (
+            // Always reachable, not gated behind bgPermNeeded — that flag only ever
+            // fires on outright denial, never on the far more common "stuck at While
+            // Using instead of Always" case, which produces no error at all.
+            <button
+              onClick={openGpsSettings}
+              className="ml-auto flex items-center gap-1.5 px-2 py-1 rounded-full bg-black/20 hover:bg-black/35 transition-colors"
+            >
+              <div className={`w-1.5 h-1.5 rounded-full ${myUnit.last_gps_at ? 'bg-green-400' : 'bg-gray-500'}`} />
+              <span className={`text-xs ${myUnit.last_gps_at ? 'text-green-400' : 'text-gray-400'}`}>GPS</span>
+              <span className="text-gray-400 text-xs">⚙️</span>
+            </button>
+          ) : (
+            myUnit.last_gps_at && (
+              <div className="ml-auto flex items-center gap-1">
+                <div className="w-1.5 h-1.5 rounded-full bg-green-400" />
+                <span className="text-green-400 text-xs">GPS</span>
+              </div>
+            )
           )}
         </div>
       </div>

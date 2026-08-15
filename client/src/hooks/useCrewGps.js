@@ -98,7 +98,12 @@ export function useCrewGps({ token, unit, enabled = true }) {
             return;
           }
           setBgPermNeeded(false);
-          if (location) postGpsJs(location.latitude, location.longitude);
+          if (!location) return;
+          // Matches the Android tracker's accuracy filter — near large structures
+          // a degraded fix can otherwise get posted just as trustingly as a good
+          // one, freezing the pin while still refreshing "last seen."
+          if (location.accuracy != null && location.accuracy > 50) return;
+          postGpsJs(location.latitude, location.longitude);
         };
 
         // Service binding can be async right after launch — retry a few times before giving up.
