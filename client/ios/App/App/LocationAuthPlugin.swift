@@ -16,17 +16,23 @@ public class LocationAuthPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "getStatus", returnType: CAPPluginReturnPromise)
     ]
 
+    // CLLocationManager is documented to require the main thread/run loop.
+    // Capacitor dispatches plugin calls on a background queue by default —
+    // creating/reading it there was a likely cause of calls hanging instead
+    // of resolving, which (unhandled upstream) could stall a whole GPS post.
     @objc func getStatus(_ call: CAPPluginCall) {
-        let status = CLLocationManager().authorizationStatus
-        let value: String
-        switch status {
-        case .authorizedAlways: value = "always"
-        case .authorizedWhenInUse: value = "whenInUse"
-        case .denied: value = "denied"
-        case .restricted: value = "restricted"
-        case .notDetermined: value = "notDetermined"
-        @unknown default: value = "unknown"
+        DispatchQueue.main.async {
+            let status = CLLocationManager().authorizationStatus
+            let value: String
+            switch status {
+            case .authorizedAlways: value = "always"
+            case .authorizedWhenInUse: value = "whenInUse"
+            case .denied: value = "denied"
+            case .restricted: value = "restricted"
+            case .notDetermined: value = "notDetermined"
+            @unknown default: value = "unknown"
+            }
+            call.resolve(["status": value])
         }
-        call.resolve(["status": value])
     }
 }

@@ -59,14 +59,23 @@ export function useCrewGps({ token, unit, enabled = true }) {
     if (!enabled || !token) return;
 
     if (isNative()) {
+      // A hung native call here must never block the actual GPS post below —
+      // this is a nice-to-have status report, not something worth freezing
+      // tracking over. Races it against a timeout instead of a bare await.
+      const withTimeout = (promise, ms) =>
+        Promise.race([
+          promise,
+          new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms))
+        ]);
+
       const postGpsJs = async (lat, lng) => {
         try {
           let gpsPermission;
           try {
             if (Capacitor.getPlatform() === 'ios') {
-              gpsPermission = (await getLocationAuth().getStatus()).status;
+              gpsPermission = (await withTimeout(getLocationAuth().getStatus(), 3000)).status;
             } else {
-              gpsPermission = (await getTracker().getStatus()).status;
+              gpsPermission = (await withTimeout(getTracker().getStatus(), 3000)).status;
             }
           } catch {}
           await fetch(`${apiBase()}/crew/gps`, {
