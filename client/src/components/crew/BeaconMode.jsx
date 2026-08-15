@@ -207,7 +207,7 @@ function Compass({ target, onBack, token }) {
   return (
     <div className="fixed inset-0 z-50 bg-gray-950 flex flex-col">
       {/* Header */}
-      <div className="w-full flex items-center justify-between px-4 pt-6 pb-4 border-b border-gray-800 flex-shrink-0">
+      <div className="w-full flex items-center justify-between px-4 pt-[calc(1.5rem+env(safe-area-inset-top))] pb-4 border-b border-gray-800 flex-shrink-0">
         <button onClick={onBack} className="text-gray-400 hover:text-white p-2 -ml-2 text-lg">← Back</button>
         <div className="text-center">
           <div className="text-white font-bold text-lg">{target.unit_number}</div>
@@ -328,7 +328,7 @@ function Finder({ myUnit, units, onSelect, onClose }) {
 
   return (
     <div className="fixed inset-0 z-50 bg-gray-950 flex flex-col">
-      <div className="flex items-center justify-between px-4 pt-6 pb-4 border-b border-gray-800">
+      <div className="flex items-center justify-between px-4 pt-[calc(1.5rem+env(safe-area-inset-top))] pb-4 border-b border-gray-800">
         <button onClick={onClose} className="text-gray-400 hover:text-white p-2 -ml-2">← Back</button>
         <div className="text-white font-bold">Find a Medic</div>
         <div className="w-12" />

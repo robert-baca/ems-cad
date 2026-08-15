@@ -31,7 +31,7 @@ export default function CrewCaseHistory({ units, onClose }) {
         <CallSummaryModal call={selectedCall} units={units} onClose={() => setSelectedCall(null)} />
       )}
 
-      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700 flex-shrink-0">
+      <div className="flex items-center justify-between px-4 pt-[calc(0.75rem+env(safe-area-inset-top))] pb-3 border-b border-gray-700 flex-shrink-0">
         <span className="text-white font-bold text-base">My Cases</span>
         <button onClick={onClose}
           className="text-gray-400 hover:text-white w-8 h-8 flex items-center justify-center rounded hover:bg-gray-700 text-xl">

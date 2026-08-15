@@ -208,7 +208,9 @@ export default function CrewMap({ call, myUnit, locations = [] }) {
 
       <button
         onClick={() => setExpanded(e => !e)}
-        className="absolute top-2 right-2 bg-black/70 hover:bg-black/85 backdrop-blur-sm text-white text-xs font-semibold px-2.5 py-1.5 rounded-lg transition-colors"
+        className={expanded
+          ? 'absolute right-2 top-[calc(0.5rem+env(safe-area-inset-top))] bg-black/70 hover:bg-black/85 backdrop-blur-sm text-white text-xs font-semibold px-2.5 py-1.5 rounded-lg transition-colors'
+          : 'absolute top-2 right-2 bg-black/70 hover:bg-black/85 backdrop-blur-sm text-white text-xs font-semibold px-2.5 py-1.5 rounded-lg transition-colors'}
       >
         {expanded ? '✕ Close' : '⛶ Expand'}
       </button>
