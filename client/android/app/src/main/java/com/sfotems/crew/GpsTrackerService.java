@@ -10,6 +10,7 @@ import android.location.LocationListener;
 import android.location.LocationManager;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.PowerManager;
 import androidx.annotation.NonNull;
 import androidx.core.app.NotificationCompat;
 
@@ -46,6 +47,8 @@ public class GpsTrackerService extends Service {
 
     private final LinkedList<double[]> offlineQueue = new LinkedList<>();
 
+    private PowerManager.WakeLock wakeLock;
+
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent != null) {
@@ -62,8 +65,21 @@ public class GpsTrackerService extends Service {
                 .build();
         startForeground(NOTIF_ID, notif);
 
+        acquireWakeLock();
         startGps();
         return START_STICKY;
+    }
+
+    // Without this, the CPU can suspend once the screen locks — the foreground
+    // service keeps running but stops actually receiving onLocationChanged
+    // callbacks, which looked like GPS tracking briefly working then going
+    // silent. A long timeout is a safety net in case stopTracking() is ever
+    // missed; it's renewed on every shift start anyway.
+    private void acquireWakeLock() {
+        if (wakeLock != null && wakeLock.isHeld()) return;
+        PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "EMSCrew:GpsTrackerWakeLock");
+        wakeLock.acquire(12 * 60 * 60 * 1000L /* 12 hours */);
     }
 
     private void createChannel() {
@@ -195,6 +211,7 @@ public class GpsTrackerService extends Service {
             if (gpsListener     != null) locationManager.removeUpdates(gpsListener);
             if (networkListener != null) locationManager.removeUpdates(networkListener);
         }
+        if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
         super.onDestroy();
     }
 
