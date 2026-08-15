@@ -6,13 +6,18 @@ import android.app.NotificationManager;
 import android.app.Service;
 import android.content.Intent;
 import android.location.Location;
-import android.location.LocationListener;
-import android.location.LocationManager;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.PowerManager;
 import androidx.annotation.NonNull;
 import androidx.core.app.NotificationCompat;
+
+import com.google.android.gms.location.FusedLocationProviderClient;
+import com.google.android.gms.location.LocationCallback;
+import com.google.android.gms.location.LocationRequest;
+import com.google.android.gms.location.LocationResult;
+import com.google.android.gms.location.LocationServices;
+import com.google.android.gms.location.Priority;
 
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
@@ -31,11 +36,13 @@ public class GpsTrackerService extends Service {
     private static final long  MIN_INTERVAL_MS = 900L;
     private static final long  HEARTBEAT_MS    = 30_000L; // force-post every 30s even if stationary
     private static final int   MAX_QUEUE       = 100; // ~100 seconds of offline points
+    // Raw GPS near rides/structures can report a low-accuracy fix that barely
+    // moves fix-to-fix even while someone's actually walking — this drops
+    // those instead of posting a "position" that isn't trustworthy.
+    private static final float MAX_ACCURACY_M  = 50f;
 
-    private LocationManager  locationManager;
-    private LocationListener gpsListener;
-    private LocationListener networkListener;
-    private boolean          gpsHasFix = false;
+    private FusedLocationProviderClient fusedClient;
+    private LocationCallback            locationCallback;
 
     private String token;
     private String serverUrl;
@@ -71,10 +78,10 @@ public class GpsTrackerService extends Service {
     }
 
     // Without this, the CPU can suspend once the screen locks — the foreground
-    // service keeps running but stops actually receiving onLocationChanged
-    // callbacks, which looked like GPS tracking briefly working then going
-    // silent. A long timeout is a safety net in case stopTracking() is ever
-    // missed; it's renewed on every shift start anyway.
+    // service keeps running but stops actually receiving location callbacks,
+    // which looked like GPS tracking briefly working then going silent. A long
+    // timeout is a safety net in case stopTracking() is ever missed; it's
+    // renewed on every shift start anyway.
     private void acquireWakeLock() {
         if (wakeLock != null && wakeLock.isHeld()) return;
         PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
@@ -89,51 +96,35 @@ public class GpsTrackerService extends Service {
         getSystemService(NotificationManager.class).createNotificationChannel(ch);
     }
 
+    // Fused location blends GPS with WiFi/cell/sensor data via Google Play
+    // Services, which holds up far better than raw GPS_PROVIDER near rides and
+    // large structures that cause GPS multipath/obstruction — that was the
+    // source of fixes that kept posting on schedule without ever reflecting
+    // real movement.
     private void startGps() {
-        locationManager = (LocationManager) getSystemService(LOCATION_SERVICE);
+        fusedClient = LocationServices.getFusedLocationProviderClient(this);
 
-        gpsListener = new LocationListener() {
-            @Override
-            public void onLocationChanged(@NonNull Location loc) {
-                if (!gpsHasFix) {
-                    gpsHasFix = true;
-                    // GPS locked — drop network provider to save battery
-                    if (networkListener != null) {
-                        locationManager.removeUpdates(networkListener);
-                        networkListener = null;
-                    }
-                }
-                onLocation(loc);
-            }
-        };
+        LocationRequest request = new LocationRequest.Builder(1_000L)
+                .setPriority(Priority.PRIORITY_HIGH_ACCURACY)
+                .setMinUpdateIntervalMillis(500L)
+                .build();
 
-        networkListener = new LocationListener() {
+        locationCallback = new LocationCallback() {
             @Override
-            public void onLocationChanged(@NonNull Location loc) {
-                if (!gpsHasFix) onLocation(loc);
+            public void onLocationResult(@NonNull LocationResult result) {
+                Location loc = result.getLastLocation();
+                if (loc != null) onLocation(loc);
             }
         };
 
         try {
-            locationManager.requestLocationUpdates(
-                    LocationManager.GPS_PROVIDER,
-                    1_000L, 0f,
-                    gpsListener,
-                    Looper.getMainLooper());
-        } catch (SecurityException ignored) {}
-
-        try {
-            if (locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
-                locationManager.requestLocationUpdates(
-                        LocationManager.NETWORK_PROVIDER,
-                        1_000L, 0f,
-                        networkListener,
-                        Looper.getMainLooper());
-            }
+            fusedClient.requestLocationUpdates(request, locationCallback, Looper.getMainLooper());
         } catch (SecurityException ignored) {}
     }
 
     private void onLocation(Location loc) {
+        if (loc.hasAccuracy() && loc.getAccuracy() > MAX_ACCURACY_M) return;
+
         long now = System.currentTimeMillis();
         if (now - lastPostMs < MIN_INTERVAL_MS) return;
 
@@ -207,9 +198,8 @@ public class GpsTrackerService extends Service {
 
     @Override
     public void onDestroy() {
-        if (locationManager != null) {
-            if (gpsListener     != null) locationManager.removeUpdates(gpsListener);
-            if (networkListener != null) locationManager.removeUpdates(networkListener);
+        if (fusedClient != null && locationCallback != null) {
+            fusedClient.removeLocationUpdates(locationCallback);
         }
         if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
         super.onDestroy();
