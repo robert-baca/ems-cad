@@ -98,6 +98,11 @@ function UnitCard({ unit, activeCall, isSelected, onClick, onHistory, onEdit, on
               ⚠ {GPS_PERMISSION_LABELS[unit.gps_permission_status] ?? unit.gps_permission_status}
             </div>
           )}
+          {unit.gps_sharing_disabled && (
+            <div className="text-gray-400 text-xs mt-0.5 font-medium" title="Crew turned off location sharing for themselves">
+              🚫 GPS sharing off (crew)
+            </div>
+          )}
         </button>
 
         {/* Edit button on hover (hidden for overwatch) */}

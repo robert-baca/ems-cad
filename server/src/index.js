@@ -1290,12 +1290,20 @@ function getUnitActiveCall(unitId, excludeCallId = null) {
 
 // ── GPS helpers ───────────────────────────────────────────────────
 // Returns true if the ping was accepted, false if discarded.
+//
+// GPS is on by default for every active-shift unit regardless of call status —
+// the phone already transmits continuously the whole shift either way (nothing
+// in the crew app ties sending to being on a call), so gating *display* on
+// call status/a manual dispatcher toggle only hid data that was already
+// flowing, for no battery/data savings. The only thing that still discards a
+// ping is the crew member explicitly opting out themselves (see
+// PATCH /api/crew/gps-sharing) — a dispatcher can't force a unit to be
+// tracked against that.
 function applyGpsUpdate(unit, lat, lng, timestamp) {
-  const onCall = !!getUnitActiveCall(unit.id);
-  if (!onCall && !unit.tracking_active && !unit.beacon_active) {
+  if (unit.gps_sharing_disabled) {
     const last = gpsDiscardLastLog.get(unit.id) || 0;
     if (Date.now() - last > 5 * 60 * 1000) {
-      console.log(`[gps] ${unit.unit_number} — discarded (tracking off, not on call, beacon off)`);
+      console.log(`[gps] ${unit.unit_number} — discarded (crew disabled GPS sharing)`);
       gpsDiscardLastLog.set(unit.id, Date.now());
     }
     return false;
@@ -1381,6 +1389,19 @@ app.post('/api/crew/gps', verifyToken, (req, res) => {
 
   applyGpsUpdate(unit, lat, lng, new Date().toISOString());
   res.json({ ok: true });
+});
+
+// Crew-only self-service opt-out — GPS is on by default for the whole shift,
+// this is the one thing that can turn it back off. In-memory only, like
+// tracking_active/beacon_active/gps_permission_status; resets each shift.
+app.patch('/api/crew/gps-sharing', verifyToken, (req, res) => {
+  if (req.user.role !== 'crew') return res.status(403).json({ error: 'Forbidden' });
+  const unit = units.find(u => u.id === req.user.unit_id);
+  if (!unit) return res.status(404).json({ error: 'Not found' });
+
+  unit.gps_sharing_disabled = !req.body.enabled;
+  io.to('dispatchers').emit('unit:updated', { ...unit, password_hash: undefined });
+  res.json({ ok: true, gps_sharing_disabled: unit.gps_sharing_disabled });
 });
 
 // ── GPS history ───────────────────────────────────────────────────

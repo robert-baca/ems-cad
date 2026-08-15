@@ -13,7 +13,7 @@ import CrewCaseHistory from '../components/crew/CrewCaseHistory';
 import CallSummaryModal from '../components/calls/CallSummaryModal';
 import NativeSetupModal from '../components/crew/NativeSetupModal';
 import BeaconMode from '../components/crew/BeaconMode';
-import { toggleUnitBeacon } from '../services/api';
+import { toggleUnitBeacon, setCrewGpsSharing } from '../services/api';
 import { STATUS_COLORS, STATUS_LABELS } from '../data/mockData';
 
 const NON_TRANSPORT_DISPOSITIONS = [
@@ -244,10 +244,33 @@ export default function CrewMobile() {
     setBackupError('');
   }, [myActiveCall?.id]);
 
+  // GPS is on by default for the whole shift — this is the crew's own opt-out.
+  // Local state rather than reading myUnit.gps_sharing_disabled directly:
+  // the server only broadcasts this change to dispatchers, not back to the
+  // crew socket, so this device wouldn't see its own change reflected otherwise.
+  const [gpsSharingEnabled, setGpsSharingEnabled] = useState(true);
+  const [gpsSharingBusy,    setGpsSharingBusy]    = useState(false);
+
+  const handleToggleGpsSharing = async () => {
+    const next = !gpsSharingEnabled;
+    setGpsSharingBusy(true);
+    setGpsSharingEnabled(next);
+    try {
+      await setCrewGpsSharing(next);
+    } catch {
+      setGpsSharingEnabled(!next);
+    }
+    setGpsSharingBusy(false);
+  };
+
   // Held off while the one-time setup screen is up — its own "Grant Location" step
   // already drives the permission request; letting this hook fire at the same time
   // races it and can cause iOS to drop or reorder the While-Using/Always dialogs.
-  const { bgPermNeeded, openGpsSettings, gpsStatus } = useCrewGps({ token: user?.token, unit: myUnit, enabled: !!myUnit && !showNativeSetup });
+  const { bgPermNeeded, openGpsSettings, gpsStatus } = useCrewGps({
+    token: user?.token,
+    unit: myUnit,
+    enabled: !!myUnit && !showNativeSetup && gpsSharingEnabled,
+  });
 
   // Android hardware back button — Capacitor gives no handling for this out of the
   // box, so by default it falls through to the OS and exits the app entirely. Close
@@ -440,6 +463,28 @@ export default function CrewMobile() {
               </div>
             )
           )}
+        </div>
+
+        {/* GPS sharing opt-out — on by default for the whole shift */}
+        <div className="mt-2 flex items-center justify-between rounded-xl px-4 py-2 bg-gray-900/50 border border-gray-700">
+          <div className="pr-3">
+            <div className="text-xs font-medium text-gray-300">Share my location with dispatch</div>
+            <div className="text-[10px] text-gray-500">Tracked continuously while on shift unless turned off</div>
+          </div>
+          <button
+            onClick={handleToggleGpsSharing}
+            disabled={gpsSharingBusy}
+            aria-label="Toggle GPS sharing"
+            className={`relative w-11 h-6 rounded-full flex-shrink-0 transition-colors disabled:opacity-50 ${
+              gpsSharingEnabled ? 'bg-green-600' : 'bg-gray-600'
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${
+                gpsSharingEnabled ? 'translate-x-5' : ''
+              }`}
+            />
+          </button>
         </div>
       </div>
 
