@@ -1,19 +1,22 @@
 import { useEffect, useRef, useState } from 'react';
-import { registerPlugin } from '@capacitor/core';
+import { registerPlugin, Capacitor } from '@capacitor/core';
 import { apiBase, PROD_URL } from '../lib/native';
 
 const STALE_MS = 3 * 60 * 1000;
 
 const isNative = () => !!(window.Capacitor?.isNativePlatform?.());
 
+// Android only — custom foreground service (client/android/.../GpsTrackerPlugin.java).
+// There is no iOS implementation of this plugin.
 let _tracker = null;
 function getTracker() {
   if (!_tracker) _tracker = registerPlugin('GpsTracker');
   return _tracker;
 }
 
-// Already an installed+synced native dependency (see package.json / capacitor.plugins.json)
-// even though nothing else in the app calls it — its only job here is the settings deep link.
+// iOS background tracking (real native impl compiled in — see CapApp-SPM/Package.swift
+// and the NSLocationAlways*/UIBackgroundModes entries in Info.plist). Also used on both
+// platforms just for the settings deep link.
 let _bgGeo = null;
 function getBackgroundGeolocation() {
   if (!_bgGeo) _bgGeo = registerPlugin('BackgroundGeolocation');
@@ -56,9 +59,66 @@ export function useCrewGps({ token, unit, enabled = true }) {
       };
 
       let cancelled = false;
+      const platform = Capacitor.getPlatform();
 
-      const startTracking = async () => {
-        // Request permissions
+      const startForegroundFallback = async () => {
+        setGpsStatus('falling back to foreground GPS...');
+        try {
+          const { Geolocation } = await import('@capacitor/geolocation');
+          const id = await Geolocation.watchPosition(
+            { enableHighAccuracy: true },
+            (pos) => { if (pos && !cancelled) postGpsJs(pos.coords.latitude, pos.coords.longitude); }
+          );
+          if (cancelled) {
+            Geolocation.clearWatch({ id }).catch(() => {});
+            return;
+          }
+          watchIdRef.current = `geo:${id}`;
+          setGpsStatus('foreground GPS active');
+        } catch (e2) {
+          if (!cancelled) setGpsStatus(`GPS unavailable: ${e2.message}`);
+        }
+      };
+
+      // iOS: no native GpsTracker service exists, so use the real background-geolocation
+      // plugin (CLLocationManager-backed — keeps posting after the app backgrounds/screen locks).
+      const startIosTracking = async () => {
+        const bgGeo = getBackgroundGeolocation();
+        const opts = {
+          backgroundMessage:  'EMS Crew GPS is active.',
+          backgroundTitle:    'EMS Crew Tracking',
+          requestPermissions: true,
+          stale:              true,
+          distanceFilter:     0,
+        };
+        const cb = (location, error) => {
+          if (cancelled) return;
+          if (error) {
+            if (error.code === 'NOT_AUTHORIZED') setBgPermNeeded(true);
+            return;
+          }
+          setBgPermNeeded(false);
+          if (location) postGpsJs(location.latitude, location.longitude);
+        };
+
+        // Service binding can be async right after launch — retry a few times before giving up.
+        for (let attempt = 0; attempt < 8; attempt++) {
+          if (cancelled) return;
+          try {
+            const id = await bgGeo.addWatcher(opts, cb);
+            if (cancelled) { bgGeo.removeWatcher({ id }).catch(() => {}); return; }
+            watchIdRef.current = id;
+            setGpsStatus('background GPS active');
+            return;
+          } catch (e) {
+            if (attempt < 7) await new Promise(r => setTimeout(r, 500));
+          }
+        }
+        if (!cancelled) await startForegroundFallback();
+      };
+
+      // Android: native foreground service posts GPS directly without JS involvement.
+      const startAndroidTracking = async () => {
         try {
           const { Geolocation } = await import('@capacitor/geolocation');
           const status = await Geolocation.requestPermissions({ permissions: ['location'] });
@@ -71,46 +131,38 @@ export function useCrewGps({ token, unit, enabled = true }) {
         } catch {}
         if (cancelled) return;
 
-        // Start native foreground service — posts GPS directly without JS involvement
         try {
           await getTracker().startTracking({ token, serverUrl: PROD_URL });
           if (!cancelled) setGpsStatus('native service running');
         } catch (e) {
-          if (cancelled) return;
-          // Fall back to JS watchPosition if native service fails
-          setGpsStatus('falling back to foreground GPS...');
-          try {
-            const { Geolocation } = await import('@capacitor/geolocation');
-            const id = await Geolocation.watchPosition(
-              { enableHighAccuracy: true },
-              (pos) => { if (pos && !cancelled) postGpsJs(pos.coords.latitude, pos.coords.longitude); }
-            );
-            if (cancelled) {
-              import('@capacitor/geolocation').then(({ Geolocation: G }) => G.clearWatch({ id }).catch(() => {})).catch(() => {});
-              return;
-            }
-            watchIdRef.current = `geo:${id}`;
-            setGpsStatus('foreground GPS active');
-          } catch (e2) {
-            if (!cancelled) setGpsStatus(`GPS unavailable: ${e2.message}`);
-          }
+          if (!cancelled) await startForegroundFallback();
         }
       };
 
-      startTracking();
+      if (platform === 'ios') {
+        startIosTracking();
+      } else {
+        startAndroidTracking();
+      }
 
       return () => {
         cancelled = true;
-        // Always stop the native service
-        try { getTracker().stopTracking(); } catch {}
-        // Stop JS fallback if it was used
         const id = watchIdRef.current;
+
+        if (platform === 'ios') {
+          if (id && !(typeof id === 'string' && id.startsWith('geo:'))) {
+            getBackgroundGeolocation().removeWatcher({ id }).catch(() => {});
+          }
+        } else {
+          try { getTracker().stopTracking(); } catch {}
+        }
+
         if (id && typeof id === 'string' && id.startsWith('geo:')) {
           import('@capacitor/geolocation').then(({ Geolocation }) => {
             Geolocation.clearWatch({ id: id.slice(4) }).catch(() => {});
           }).catch(() => {});
-          watchIdRef.current = null;
         }
+        watchIdRef.current = null;
       };
     } else {
       // Web path — browser geolocation + screen wake lock
