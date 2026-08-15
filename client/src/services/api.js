@@ -26,7 +26,6 @@ export const updateUnitStatus = (unitId, status) =>
 export const editUnit = (unitId, data) => api.put(`/units/${unitId}`, data);
 export const deleteUnit = (unitId) => api.delete(`/units/${unitId}`);
 export const clearUnitGps = (unitId) => api.delete(`/units/${unitId}/gps`);
-export const toggleUnitTracking = (unitId, active) => api.patch(`/units/${unitId}/tracking`, { active });
 export const toggleUnitBeacon  = (unitId, active) => api.patch(`/units/${unitId}/beacon`,   { active });
 export const setCrewGpsSharing = (enabled) => api.patch('/crew/gps-sharing', { enabled });
 

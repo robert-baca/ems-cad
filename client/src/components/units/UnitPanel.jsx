@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState } from 'react';
 import { STATUS_COLORS, STATUS_LABELS } from '../../data/mockData';
 import EditUnitModal from './EditUnitModal';
 import AddUnitModal from './AddUnitModal';
@@ -36,8 +36,7 @@ const TYPE_BADGE = { ALS: 'bg-red-900/50 text-red-300', BLS: 'bg-blue-900/50 tex
 // for a new dispatch elsewhere in the app (CallDetail/NewCallModal availableUnits).
 const ON_CALL_STATUSES = new Set(['dispatched', 'en_route', 'on_scene', 'patient_contact', 'transporting']);
 
-function UnitCard({ unit, activeCall, isSelected, onClick, onHistory, onEdit, onToggleOos, onFlyTo, onClearGps, onToggleTracking, readOnly }) {
-  const trackPending = useRef(false);
+function UnitCard({ unit, activeCall, isSelected, onClick, onHistory, onEdit, onToggleOos, onFlyTo, onClearGps, readOnly }) {
   const color = STATUS_COLORS[unit.status] || '#9ca3af';
   const profile = unit.profile;
   const hasGps = unit.last_lat && unit.last_lng;
@@ -83,10 +82,7 @@ function UnitCard({ unit, activeCall, isSelected, onClick, onHistory, onEdit, on
             <div className="text-gray-500 text-xs truncate">{unit.station}</div>
           )}
           {hasGps && gpsAgeMin !== null && (
-            <div className={`text-xs mt-0.5 font-medium flex items-center gap-1.5 ${gpsStale ? 'text-orange-400' : 'text-gray-500'}`}>
-              {unit.tracking_active && !activeCall && (
-                <span className="text-green-400 font-bold text-[10px] tracking-wide">TRACK</span>
-              )}
+            <div className={`text-xs mt-0.5 font-medium ${gpsStale ? 'text-orange-400' : 'text-gray-500'}`}>
               {gpsStale ? `GPS stale · ${gpsAgeMin}m ago` : `GPS · ${gpsAgeMin}m ago`}
             </div>
           )}
@@ -137,24 +133,6 @@ function UnitCard({ unit, activeCall, isSelected, onClick, onHistory, onEdit, on
                   : 'Mark OOS'}
             </button>
           )}
-          {!readOnly && !activeCall && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                if (trackPending.current) return;
-                trackPending.current = true;
-                setTimeout(() => { trackPending.current = false; }, 8000);
-                onToggleTracking(unit);
-              }}
-              className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-colors ${
-                unit.tracking_active
-                  ? 'bg-green-800 hover:bg-green-700 text-green-300'
-                  : 'bg-gray-700 hover:bg-green-900 text-gray-400 hover:text-green-400'
-              }`}
-            >
-              {unit.tracking_active ? '📡 Tracking' : '📡 Track'}
-            </button>
-          )}
           {unit.last_lat && unit.last_lng ? (
             <>
               <button
@@ -193,7 +171,7 @@ function UnitCard({ unit, activeCall, isSelected, onClick, onHistory, onEdit, on
   );
 }
 
-export default function UnitPanel({ units, calls, selectedUnitId, onSelectUnit, onUnitHistory, onEditUnit, onRemoveUnit, onAddUnit, onStatusChange, onClearGps, onToggleTracking, onFlyTo, readOnly = false }) {
+export default function UnitPanel({ units, calls, selectedUnitId, onSelectUnit, onUnitHistory, onEditUnit, onRemoveUnit, onAddUnit, onStatusChange, onClearGps, onFlyTo, readOnly = false }) {
   const [editingUnit,  setEditingUnit]  = useState(null);
   const [showAddUnit,  setShowAddUnit]  = useState(false);
 
@@ -266,7 +244,6 @@ export default function UnitPanel({ units, calls, selectedUnitId, onSelectUnit, 
                 }}
                 onFlyTo={(u) => onFlyTo?.(u)}
                 onClearGps={(id) => onClearGps?.(id)}
-                onToggleTracking={(u) => onToggleTracking?.(u)}
                 readOnly={readOnly}
               />
             );

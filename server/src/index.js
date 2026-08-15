@@ -213,7 +213,7 @@ async function initDb() {
   `);
 
   const unitsRes = await pool.query('SELECT * FROM units ORDER BY unit_number');
-  units = unitsRes.rows.map(u => ({ ...u, tracking_active: false }));
+  units = unitsRes.rows.map(u => ({ ...u }));
 
   const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
   const callsRes = await pool.query(
@@ -639,8 +639,7 @@ app.post('/api/units', verifyToken, async (req, res) => {
     password_hash:   bcrypt.hashSync('ems2024', 8),
     profile:         null,
     crew:            null,
-    station:         null,
-    tracking_active: false
+    station:         null
   };
   units.push(newUnit);
   await saveUnit(newUnit).catch(console.error);
@@ -668,27 +667,6 @@ app.put('/api/units/:id', verifyToken, async (req, res) => {
   const sanitized = { ...unit, password_hash: undefined };
   io.to('dispatchers').emit('unit:updated', sanitized);
   res.json(sanitized);
-});
-
-app.patch('/api/units/:id/tracking', verifyToken, (req, res) => {
-  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
-  const unit = units.find(u => u.id === req.params.id);
-  if (!unit) return res.status(404).json({ error: 'Not found' });
-  unit.tracking_active = !!req.body.active;
-  if (unit.tracking_active) {
-    unit.last_gps_fix_ts = null; // so first stationary heartbeat always lands
-  } else {
-    unit.last_lat        = null;
-    unit.last_lng        = null;
-    unit.last_gps_at     = null;
-    unit.last_gps_fix_ts = null;
-    saveUnit(unit).catch(console.error);
-    io.to('dispatchers').emit('unit:gps_update', { unit_id: unit.id, unit_number: unit.unit_number, lat: null, lng: null, timestamp: null });
-  }
-  // tracking_active is intentionally ephemeral — not persisted to DB, resets on restart
-  const sanitized = { ...unit, password_hash: undefined };
-  io.to('dispatchers').emit('unit:updated', sanitized);
-  res.json({ ok: true, tracking_active: unit.tracking_active });
 });
 
 // ── Beacon (crew ↔ crew finder) ───────────────────────────────────
@@ -1101,8 +1079,7 @@ app.post('/api/crew/add-unit', async (req, res) => {
       unit_type, status: 'available',
       last_lat: null, last_lng: null, last_gps_at: null,
       password_hash: null,
-      profile: null, crew: null, station: null,
-      tracking_active: false
+      profile: null, crew: null, station: null
     };
     units.push(unit);
     await saveUnit(unit).catch(console.error);
@@ -1233,8 +1210,7 @@ app.post('/api/shift/end', verifyToken, async (req, res) => {
   calls = openCalls;
   units.forEach(u => {
     if (busyUnitIds.has(u.id)) return;
-    u.status          = 'out_of_service';
-    u.tracking_active = false;
+    u.status = 'out_of_service';
     saveUnit(u).catch(console.error);
   });
 
@@ -1378,7 +1354,7 @@ app.post('/api/crew/gps', verifyToken, (req, res) => {
 
   // iOS only — lets dispatch see which phones are still stuck at "While Using"
   // (GPS drops the moment the screen locks) instead of "Always," without
-  // walking around checking every phone. In-memory only, like tracking_active/
+  // walking around checking every phone. In-memory only, like
   // beacon_active — live device state, not meaningful to keep after a restart.
   // Only broadcast when it actually changes; this arrives on every GPS post.
   const { gpsPermission } = req.body;
@@ -1393,7 +1369,7 @@ app.post('/api/crew/gps', verifyToken, (req, res) => {
 
 // Crew-only self-service opt-out — GPS is on by default for the whole shift,
 // this is the one thing that can turn it back off. In-memory only, like
-// tracking_active/beacon_active/gps_permission_status; resets each shift.
+// beacon_active/gps_permission_status; resets each shift.
 app.patch('/api/crew/gps-sharing', verifyToken, (req, res) => {
   if (req.user.role !== 'crew') return res.status(403).json({ error: 'Forbidden' });
   const unit = units.find(u => u.id === req.user.unit_id);
