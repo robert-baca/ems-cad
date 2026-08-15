@@ -1286,6 +1286,7 @@ function applyGpsUpdate(unit, lat, lng, timestamp) {
   }
 
   if (unit.last_gps_fix_ts && new Date(timestamp).getTime() <= new Date(unit.last_gps_fix_ts).getTime()) {
+    console.log(`[gps:in] ${unit.unit_number} — rejected by dedup (ts ${timestamp} <= last ${unit.last_gps_fix_ts})`);
     return false;
   }
   unit.last_lat        = lat;
@@ -1362,6 +1363,11 @@ app.post('/api/crew/gps', verifyToken, (req, res) => {
     unit.gps_permission_status = gpsPermission;
     io.to('dispatchers').emit('unit:updated', { ...unit, password_hash: undefined });
   }
+
+  // TEMPORARY — diagnosing "freezes on calls": logging every inbound post lets
+  // us tell whether the phone stops reaching the server at all (network/cell
+  // dead zone) vs reaches it but gets rejected here. Remove once found.
+  console.log(`[gps:in] ${unit.unit_number} ${lat.toFixed(5)},${lng.toFixed(5)} onCall=${!!getUnitActiveCall(unit.id)}`);
 
   applyGpsUpdate(unit, lat, lng, new Date().toISOString());
   res.json({ ok: true });
