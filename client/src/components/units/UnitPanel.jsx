@@ -36,7 +36,7 @@ const TYPE_BADGE = { ALS: 'bg-red-900/50 text-red-300', BLS: 'bg-blue-900/50 tex
 // for a new dispatch elsewhere in the app (CallDetail/NewCallModal availableUnits).
 const ON_CALL_STATUSES = new Set(['dispatched', 'en_route', 'on_scene', 'patient_contact', 'transporting']);
 
-function UnitCard({ unit, activeCall, isSelected, onClick, onHistory, onEdit, onToggleOos, onFlyTo, onClearGps, readOnly }) {
+function UnitCard({ unit, activeCall, isSelected, onClick, onHistory, onEdit, onToggleOos, onFlyTo, onClearGps, dismissedGpsWarning, onDismissGpsWarning, readOnly }) {
   const color = STATUS_COLORS[unit.status] || '#9ca3af';
   const profile = unit.profile;
   const hasGps = unit.last_lat && unit.last_lng;
@@ -44,6 +44,14 @@ function UnitCard({ unit, activeCall, isSelected, onClick, onHistory, onEdit, on
     ? Math.floor((Date.now() - new Date(unit.last_gps_at)) / 60000)
     : null;
   const gpsStale = gpsAgeMin !== null && gpsAgeMin >= 10;
+
+  const gpsWarningValue = (unit.gps_permission_status && unit.gps_permission_status !== 'always' && unit.gps_permission_status !== 'ok')
+    ? unit.gps_permission_status
+    : null;
+  // Dismissing only sticks for the exact issue seen — if it changes to a
+  // different bad value (e.g. denied after being battery_restricted), that's
+  // a new problem worth surfacing again rather than staying silently hidden.
+  const showGpsWarning = gpsWarningValue && dismissedGpsWarning !== gpsWarningValue;
 
   return (
     <div
@@ -86,20 +94,31 @@ function UnitCard({ unit, activeCall, isSelected, onClick, onHistory, onEdit, on
               {gpsStale ? `GPS stale · ${gpsAgeMin}m ago` : `GPS · ${gpsAgeMin}m ago`}
             </div>
           )}
-          {unit.gps_permission_status && unit.gps_permission_status !== 'always' && unit.gps_permission_status !== 'ok' && (
-            <div
-              className="text-amber-400 text-xs mt-0.5 font-medium"
-              title="GPS tracking on this phone may be unreliable until this is fixed"
-            >
-              ⚠ {GPS_PERMISSION_LABELS[unit.gps_permission_status] ?? unit.gps_permission_status}
-            </div>
-          )}
           {unit.gps_sharing_disabled && (
             <div className="text-gray-400 text-xs mt-0.5 font-medium" title="Crew turned off location sharing for themselves">
               🚫 GPS sharing off (crew)
             </div>
           )}
         </button>
+
+        {/* Outside the main button (can't nest a dismiss button inside it) */}
+        {showGpsWarning && (
+          <div className="px-3 pb-1.5 -mt-0.5 flex items-start justify-between gap-1.5">
+            <div
+              className="text-amber-400 text-xs font-medium"
+              title="GPS tracking on this phone may be unreliable until this is fixed"
+            >
+              ⚠ {GPS_PERMISSION_LABELS[unit.gps_permission_status] ?? unit.gps_permission_status}
+            </div>
+            <button
+              onClick={(e) => { e.stopPropagation(); onDismissGpsWarning?.(unit.id, unit.gps_permission_status); }}
+              className="text-gray-600 hover:text-gray-400 text-xs leading-none flex-shrink-0 mt-0.5"
+              title="Dismiss this warning"
+            >
+              ✕
+            </button>
+          </div>
+        )}
 
         {/* Edit button on hover (hidden for overwatch) */}
         {!readOnly && (
@@ -171,9 +190,26 @@ function UnitCard({ unit, activeCall, isSelected, onClick, onHistory, onEdit, on
   );
 }
 
+const GPS_WARNING_DISMISS_KEY = 'dismissedGpsWarnings';
+
 export default function UnitPanel({ units, calls, selectedUnitId, onSelectUnit, onUnitHistory, onEditUnit, onRemoveUnit, onAddUnit, onStatusChange, onClearGps, onFlyTo, readOnly = false }) {
   const [editingUnit,  setEditingUnit]  = useState(null);
   const [showAddUnit,  setShowAddUnit]  = useState(false);
+  // unit id -> the exact gps_permission_status value dismissed for it, so a
+  // *different* new issue on the same unit still shows. Persisted so it
+  // survives a page refresh mid-shift instead of reappearing immediately.
+  const [dismissedGpsWarnings, setDismissedGpsWarnings] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(GPS_WARNING_DISMISS_KEY)) || {}; }
+    catch { return {}; }
+  });
+
+  const dismissGpsWarning = (unitId, statusValue) => {
+    setDismissedGpsWarnings(prev => {
+      const next = { ...prev, [unitId]: statusValue };
+      try { localStorage.setItem(GPS_WARNING_DISMISS_KEY, JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
 
   const available = units.filter(u => u.status === 'available').length;
   const active    = units.filter(u =>
@@ -244,6 +280,8 @@ export default function UnitPanel({ units, calls, selectedUnitId, onSelectUnit, 
                 }}
                 onFlyTo={(u) => onFlyTo?.(u)}
                 onClearGps={(id) => onClearGps?.(id)}
+                dismissedGpsWarning={dismissedGpsWarnings[unit.id]}
+                onDismissGpsWarning={dismissGpsWarning}
                 readOnly={readOnly}
               />
             );
