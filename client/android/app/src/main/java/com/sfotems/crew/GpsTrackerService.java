@@ -43,6 +43,14 @@ public class GpsTrackerService extends Service {
     // moves fix-to-fix even while someone's actually walking — this drops
     // those instead of posting a "position" that isn't trustworthy.
     private static final float MAX_ACCURACY_M  = 50f;
+    // Even the heartbeat override below must not post a fix worse than this.
+    // Indoors with no GPS at all (e.g. inside a station building), Android
+    // can fall back to cell-tower/network positioning that's off by hundreds
+    // of meters to miles — showing dispatch a confident, wildly wrong
+    // position is worse than a stale-but-accurate pin. Genuine near-structure
+    // GPS degradation is normally well under this; only network-only
+    // fallback fixes get this bad.
+    private static final float MAX_HEARTBEAT_ACCURACY_M = 300f;
 
     private FusedLocationProviderClient fusedClient;
     private LocationCallback            locationCallback;
@@ -129,8 +137,12 @@ public class GpsTrackerService extends Service {
         long now = System.currentTimeMillis();
         if (now - lastPostMs < MIN_INTERVAL_MS) return;
 
+        float   accuracy      = loc.hasAccuracy() ? loc.getAccuracy() : -1f;
         boolean heartbeatDue   = (now - lastHeartbeatMs) >= HEARTBEAT_MS;
-        boolean accurateEnough = !loc.hasAccuracy() || loc.getAccuracy() <= MAX_ACCURACY_M;
+        boolean accurateEnough = accuracy < 0 || accuracy <= MAX_ACCURACY_M;
+
+        // Never post a fix this bad, heartbeat or not — see MAX_HEARTBEAT_ACCURACY_M.
+        if (accuracy > MAX_HEARTBEAT_ACCURACY_M) return;
 
         // A degraded fix (common near the park's large steel structures/rides —
         // exactly where units walk while responding to a call) used to be dropped
@@ -159,13 +171,14 @@ public class GpsTrackerService extends Service {
 
         final double lat = lastLat;
         final double lng = lastLng;
+        final float  acc = accuracy;
         new Thread(() -> {
-            boolean ok = sendPoint(lat, lng);
+            boolean ok = sendPoint(lat, lng, acc);
             if (ok) {
                 drainQueue();
             } else {
                 synchronized (offlineQueue) {
-                    offlineQueue.addLast(new double[]{lat, lng});
+                    offlineQueue.addLast(new double[]{lat, lng, acc});
                     while (offlineQueue.size() > MAX_QUEUE) offlineQueue.removeFirst();
                 }
             }
@@ -180,17 +193,17 @@ public class GpsTrackerService extends Service {
                 pt = offlineQueue.peekFirst();
             }
             if (pt == null) return;
-            if (!sendPoint(pt[0], pt[1])) return; // still offline, stop trying
+            if (!sendPoint(pt[0], pt[1], (float) pt[2])) return; // still offline, stop trying
             synchronized (offlineQueue) {
                 offlineQueue.pollFirst();
             }
         }
     }
 
-    private boolean sendPoint(double lat, double lng) {
+    private boolean sendPoint(double lat, double lng, float accuracy) {
         if (token == null || serverUrl == null) return false;
         final String gpsPermission = GpsPermissionStatus.get(getApplicationContext());
-        final String body     = "{\"lat\":" + lat + ",\"lng\":" + lng + ",\"gpsPermission\":\"" + gpsPermission + "\"}";
+        final String body     = "{\"lat\":" + lat + ",\"lng\":" + lng + ",\"accuracy\":" + accuracy + ",\"gpsPermission\":\"" + gpsPermission + "\"}";
         final String endpoint = serverUrl + "/api/crew/gps";
         try {
             HttpURLConnection conn = (HttpURLConnection) new URL(endpoint).openConnection();

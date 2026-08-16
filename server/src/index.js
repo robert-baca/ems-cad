@@ -1364,10 +1364,11 @@ app.post('/api/crew/gps', verifyToken, (req, res) => {
     io.to('dispatchers').emit('unit:updated', { ...unit, password_hash: undefined });
   }
 
-  // TEMPORARY — diagnosing "freezes on calls": logging every inbound post lets
-  // us tell whether the phone stops reaching the server at all (network/cell
-  // dead zone) vs reaches it but gets rejected here. Remove once found.
-  console.log(`[gps:in] ${unit.unit_number} ${lat.toFixed(5)},${lng.toFixed(5)} onCall=${!!getUnitActiveCall(unit.id)}`);
+  // TEMPORARY — diagnosing GPS issues in production: logging every inbound
+  // post, including the fix's self-reported accuracy, so a wildly-off
+  // position (network/cell-tower fallback) is visible instead of guessed at.
+  const accuracy = req.body.accuracy != null ? parseFloat(req.body.accuracy) : null;
+  console.log(`[gps:in] ${unit.unit_number} ${lat.toFixed(5)},${lng.toFixed(5)} acc=${accuracy ?? '?'}m onCall=${!!getUnitActiveCall(unit.id)}`);
 
   applyGpsUpdate(unit, lat, lng, new Date().toISOString());
   res.json({ ok: true });

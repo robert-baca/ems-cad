@@ -68,7 +68,7 @@ export function useCrewGps({ token, unit, enabled = true }) {
           new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms))
         ]);
 
-      const postGpsJs = async (lat, lng) => {
+      const postGpsJs = async (lat, lng, accuracy) => {
         try {
           let gpsPermission;
           try {
@@ -81,7 +81,7 @@ export function useCrewGps({ token, unit, enabled = true }) {
           await fetch(`${apiBase()}/crew/gps`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-            body: JSON.stringify({ lat, lng, gpsPermission })
+            body: JSON.stringify({ lat, lng, accuracy, gpsPermission })
           });
         } catch {}
       };
@@ -96,7 +96,7 @@ export function useCrewGps({ token, unit, enabled = true }) {
           const { Geolocation } = await import('@capacitor/geolocation');
           const id = await Geolocation.watchPosition(
             { enableHighAccuracy: true },
-            (pos) => { if (pos && !cancelled) postGpsJs(pos.coords.latitude, pos.coords.longitude); }
+            (pos) => { if (pos && !cancelled) postGpsJs(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy); }
           );
           if (cancelled) {
             Geolocation.clearWatch({ id }).catch(() => {});
@@ -137,11 +137,21 @@ export function useCrewGps({ token, unit, enabled = true }) {
           // the whole response instead of just being less precise. A heartbeat
           // fallback still lets a degraded fix through periodically so the pin
           // keeps moving.
-          const accurateEnough = location.accuracy == null || location.accuracy <= 50;
+          //
+          // But a fix can also be bad in a different way: with no GPS at all
+          // (e.g. indoors in a station building), the OS can fall back to
+          // network/cell-tower positioning that's off by hundreds of meters to
+          // miles. That's worse than a stale pin — it confidently shows dispatch
+          // the wrong location. MAX_HEARTBEAT_ACCURACY_M rejects those even on
+          // the heartbeat; only MAX_ACCURACY_M is waived for it.
+          const MAX_ACCURACY_M = 50;
+          const MAX_HEARTBEAT_ACCURACY_M = 300;
+          if (location.accuracy != null && location.accuracy > MAX_HEARTBEAT_ACCURACY_M) return;
+          const accurateEnough = location.accuracy == null || location.accuracy <= MAX_ACCURACY_M;
           const heartbeatDue = Date.now() - lastPostMs >= HEARTBEAT_MS;
           if (!accurateEnough && !heartbeatDue) return;
           lastPostMs = Date.now();
-          postGpsJs(location.latitude, location.longitude);
+          postGpsJs(location.latitude, location.longitude, location.accuracy);
         };
 
         // Service binding can be async right after launch — retry a few times before giving up.
@@ -164,7 +174,11 @@ export function useCrewGps({ token, unit, enabled = true }) {
               try {
                 const { Geolocation } = await import('@capacitor/geolocation');
                 const pos = await Geolocation.getCurrentPosition({ enableHighAccuracy: false, timeout: 10000 });
-                if (!cancelled && pos) postGpsJs(pos.coords.latitude, pos.coords.longitude);
+                if (cancelled || !pos) return;
+                // Same wildly-inaccurate-fix guard as the main watcher above —
+                // a low-accuracy request makes this more likely, not less.
+                if (pos.coords.accuracy != null && pos.coords.accuracy > 300) return;
+                postGpsJs(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy);
               } catch {}
             }, 30000);
             return;
