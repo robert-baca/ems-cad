@@ -529,6 +529,23 @@ const VALID_UNIT_STATUSES = new Set([
   'on_scene', 'patient_contact', 'transporting', 'cleared', 'out_of_service'
 ]);
 
+// Response-flow order for the "call-level change propagates to its units"
+// side effect (call status change, timestamp recalculation). A crew member's
+// own status button — or a dispatcher's direct per-unit override on the
+// additional-units dropdown — is a deliberate, trusted statement about that
+// specific unit and is never gated by this; this only protects against an
+// *automatic* sync (e.g. a dispatcher correcting/clearing an earlier
+// timestamp) from yanking some other unit backward from wherever they've
+// actually self-reported being. 'available'/'out_of_service' aren't part of
+// the linear flow, so anything into or out of them is always allowed.
+const STATUS_SEQUENCE = ['dispatched', 'acknowledged', 'en_route', 'on_scene', 'patient_contact', 'transporting', 'cleared'];
+function isForwardStatusChange(fromStatus, toStatus) {
+  const fromIdx = STATUS_SEQUENCE.indexOf(fromStatus);
+  const toIdx = STATUS_SEQUENCE.indexOf(toStatus);
+  if (fromIdx === -1 || toIdx === -1) return true;
+  return toIdx >= fromIdx;
+}
+
 const VALID_CALL_STATUSES = new Set([
   'pending', 'dispatched', 'acknowledged', 'en_route', 'on_scene',
   'patient_contact', 'transporting', 'cleared', 'available', 'closed'
@@ -999,7 +1016,7 @@ app.patch('/api/calls/:id/status', verifyToken, async (req, res) => {
 
   unitIdsToUpdate.forEach(uid => {
     const unit = units.find(u => u.id === uid);
-    if (unit) {
+    if (unit && isForwardStatusChange(unit.status, newUnitStatus)) {
       unit.status = newUnitStatus;
       saveUnit(unit).catch(console.error);
       io.to('dispatchers').emit('unit:status_change', { unit_id: unit.id, status: unit.status });
@@ -1607,7 +1624,7 @@ app.patch('/api/calls/:id/timestamps', verifyToken, async (req, res) => {
       const unitIdsToUpdate = [call.assigned_unit_id, ...(call.co_unit_ids || [])].filter(Boolean);
       unitIdsToUpdate.forEach(uid => {
         const unit = units.find(u => u.id === uid);
-        if (unit) {
+        if (unit && isForwardStatusChange(unit.status, newStatus)) {
           unit.status = newStatus;
           saveUnit(unit).catch(console.error);
           io.to('dispatchers').emit('unit:status_change', { unit_id: unit.id, status: newStatus });
