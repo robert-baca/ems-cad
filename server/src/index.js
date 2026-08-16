@@ -926,17 +926,27 @@ app.delete('/api/calls/:id/units/:unit_id', verifyToken, async (req, res) => {
   const call = calls.find(c => c.id === req.params.id);
   if (!call) return res.status(404).json({ error: 'Not found' });
   call.additional_unit_ids = (call.additional_unit_ids || []).filter(id => id !== req.params.unit_id);
+  // Units dispatched together with the primary start out in both arrays (see
+  // POST /api/calls) — without also clearing co_unit_ids here, a "removed"
+  // unit stayed subscribed to the call's status sync and could have its
+  // status silently reassigned again the next time the call advanced.
+  call.co_unit_ids = (call.co_unit_ids || []).filter(id => id !== req.params.unit_id);
   if (call.additional_units_added_at) delete call.additional_units_added_at[req.params.unit_id];
   const unit = units.find(u => u.id === req.params.unit_id);
   if (unit) {
     unit.status = 'available';
     saveUnit(unit).catch(console.error);
     io.to('dispatchers').emit('unit:status_change', { unit_id: unit.id, status: 'available' });
+    io.to(`crew:${unit.id}`).emit('unit:status_change', { unit_id: unit.id, status: 'available' });
   }
   saveCall(call).catch(console.error);
   io.to('dispatchers').emit('call:updated', {
     call_id: call.id,
-    changes: { additional_unit_ids: call.additional_unit_ids, additional_units_added_at: call.additional_units_added_at }
+    changes: {
+      additional_unit_ids: call.additional_unit_ids,
+      co_unit_ids: call.co_unit_ids,
+      additional_units_added_at: call.additional_units_added_at,
+    }
   });
   res.json(call);
 });
@@ -1585,17 +1595,25 @@ app.patch('/api/calls/:id/timestamps', verifyToken, async (req, res) => {
     if (ALLOWED.includes(k)) { call[k] = v; changes[k] = v; }
   });
 
-  // Recalc call.status from remaining timestamps and sync primary unit
+  // Recalc call.status from remaining timestamps and sync the primary +
+  // co-dispatched units — matches PATCH /api/calls/:id/status's sync so a
+  // manual time correction can't leave co-units behind at a stale status
+  // (previously this only synced the primary unit).
   const newStatus = recalcCallStatus(call);
   if (newStatus !== call.status) {
     call.status = newStatus;
     changes.status = newStatus;
-    const primaryUnit = units.find(u => u.id === call.assigned_unit_id);
-    if (primaryUnit && newStatus !== 'pending' && newStatus !== 'closed') {
-      primaryUnit.status = newStatus;
-      saveUnit(primaryUnit).catch(console.error);
-      io.to('dispatchers').emit('unit:status_change', { unit_id: primaryUnit.id, status: newStatus });
-      io.to(`crew:${primaryUnit.id}`).emit('unit:status_change', { unit_id: primaryUnit.id, status: newStatus });
+    if (newStatus !== 'pending' && newStatus !== 'closed') {
+      const unitIdsToUpdate = [call.assigned_unit_id, ...(call.co_unit_ids || [])].filter(Boolean);
+      unitIdsToUpdate.forEach(uid => {
+        const unit = units.find(u => u.id === uid);
+        if (unit) {
+          unit.status = newStatus;
+          saveUnit(unit).catch(console.error);
+          io.to('dispatchers').emit('unit:status_change', { unit_id: unit.id, status: newStatus });
+          io.to(`crew:${uid}`).emit('unit:status_change', { unit_id: uid, status: newStatus });
+        }
+      });
     }
   }
 
