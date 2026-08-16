@@ -16,7 +16,6 @@ export default function NewCallModal({ pin, units, onDispatch, onClose, parentCa
     chief_complaint: '',
     priority:        2,
     location_name:   '',
-    park_zone:       '',
     notes:           '',
     response_mode:   'foot'   // 'foot' | 'cart'
   });
@@ -100,29 +99,17 @@ export default function NewCallModal({ pin, units, onDispatch, onClose, parentCa
             </div>
           )}
 
-          {/* Location + Zone */}
-          <div className="flex gap-2">
-            <div className="flex-1">
-              <label className="block text-gray-400 text-xs mb-1">Location</label>
-              <input
-                type="text"
-                value={form.location_name}
-                onChange={e => set('location_name', e.target.value)}
-                placeholder="e.g. Near Titan ride entrance…"
-                autoFocus
-                className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500"
-              />
-            </div>
-            <div className="w-24">
-              <label className="block text-gray-400 text-xs mb-1">Zone</label>
-              <input
-                type="text"
-                value={form.park_zone}
-                onChange={e => set('park_zone', e.target.value)}
-                placeholder="e.g. A"
-                className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500"
-              />
-            </div>
+          {/* Location */}
+          <div>
+            <label className="block text-gray-400 text-xs mb-1">Location</label>
+            <input
+              type="text"
+              value={form.location_name}
+              onChange={e => set('location_name', e.target.value)}
+              placeholder="e.g. Near Titan ride entrance…"
+              autoFocus
+              className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500"
+            />
           </div>
 
           {/* Call type */}

@@ -54,7 +54,6 @@ export default function CallDetail({
   const [aidRole,         setAidRole]         = useState('');
   const [editingLocation, setEditingLocation] = useState(false);
   const [locName,         setLocName]         = useState('');
-  const [locZone,         setLocZone]         = useState('');
   const [editingDetails,  setEditingDetails]  = useState(false);
   const [detailType,      setDetailType]      = useState('');
   const [detailComplaint, setDetailComplaint] = useState('');
@@ -323,31 +322,20 @@ export default function CallDetail({
               )}
               {editingLocation ? (
                 <div className="space-y-2 pt-1">
-                  <div className="flex gap-2">
-                    <div className="flex-1">
-                      <label className="block text-gray-500 text-xs mb-1">Location</label>
-                      <input
-                        autoFocus
-                        type="text"
-                        value={locName}
-                        onChange={e => setLocName(e.target.value)}
-                        className="w-full bg-gray-600 text-white rounded-lg px-2 py-1.5 text-sm outline-none focus:ring-1 focus:ring-blue-500"
-                      />
-                    </div>
-                    <div className="w-20">
-                      <label className="block text-gray-500 text-xs mb-1">Zone</label>
-                      <input
-                        type="text"
-                        value={locZone}
-                        onChange={e => setLocZone(e.target.value)}
-                        className="w-full bg-gray-600 text-white rounded-lg px-2 py-1.5 text-sm outline-none focus:ring-1 focus:ring-blue-500"
-                      />
-                    </div>
+                  <div>
+                    <label className="block text-gray-500 text-xs mb-1">Location</label>
+                    <input
+                      autoFocus
+                      type="text"
+                      value={locName}
+                      onChange={e => setLocName(e.target.value)}
+                      className="w-full bg-gray-600 text-white rounded-lg px-2 py-1.5 text-sm outline-none focus:ring-1 focus:ring-blue-500"
+                    />
                   </div>
                   <div className="flex gap-2">
                     <button
                       onClick={async () => {
-                        await updateCallLocation(call.id, { location_name: locName, park_zone: locZone }).catch(() => {});
+                        await updateCallLocation(call.id, { location_name: locName }).catch(() => {});
                         setEditingLocation(false);
                       }}
                       className="flex-1 py-1.5 bg-blue-700 hover:bg-blue-600 text-white text-xs font-bold rounded-lg transition-colors"
@@ -366,10 +354,9 @@ export default function CallDetail({
                 <div className="flex items-center justify-between">
                   <div className="space-y-1">
                     <Row label="Location" value={call.location_name || '—'} />
-                    <Row label="Zone"     value={call.park_zone || '—'} />
                   </div>
                   <button
-                    onClick={() => { setLocName(call.location_name || ''); setLocZone(call.park_zone || ''); setEditingLocation(true); }}
+                    onClick={() => { setLocName(call.location_name || ''); setEditingLocation(true); }}
                     className="text-gray-600 hover:text-blue-400 text-xs transition-colors ml-2 flex-shrink-0"
                     title="Edit location"
                   >

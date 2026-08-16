@@ -47,10 +47,7 @@ export default function ActiveCall({ call, myUnit, units = [], isCompleted = fal
         {/* Call type + location */}
         <div>
           <div className="text-white font-bold text-xl leading-tight">{call.call_type}</div>
-          <div className="text-gray-400 text-sm mt-0.5">
-            {call.park_zone && <span className="text-blue-400 font-medium">{call.park_zone} · </span>}
-            {call.location_name}
-          </div>
+          <div className="text-gray-400 text-sm mt-0.5">{call.location_name}</div>
         </div>
 
         {/* In-park mini map */}

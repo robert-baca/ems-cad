@@ -154,7 +154,6 @@ export default function CallSummaryModal({ call, units, onClose }) {
           <div className="bg-gray-700 rounded-xl p-3 space-y-1.5">
             <div className="text-gray-400 text-xs uppercase tracking-wider mb-2">Call Info</div>
             <Row label="Location"  value={call.location_name} />
-            <Row label="Zone"      value={call.park_zone} />
             <Row label="Complaint" value={call.chief_complaint} />
             <Row label="Response"  value={
               call.response_mode === 'cart' ? '🛺 Cart' :

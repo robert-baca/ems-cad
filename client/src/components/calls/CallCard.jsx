@@ -59,10 +59,7 @@ function CallCard({ call, unit, isSelected, onClick }) {
       <div className="text-white font-semibold text-sm leading-tight mb-1">{call.call_type}</div>
 
       {/* Location */}
-      <div className="text-gray-400 text-xs mb-2">
-        {call.park_zone && <span className="text-blue-400 font-medium">{call.park_zone} · </span>}
-        {call.location_name}
-      </div>
+      <div className="text-gray-400 text-xs mb-2">{call.location_name}</div>
 
       {/* Bottom row */}
       <div className="flex items-center justify-between">

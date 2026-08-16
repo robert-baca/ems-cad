@@ -131,7 +131,7 @@ export default function CallHistory({ calls, units, onClose, loading, onRefresh 
 
   const exportCsv = useCallback(() => {
     const headers = [
-      'Case #', 'Date/Time Received', 'Call Type', 'Priority', 'Location', 'Zone',
+      'Case #', 'Date/Time Received', 'Call Type', 'Priority', 'Location',
       'Unit', 'Status', 'Disposition', 'Close Notes', 'Narrative',
       'Response (min)', 'Scene (min)', 'Total (min)', 'Comments'
     ];
@@ -146,7 +146,6 @@ export default function CallHistory({ calls, units, onClose, loading, onRefresh 
         c.call_type || '',
         `P${c.priority}`,
         c.location_name || '',
-        c.park_zone || '',
         unitNum,
         STATUS_LABELS[c.status] || c.status || '',
         c.disposition || '',
