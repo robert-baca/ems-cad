@@ -40,19 +40,19 @@ export default function NewCallModal({ pin, units, onDispatch, onClose, parentCa
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!form.call_type) return;
-
-    // Build unit assignment: if cart mode, the cart is primary; otherwise first medic selected
-    let assigned_unit_id     = '';
-    let additional_unit_ids  = [];
-
-    if (form.response_mode === 'cart' && selectedCartId) {
-      assigned_unit_id    = selectedCartId;
-      additional_unit_ids = selectedUnitIds;  // any extra medics tagged along
-    } else {
-      const [first, ...rest] = selectedUnitIds;
-      assigned_unit_id    = first || '';
-      additional_unit_ids = rest;
+    if (form.response_mode === 'cart' && selectedCartId && selectedUnitIds.length === 0) {
+      setError('A cart needs at least one medic assigned — carts can\'t be the lead unit on a call.');
+      return;
     }
+
+    // A cart is a ride to the scene, never the lead unit — the first medic
+    // selected is always primary, with the cart (and any other medics)
+    // riding along as additional units.
+    const [first, ...rest] = selectedUnitIds;
+    const assigned_unit_id    = first || '';
+    const additional_unit_ids = (form.response_mode === 'cart' && selectedCartId)
+      ? [...rest, selectedCartId]
+      : rest;
 
     setLoading(true);
     setError('');
@@ -246,7 +246,7 @@ export default function NewCallModal({ pin, units, onDispatch, onClose, parentCa
           {/* Unit assignment — multi-select toggle buttons */}
           <div>
             <label className="block text-gray-400 text-xs mb-1">
-              {form.response_mode === 'cart' ? 'Assign Medics (optional)' : 'Assign Units'}
+              {form.response_mode === 'cart' ? 'Assign Medics (at least one — a cart can\'t lead alone)' : 'Assign Units'}
             </label>
             {medicUnits.length === 0 ? (
               <div className="bg-gray-700 rounded-lg px-3 py-2 text-gray-500 text-xs">
@@ -276,7 +276,7 @@ export default function NewCallModal({ pin, units, onDispatch, onClose, parentCa
           {error && <p className="text-red-400 text-sm text-center">{error}</p>}
 
           {/* Submit */}
-          <button type="submit" disabled={loading || !form.call_type}
+          <button type="submit" disabled={loading || !form.call_type || (form.response_mode === 'cart' && selectedCartId && selectedUnitIds.length === 0)}
             className="w-full py-3 bg-red-600 hover:bg-red-500 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-bold rounded-xl text-sm transition-colors">
             {loading ? 'Dispatching…' : '🚨 DISPATCH'}
           </button>

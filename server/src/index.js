@@ -802,6 +802,11 @@ app.post('/api/calls', verifyToken, async (req, res) => {
   if (hasUnit) {
     const conflict = getUnitActiveCall(req.body.assigned_unit_id);
     if (conflict) return res.status(409).json({ error: `Unit already on call #${conflict.call_number}` });
+    // A cart is a ride to the scene, never the lead unit on a call.
+    const assignedUnit = units.find(u => u.id === req.body.assigned_unit_id);
+    if (assignedUnit?.unit_type === 'Cart') {
+      return res.status(400).json({ error: 'A cart can\'t be the lead unit — assign a medic as primary.' });
+    }
   }
   for (const uid of additionalIds) {
     const conflict = getUnitActiveCall(uid);
@@ -863,6 +868,11 @@ app.patch('/api/calls/:id/assign', verifyToken, async (req, res) => {
 
   const conflict = getUnitActiveCall(req.body.unit_id, req.params.id);
   if (conflict) return res.status(409).json({ error: `Unit already on call #${conflict.call_number}` });
+
+  // A cart is a ride to the scene, never the lead unit on a call.
+  if (units.find(u => u.id === req.body.unit_id)?.unit_type === 'Cart') {
+    return res.status(400).json({ error: 'A cart can\'t be the lead unit — assign a medic as primary.' });
+  }
 
   const previousUnitId = call.assigned_unit_id;
   const wasPending      = call.status === 'pending';

@@ -107,6 +107,10 @@ export default function CallDetail({
     u.id !== call.assigned_unit_id &&
     !(call.additional_unit_ids || []).includes(u.id)
   );
+  // A cart is a ride to the scene, never the lead unit — only for picking the
+  // call's primary. Adding one as a backup/additional unit is still fine and
+  // uses availableUnits directly.
+  const primaryEligibleUnits = availableUnits.filter(u => u.unit_type !== 'Cart');
 
   const handleAssign = async () => {
     if (!selectedUnitId || assignSubmitting) return;
@@ -186,11 +190,11 @@ export default function CallDetail({
           </div>
           {assigningUnit ? (
             <div className="space-y-2">
-              {availableUnits.length === 0 ? (
+              {primaryEligibleUnits.length === 0 ? (
                 <div className="text-gray-500 text-xs py-1">No available units</div>
               ) : (
                 <div className="flex flex-wrap gap-1.5">
-                  {availableUnits.map(u => (
+                  {primaryEligibleUnits.map(u => (
                     <button key={u.id} type="button"
                       onClick={() => setSelectedUnitId(id => id === u.id ? '' : u.id)}
                       className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold border-2 transition-all
@@ -426,11 +430,11 @@ export default function CallDetail({
                   <button onClick={() => { setAssigningUnit(false); setSelectedUnitId(''); }}
                     className="text-gray-500 hover:text-gray-300 text-sm leading-none">✕</button>
                 </div>
-                {units.filter(u => u.status === 'available' || u.status === 'cleared').length === 0 ? (
+                {units.filter(u => (u.status === 'available' || u.status === 'cleared') && u.unit_type !== 'Cart').length === 0 ? (
                   <div className="text-gray-500 text-xs py-1">No available units</div>
                 ) : (
                   <div className="flex flex-wrap gap-1.5">
-                    {units.filter(u => u.status === 'available' || u.status === 'cleared').map(u => (
+                    {units.filter(u => (u.status === 'available' || u.status === 'cleared') && u.unit_type !== 'Cart').map(u => (
                       <button key={u.id} type="button"
                         onClick={() => setSelectedUnitId(id => id === u.id ? '' : u.id)}
                         className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold border-2 transition-all
