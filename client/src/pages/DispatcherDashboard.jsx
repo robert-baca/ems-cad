@@ -48,7 +48,7 @@ export default function DispatcherDashboard() {
     handleCallCreated, handleCallUpdated, handleCallStatusChange, handleCallAssigned,
     handleCommentAdded,
     dispatchCall, assignUnit, closeCall, updateTimestamp, logTimeNow, addComment,
-    addUnitToCall, removeUnitFromCall, updatePriority, addMutualAid, removeMutualAid
+    addUnitToCall, removeUnitFromCall, updatePriority, updateCallLocationPin, addMutualAid, removeMutualAid
   } = useCalls();
   const { locations, addLocation, removeLocation, clearShiftLocations, setPermLocations } = useLocations();
 
@@ -69,6 +69,7 @@ export default function DispatcherDashboard() {
   const [splitParentId,     setSplitParentId]       = useState(null);
   const [showOptions,       setShowOptions]          = useState(false);
   const [overwatchCallId,   setOverwatchCallId]      = useState(null);
+  const [repositioningCallId, setRepositioningCallId] = useState(null);
   const [leftOpen,          setLeftOpen]             = useState(true);
   const [rightOpen,         setRightOpen]            = useState(true);
   const [sosAlerts,         setSosAlerts]            = useState([]);
@@ -194,12 +195,17 @@ export default function DispatcherDashboard() {
   const handleMapClick = ({ lat, lng }) => {
     if (isOverwatch) return;
     setContextMenu(null);
+    if (repositioningCallId) {
+      updateCallLocationPin(repositioningCallId, lat, lng);
+      setRepositioningCallId(null);
+      return;
+    }
     setNewCallPin({ lat, lng });
     setShowNewCallModal(true);
   };
 
   const handleMapRightClick = ({ lat, lng, x, y }) => {
-    if (isOverwatch) return;
+    if (isOverwatch || repositioningCallId) return;
     setContextMenu({ lat, lng, x, y });
   };
 
@@ -402,10 +408,23 @@ export default function DispatcherDashboard() {
             onRemoveLocation={removeLocation}
             newCallPin={newCallPin}
             flyToTarget={flyToTarget}
+            pickingLocation={!!repositioningCallId}
           />
-          <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-black/60 backdrop-blur-sm text-white text-xs px-3 py-1.5 rounded-full pointer-events-none select-none">
-            {isOverwatch ? 'Drag to pan · Click calls or units for info' : 'Drag to pan · Right-click → new call or add location'}
-          </div>
+          {repositioningCallId ? (
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-blue-700 text-white text-xs px-3 py-1.5 rounded-full flex items-center gap-3 shadow-lg z-10">
+              <span>📍 Click the map to set the new location for Case #{calls.find(c => c.id === repositioningCallId)?.call_number}</span>
+              <button
+                onClick={() => setRepositioningCallId(null)}
+                className="bg-blue-900/50 hover:bg-blue-900 px-2 py-0.5 rounded-full font-semibold"
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-black/60 backdrop-blur-sm text-white text-xs px-3 py-1.5 rounded-full pointer-events-none select-none">
+              {isOverwatch ? 'Drag to pan · Click calls or units for info' : 'Drag to pan · Right-click → new call or add location'}
+            </div>
+          )}
 
           {/* Left panel toggle tab */}
           <button
@@ -512,6 +531,7 @@ export default function DispatcherDashboard() {
               onUpdatePriority={updatePriority}
               onAddMutualAid={addMutualAid}
               onRemoveMutualAid={removeMutualAid}
+              onRepositionPin={(callId) => setRepositioningCallId(callId)}
             />
           </div>
         )}

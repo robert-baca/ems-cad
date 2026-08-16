@@ -19,7 +19,7 @@ function escapeHtml(str) {
 export default function ParkMap({
   units = [], calls = [], locations = [],
   onMapClick, onMapRightClick, onRemoveLocation,
-  newCallPin, flyToTarget
+  newCallPin, flyToTarget, pickingLocation = false
 }) {
   const containerRef       = useRef(null);
   const mapRef             = useRef(null);
@@ -28,6 +28,12 @@ export default function ParkMap({
   const newPinRef          = useRef(null);
   const mapReadyRef        = useRef(false);
   const [mapLoaded, setMapLoaded] = useState(false);
+
+  // Kept in a ref so the click handler (registered once on map init) never goes stale
+  const onMapClickRef = useRef(onMapClick);
+  onMapClickRef.current = onMapClick;
+  const pickingLocationRef = useRef(pickingLocation);
+  pickingLocationRef.current = pickingLocation;
 
   // Resize map whenever its container changes dimensions (e.g. panel collapse)
   useEffect(() => {
@@ -85,10 +91,17 @@ export default function ParkMap({
 
       // Cursor
       map.getCanvas().style.cursor = 'grab';
-      map.on('mousedown', () => { map.getCanvas().style.cursor = 'grabbing'; });
-      map.on('mouseup',   () => { map.getCanvas().style.cursor = 'grab'; });
-      map.on('mouseenter', 'units-circle', () => { map.getCanvas().style.cursor = 'pointer'; });
-      map.on('mouseleave', 'units-circle', () => { map.getCanvas().style.cursor = 'grab'; });
+      map.on('mousedown', () => { map.getCanvas().style.cursor = pickingLocationRef.current ? 'crosshair' : 'grabbing'; });
+      map.on('mouseup',   () => { map.getCanvas().style.cursor = pickingLocationRef.current ? 'crosshair' : 'grab'; });
+      map.on('mouseenter', 'units-circle', () => { map.getCanvas().style.cursor = pickingLocationRef.current ? 'crosshair' : 'pointer'; });
+      map.on('mouseleave', 'units-circle', () => { map.getCanvas().style.cursor = pickingLocationRef.current ? 'crosshair' : 'grab'; });
+
+      // Left-click on empty map → new call / reposition pin
+      map.on('click', (e) => {
+        if (onMapClickRef.current) {
+          onMapClickRef.current({ lat: e.lngLat.lat, lng: e.lngLat.lng });
+        }
+      });
 
       // Right-click → context menu
       map.on('contextmenu', (e) => {
@@ -241,6 +254,13 @@ export default function ParkMap({
         .addTo(map);
     }
   }, [newCallPin]);
+
+  // Keep cursor in sync with pickingLocation even without a mouse move
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReadyRef.current) return;
+    map.getCanvas().style.cursor = pickingLocation ? 'crosshair' : 'grab';
+  }, [pickingLocation]);
 
   // Fly to unit location
   useEffect(() => {

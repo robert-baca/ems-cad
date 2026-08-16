@@ -34,7 +34,7 @@ export default function CallDetail({
   call, unit, units = [], authorName = 'Dispatcher',
   onClose, onTimestampUpdate, onLogTime, onAddComment, onAssignUnit, onCloseCall, onAddUnit,
   onRemoveUnit, onSplitCall, parentCall, subCases = [], onUpdatePriority, onAddMutualAid, onRemoveMutualAid,
-  onChangeUnitStatus
+  onChangeUnitStatus, onRepositionPin
 }) {
   const [tab, setTab]                   = useState('detail');
   const [assigningUnit, setAssigningUnit] = useState(false);
@@ -355,13 +355,24 @@ export default function CallDetail({
                   <div className="space-y-1">
                     <Row label="Location" value={call.location_name || '—'} />
                   </div>
-                  <button
-                    onClick={() => { setLocName(call.location_name || ''); setEditingLocation(true); }}
-                    className="text-gray-600 hover:text-blue-400 text-xs transition-colors ml-2 flex-shrink-0"
-                    title="Edit location"
-                  >
-                    ✏️
-                  </button>
+                  <div className="flex items-center gap-2 ml-2 flex-shrink-0">
+                    {onRepositionPin && (
+                      <button
+                        onClick={() => onRepositionPin(call.id)}
+                        className="text-gray-600 hover:text-blue-400 text-xs transition-colors"
+                        title="Reposition pin on map"
+                      >
+                        📍
+                      </button>
+                    )}
+                    <button
+                      onClick={() => { setLocName(call.location_name || ''); setEditingLocation(true); }}
+                      className="text-gray-600 hover:text-blue-400 text-xs transition-colors"
+                      title="Edit location"
+                    >
+                      ✏️
+                    </button>
+                  </div>
                 </div>
               )}
               {call.response_mode && <Row label="Response" value={call.response_mode === 'cart' ? '🛺 Cart' : '🚶 On Foot'} />}

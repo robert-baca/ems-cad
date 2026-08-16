@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from 'react';
-import { createCall, updateCallStatus, assignCall, closeCall as apiCloseCall, updateCallTimestamps, updateCallNarrative, addUnitToCall as apiAddUnitToCall, removeUnitFromCall as apiRemoveUnitFromCall, updateCallPriority as apiUpdatePriority, addMutualAid as apiAddMutualAid, removeMutualAid as apiRemoveMutualAid, addCallComment as apiAddComment } from '../services/api';
+import { createCall, updateCallStatus, assignCall, closeCall as apiCloseCall, updateCallTimestamps, updateCallNarrative, updateCallLocation, addUnitToCall as apiAddUnitToCall, removeUnitFromCall as apiRemoveUnitFromCall, updateCallPriority as apiUpdatePriority, addMutualAid as apiAddMutualAid, removeMutualAid as apiRemoveMutualAid, addCallComment as apiAddComment } from '../services/api';
 
 const STATUS_TS_MAP = {
   dispatched:      'dispatched_at',
@@ -174,6 +174,11 @@ export function useCalls() {
     try { await apiRemoveUnitFromCall(callId, unitId); } catch {}
   }, []);
 
+  const updateCallLocationPin = useCallback(async (callId, lat, lng) => {
+    setCalls(prev => prev.map(c => c.id === callId ? { ...c, location_lat: lat, location_lng: lng } : c));
+    try { await updateCallLocation(callId, { location_lat: lat, location_lng: lng }); } catch {}
+  }, []);
+
   const updatePriority = useCallback(async (callId, priority) => {
     setCalls(prev => prev.map(c => c.id === callId ? { ...c, priority } : c));
     try { await apiUpdatePriority(callId, priority); } catch {}
@@ -218,6 +223,6 @@ export function useCalls() {
     handleCallCreated, handleCallUpdated, handleCallStatusChange, handleCallAssigned,
     handleCommentAdded,
     dispatchCall, assignUnit, advanceStatus, closeCall, updateTimestamp, logTimeNow, addComment,
-    addUnitToCall, removeUnitFromCall, updatePriority, addMutualAid, removeMutualAid
+    addUnitToCall, removeUnitFromCall, updatePriority, updateCallLocationPin, addMutualAid, removeMutualAid
   };
 }
