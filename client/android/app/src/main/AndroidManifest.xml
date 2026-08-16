@@ -20,7 +20,10 @@
             </intent-filter>
         </activity>
 
-        <service android:name=".GpsTrackerService" android:foregroundServiceType="location" android:exported="false" />
+        <!-- stopWithTask=false: without this, swiping the app away from Recents (which
+             crew easily do without meaning to force-stop it) kills GPS tracking outright,
+             with nothing bringing it back until the app is reopened. -->
+        <service android:name=".GpsTrackerService" android:foregroundServiceType="location" android:exported="false" android:stopWithTask="false" />
 
         <receiver android:name=".BootReceiver" android:exported="true">
             <intent-filter>

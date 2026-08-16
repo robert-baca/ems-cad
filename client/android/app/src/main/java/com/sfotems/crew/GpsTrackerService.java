@@ -74,6 +74,20 @@ public class GpsTrackerService extends Service {
             serverUrl = intent.getStringExtra(EXTRA_URL);
         }
 
+        // Android restarts a killed START_STICKY service (e.g. after an OS low-memory
+        // kill) by calling onStartCommand(null, ...) — no Intent, no extras. Without
+        // this fallback, the restarted service silently drops every GPS post forever
+        // (sendPoint() refuses to run with a null token/serverUrl), looking exactly
+        // like tracking permanently stopped with no way to self-recover. The plugin
+        // already persists these on startTracking() for the boot-restart case; reuse
+        // that here too.
+        if (token == null || serverUrl == null) {
+            android.content.SharedPreferences prefs =
+                    getSharedPreferences("GpsTracker", MODE_PRIVATE);
+            token     = prefs.getString("token", null);
+            serverUrl = prefs.getString("serverUrl", null);
+        }
+
         createChannel();
         Notification notif = new NotificationCompat.Builder(this, CHANNEL_ID)
                 .setContentTitle("EMS Crew Tracking")
