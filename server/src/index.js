@@ -529,6 +529,13 @@ const VALID_UNIT_STATUSES = new Set([
   'on_scene', 'patient_contact', 'transporting', 'cleared', 'out_of_service'
 ]);
 
+// A dispatcher-supplied starting status (assign/add-unit) falls back to
+// 'dispatched' unless it's a recognized status — shared so the two call
+// sites can't drift apart on what counts as valid.
+function resolveInitialUnitStatus(status) {
+  return (status && VALID_UNIT_STATUSES.has(status)) ? status : 'dispatched';
+}
+
 // Response-flow order for the "call-level change propagates to its units"
 // side effect (call status change, timestamp recalculation). A crew member's
 // own status button — or a dispatcher's direct per-unit override on the
@@ -893,9 +900,7 @@ app.patch('/api/calls/:id/assign', verifyToken, async (req, res) => {
     // starting-status picker Add Unit already offers. Default to
     // 'dispatched' rather than blindly inheriting the call's current status,
     // but let the dispatcher say otherwise instead of guessing either way.
-    unit.status = (req.body.initial_status && VALID_UNIT_STATUSES.has(req.body.initial_status))
-      ? req.body.initial_status
-      : 'dispatched';
+    unit.status = resolveInitialUnitStatus(req.body.initial_status);
     saveUnit(unit).catch(console.error);
     io.to('dispatchers').emit('unit:status_change', { unit_id: unit.id, status: unit.status });
     io.to(`crew:${unit.id}`).emit('unit:status_change', { unit_id: unit.id, status: unit.status });
@@ -926,9 +931,7 @@ app.post('/api/calls/:id/add-unit', verifyToken, async (req, res) => {
   const { unit_id, initial_status } = req.body;
   if (!unit_id) return res.status(400).json({ error: 'unit_id required' });
 
-  const joinStatus = (initial_status && VALID_UNIT_STATUSES.has(initial_status))
-    ? initial_status
-    : 'dispatched';
+  const joinStatus = resolveInitialUnitStatus(initial_status);
 
   const conflict = getUnitActiveCall(unit_id, req.params.id);
   if (conflict) return res.status(409).json({ error: `Unit already on call #${conflict.call_number}` });

@@ -443,7 +443,7 @@ export default function CallDetail({
               <div className="bg-gray-700 rounded-xl p-3 space-y-2">
                 <div className="flex items-center justify-between">
                   <div className="text-gray-400 text-xs uppercase tracking-wider">Reassign Unit</div>
-                  <button onClick={() => { setAssigningUnit(false); setSelectedUnitId(''); }}
+                  <button onClick={() => { setAssigningUnit(false); setSelectedUnitId(''); setReassignStatus('dispatched'); }}
                     className="text-gray-500 hover:text-gray-300 text-sm leading-none">✕</button>
                 </div>
                 {units.filter(u => (u.status === 'available' || u.status === 'cleared') && u.unit_type !== 'Cart').length === 0 ? (
