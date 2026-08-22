@@ -569,6 +569,18 @@ function isForwardStatusChange(fromStatus, toStatus) {
   return toIdx >= fromIdx;
 }
 
+// Several call-edit endpoints (location, details, priority, mutual aid,
+// narrative) only ever notified the primary unit's crew socket — a backup
+// unit added mid-call never got pushed a priority bump, corrected scene
+// location, updated chief complaint, a new mutual-aid entry, or a narrative
+// edit, and their app silently went stale until a manual refresh. Notify
+// every unit actually tied to the call, matching the pattern already used
+// for status changes and comments.
+function notifyCallCrew(call, changes) {
+  const unitIds = [...new Set([call.assigned_unit_id, ...(call.co_unit_ids || []), ...(call.additional_unit_ids || [])])].filter(Boolean);
+  unitIds.forEach(uid => io.to(`crew:${uid}`).emit('call:updated', { call_id: call.id, changes }));
+}
+
 const VALID_CALL_STATUSES = new Set([
   'pending', 'dispatched', 'acknowledged', 'en_route', 'on_scene',
   'patient_contact', 'transporting', 'cleared', 'available', 'closed'
@@ -604,7 +616,23 @@ const UNIT_STATUS_TO_TS_FIELD = {
 
 // ── Units ─────────────────────────────────────────────────────────
 app.get('/api/units', verifyToken, (req, res) => {
-  res.json(units.map(u => ({ ...u, password_hash: undefined })));
+  // Crew phones fetch the full unit list for pickers (add/reassign) —
+  // but that meant every crew member could already read every other
+  // unit's live GPS position directly from this response, regardless of
+  // whether that unit had opted into beacon sharing (beacon_active). The
+  // client's BeaconMode UI only *displayed* beaconing units, but the raw
+  // coordinates were sent either way, making the opt-in decorative.
+  // Dispatcher/overwatch/display still need full positions for the map.
+  const sanitized = units.map(u => {
+    const base = { ...u, password_hash: undefined };
+    if (req.user.role === 'crew' && req.user.unit_id !== u.id && !u.beacon_active) {
+      base.last_lat = null;
+      base.last_lng = null;
+      base.last_gps_at = null;
+    }
+    return base;
+  });
+  res.json(sanitized);
 });
 
 app.patch('/api/units/:id/status', verifyToken, async (req, res) => {
@@ -851,6 +879,12 @@ app.post('/api/calls', verifyToken, async (req, res) => {
     // Protected fields — never overrideable by the client
     id,
     call_number:          callNumber,
+    // Unlike PATCH /calls/:id/priority, this was passed through raw with no
+    // validation — an omitted/invalid priority became NULL in the DB (pg
+    // serializes undefined as NULL, bypassing the column's DEFAULT 2 since
+    // it's explicitly bound in the INSERT), which then miscounted/broke any
+    // by-priority bucketing (e.g. the shift-end summary) for that call.
+    priority:              [1, 2, 3].includes(Number(req.body.priority)) ? Number(req.body.priority) : 2,
     status:               hasUnit ? 'dispatched' : 'pending',
     received_at:          now,
     dispatched_at:        hasUnit ? now : null,
@@ -1386,6 +1420,14 @@ function getUnitActiveCall(unitId, excludeCallId = null) {
 // PATCH /api/crew/gps-sharing) — a dispatcher can't force a unit to be
 // tracked against that.
 function applyGpsUpdate(unit, lat, lng, timestamp) {
+  // Neither GPS source (Traccar or the crew browser endpoint) validated
+  // coordinate ranges — a garbage/corrupted fix would be accepted as-is and
+  // broadcast as the unit's true position with no sanity check.
+  if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+    console.log(`[gps] ${unit.unit_number} — rejected, out-of-range fix (${lat}, ${lng})`);
+    return false;
+  }
+
   if (unit.gps_sharing_disabled) {
     const last = gpsDiscardLastLog.get(unit.id) || 0;
     if (Date.now() - last > 5 * 60 * 1000) {
@@ -1461,7 +1503,10 @@ app.post('/api/crew/gps', verifyToken, (req, res) => {
   if (!unit) return res.status(404).json({ error: 'Not found' });
   const lat = parseFloat(req.body.lat);
   const lng = parseFloat(req.body.lng);
-  if (!lat || !lng) return res.status(400).json({ error: 'lat and lng required' });
+  // !lat/!lng treated a legitimate coordinate of exactly 0 as missing —
+  // harmless for this park (nowhere near the equator/prime meridian) but a
+  // real logic bug; isNaN is the actual "was this provided" check.
+  if (isNaN(lat) || isNaN(lng)) return res.status(400).json({ error: 'lat and lng required' });
 
   // iOS only — lets dispatch see which phones are still stuck at "While Using"
   // (GPS drops the moment the screen locks) instead of "Always," without
@@ -1499,6 +1544,18 @@ app.patch('/api/crew/gps-sharing', verifyToken, (req, res) => {
 
 // ── GPS history ───────────────────────────────────────────────────
 app.get('/api/calls/:id/gps-track', verifyToken, async (req, res) => {
+  // Unlike GET /api/calls (which already filters crew to their own calls),
+  // this had no scoping at all — any authenticated crew/display token could
+  // pull any call's full lat/lng breadcrumb trail, not just calls they were
+  // actually on.
+  if (req.user.role === 'crew') {
+    const call = calls.find(c => c.id === req.params.id);
+    const allIds = call ? [call.assigned_unit_id, ...(call.additional_unit_ids || [])] : [];
+    if (!allIds.includes(req.user.unit_id))
+      return res.status(403).json({ error: 'Forbidden' });
+  } else if (!['dispatcher', 'overwatch'].includes(req.user.role)) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
   try {
     const { rows } = await pool.query(
       `SELECT unit_id, unit_number, lat, lng, recorded_at
@@ -1618,7 +1675,7 @@ app.patch('/api/calls/:id/location', verifyToken, async (req, res) => {
   if (location_lng  !== undefined) { call.location_lng  = location_lng;  changes.location_lng  = location_lng;  }
   saveCall(call).catch(console.error);
   io.to('dispatchers').emit('call:updated', { call_id: call.id, changes });
-  if (call.assigned_unit_id) io.to(`crew:${call.assigned_unit_id}`).emit('call:updated', { call_id: call.id, changes });
+  notifyCallCrew(call, changes);
   res.json({ ok: true });
 });
 
@@ -1633,7 +1690,7 @@ app.patch('/api/calls/:id/details', verifyToken, async (req, res) => {
   if (notes           !== undefined) { call.notes           = notes;            changes.notes           = notes; }
   saveCall(call).catch(console.error);
   io.to('dispatchers').emit('call:updated', { call_id: call.id, changes });
-  if (call.assigned_unit_id) io.to(`crew:${call.assigned_unit_id}`).emit('call:updated', { call_id: call.id, changes });
+  notifyCallCrew(call, changes);
   res.json({ ok: true });
 });
 
@@ -1646,7 +1703,7 @@ app.patch('/api/calls/:id/priority', verifyToken, async (req, res) => {
   call.priority = priority;
   saveCall(call).catch(console.error);
   io.to('dispatchers').emit('call:updated', { call_id: call.id, changes: { priority } });
-  if (call.assigned_unit_id) io.to(`crew:${call.assigned_unit_id}`).emit('call:updated', { call_id: call.id, changes: { priority } });
+  notifyCallCrew(call, { priority });
   res.json({ ok: true });
 });
 
@@ -1655,13 +1712,20 @@ app.post('/api/calls/:id/mutual-aid', verifyToken, async (req, res) => {
   const call = calls.find(c => c.id === req.params.id);
   if (!call) return res.status(404).json({ error: 'Not found' });
   const { name, unit_id, role } = req.body;
-  if (!name?.trim()) return res.status(400).json({ error: 'name required' });
-  const entry = { id: `ma-${Date.now()}`, name: name.trim(), unit_id: unit_id?.trim() || null, role: role?.trim() || null, arrived_at: new Date().toISOString() };
+  // .trim() on a non-string (e.g. a stray numeric unit_id) throws
+  // synchronously — inside this async handler with no try/catch, that's an
+  // unhandled rejection, the same crash class already fixed for login.
+  // String(...) first so a wrong type degrades to a normal value instead.
+  const trimmedName = typeof name === 'string' ? name.trim() : '';
+  if (!trimmedName) return res.status(400).json({ error: 'name required' });
+  const trimmedUnitId = unit_id != null ? String(unit_id).trim() : '';
+  const trimmedRole   = role    != null ? String(role).trim()    : '';
+  const entry = { id: `ma-${Date.now()}`, name: trimmedName, unit_id: trimmedUnitId || null, role: trimmedRole || null, arrived_at: new Date().toISOString() };
   if (!call.mutual_aid_agencies) call.mutual_aid_agencies = [];
   call.mutual_aid_agencies.push(entry);
   saveCall(call).catch(console.error);
   io.to('dispatchers').emit('call:updated', { call_id: call.id, changes: { mutual_aid_agencies: call.mutual_aid_agencies } });
-  if (call.assigned_unit_id) io.to(`crew:${call.assigned_unit_id}`).emit('call:updated', { call_id: call.id, changes: { mutual_aid_agencies: call.mutual_aid_agencies } });
+  notifyCallCrew(call, { mutual_aid_agencies: call.mutual_aid_agencies });
   res.json(entry);
 });
 
@@ -1672,7 +1736,7 @@ app.delete('/api/calls/:id/mutual-aid/:entryId', verifyToken, async (req, res) =
   call.mutual_aid_agencies = (call.mutual_aid_agencies || []).filter(e => e.id !== req.params.entryId);
   saveCall(call).catch(console.error);
   io.to('dispatchers').emit('call:updated', { call_id: call.id, changes: { mutual_aid_agencies: call.mutual_aid_agencies } });
-  if (call.assigned_unit_id) io.to(`crew:${call.assigned_unit_id}`).emit('call:updated', { call_id: call.id, changes: { mutual_aid_agencies: call.mutual_aid_agencies } });
+  notifyCallCrew(call, { mutual_aid_agencies: call.mutual_aid_agencies });
   res.json({ ok: true });
 });
 
@@ -1686,6 +1750,15 @@ app.patch('/api/calls/:id/timestamps', verifyToken, async (req, res) => {
     const allIds = [call.assigned_unit_id, ...(call.additional_unit_ids || [])];
     if (!allIds.includes(req.user.unit_id))
       return res.status(403).json({ error: 'Forbidden' });
+  }
+  // A closed call has no live edit path in the dispatcher UI (closed calls
+  // aren't selectable outside read-only history) — the only realistic way
+  // this fires on one is a stale/offline-queued crew request landing after
+  // the dispatcher already closed it. Reject outright, same as /status,
+  // rather than letting a blanked closed_at silently reopen the call and
+  // re-trigger its unit sync.
+  if (call.status === 'closed') {
+    return res.status(409).json({ error: 'Call is already closed' });
   }
   const ALLOWED = ['received_at','dispatched_at','acknowledged_at','en_route_at',
                    'on_scene_at','patient_contact_at','arrived_first_aid_at','transporting_at',
@@ -1729,8 +1802,7 @@ app.patch('/api/calls/:id/timestamps', verifyToken, async (req, res) => {
   saveCall(call).catch(console.error);
   if (Object.keys(changes).length) {
     io.to('dispatchers').emit('call:updated', { call_id: call.id, changes });
-    if (call.assigned_unit_id)
-      io.to(`crew:${call.assigned_unit_id}`).emit('call:updated', { call_id: call.id, changes });
+    notifyCallCrew(call, changes);
   }
   res.json({ ok: true });
 });
@@ -1747,7 +1819,7 @@ app.patch('/api/calls/:id/narrative', verifyToken, async (req, res) => {
   }
   call.narrative = req.body.narrative ?? null;
   saveCall(call).catch(console.error);
-  if (call.assigned_unit_id) io.to(`crew:${call.assigned_unit_id}`).emit('call:updated', { call_id: call.id, changes: { narrative: call.narrative } });
+  notifyCallCrew(call, { narrative: call.narrative });
   res.json({ ok: true });
 });
 
