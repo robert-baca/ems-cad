@@ -886,9 +886,16 @@ app.patch('/api/calls/:id/assign', verifyToken, async (req, res) => {
 
   const unit = units.find(u => u.id === req.body.unit_id);
   if (unit) {
-    // New unit picks up the call's current status, not a hardcoded 'dispatched',
-    // so swapping mid-call (e.g. while en route) doesn't strand it a step behind.
-    unit.status = call.status;
+    // A newly-assigned unit is only ever picked from the available/cleared
+    // pool (see the Reassign Unit UI), so it can never already be wherever
+    // the call's progress is by default — but the dispatcher may know it
+    // actually is (e.g. a first responder already on scene), same as the
+    // starting-status picker Add Unit already offers. Default to
+    // 'dispatched' rather than blindly inheriting the call's current status,
+    // but let the dispatcher say otherwise instead of guessing either way.
+    unit.status = (req.body.initial_status && VALID_UNIT_STATUSES.has(req.body.initial_status))
+      ? req.body.initial_status
+      : 'dispatched';
     saveUnit(unit).catch(console.error);
     io.to('dispatchers').emit('unit:status_change', { unit_id: unit.id, status: unit.status });
     io.to(`crew:${unit.id}`).emit('unit:status_change', { unit_id: unit.id, status: unit.status });

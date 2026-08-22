@@ -104,7 +104,7 @@ export function useCalls(setUnits) {
   // rule (server/src/index.js, PATCH /api/calls/:id/assign): only a
   // first-time assignment bumps the call to 'dispatched' — swapping a unit
   // mid-call (e.g. while en route) must leave the call's status alone.
-  const assignUnit = useCallback(async (callId, unitId) => {
+  const assignUnit = useCallback(async (callId, unitId, initialStatus) => {
     let snapshot = null;
     setCalls(prev => {
       snapshot = prev.find(c => c.id === callId) || null;
@@ -120,7 +120,7 @@ export function useCalls(setUnits) {
       );
     });
     try {
-      await assignCall(callId, unitId);
+      await assignCall(callId, unitId, initialStatus);
       return null;
     } catch (err) {
       if (snapshot) setCalls(prev => prev.map(c => c.id === callId ? snapshot : c));

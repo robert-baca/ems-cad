@@ -52,6 +52,7 @@ export default function CallDetail({
   const [assigningUnit, setAssigningUnit] = useState(false);
   const [addingUnit,    setAddingUnit]    = useState(false);
   const [selectedUnitId, setSelectedUnitId] = useState('');
+  const [reassignStatus, setReassignStatus] = useState('dispatched');
   const [addUnitId,      setAddUnitId]      = useState('');
   const [addUnitStatus,  setAddUnitStatus]  = useState('dispatched');
   const [assignSubmitting, setAssignSubmitting] = useState(false);
@@ -79,6 +80,7 @@ export default function CallDetail({
     setAssigningUnit(false);
     setAddingUnit(false);
     setSelectedUnitId('');
+    setReassignStatus('dispatched');
     setAddUnitId('');
     setAddUnitStatus('dispatched');
     setAssignSubmitting(false);
@@ -128,11 +130,14 @@ export default function CallDetail({
     if (!selectedUnitId || assignSubmitting) return;
     setAssignSubmitting(true);
     setAssignError('');
-    const err = await onAssignUnit?.(call.id, selectedUnitId);
+    // Only a mid-call swap needs a starting status — a first-time assignment
+    // (call still pending) always starts fresh at 'dispatched' server-side.
+    const err = await onAssignUnit?.(call.id, selectedUnitId, isPending ? undefined : reassignStatus);
     setAssignSubmitting(false);
     if (err) { setAssignError(err); return; }
     setAssigningUnit(false);
     setSelectedUnitId('');
+    setReassignStatus('dispatched');
   };
 
   const handleAddUnit = async () => {
@@ -455,6 +460,22 @@ export default function CallDetail({
                         {TYPE_ICONS[u.unit_type] || '🚑'} {u.unit_number}
                       </button>
                     ))}
+                  </div>
+                )}
+                {selectedUnitId && (
+                  <div>
+                    <div className="text-gray-500 text-xs mb-1">Starting status — where is this unit actually at?</div>
+                    <div className="flex gap-1.5">
+                      {['dispatched', 'en_route', 'on_scene'].map(s => (
+                        <button key={s} type="button"
+                          onClick={() => setReassignStatus(s)}
+                          className={`flex-1 py-1 rounded-lg text-xs font-semibold transition-colors
+                            ${reassignStatus === s ? 'text-white' : 'bg-gray-600 text-gray-400 hover:bg-gray-500'}`}
+                          style={reassignStatus === s ? { backgroundColor: STATUS_COLORS[s] } : undefined}>
+                          {STATUS_LABELS[s]}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 )}
                 <button onClick={handleAssign} disabled={!selectedUnitId || assignSubmitting}
