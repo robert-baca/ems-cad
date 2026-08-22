@@ -38,7 +38,25 @@ export function useSocket(handlers = {}) {
       socket.on(event, (...args) => handlersRef.current[event]?.(...args));
     });
 
-    return () => { socket.disconnect(); };
+    // A socket can go silently dead (laptop sleep, a backgrounded tab, a
+    // proxy that drops idle connections) without ever firing 'disconnect' —
+    // ping/pong detection doesn't always catch it promptly, so isConnected
+    // stays true and nothing "catches up" because no new events are
+    // arriving at all. Forcing a full reconnect whenever the tab regains
+    // visibility guarantees a fresh join + init:state either way, instead
+    // of trusting a connection state that may already be stale.
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible' && socketRef.current) {
+        socketRef.current.disconnect();
+        socketRef.current.connect();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+      socket.disconnect();
+    };
   }, []);
 
   return { socketRef, isConnected };
