@@ -54,15 +54,30 @@ export function useCalls(setUnits) {
   const [calls, setCalls] = useState([]);
   const loggingRef = useRef(new Set()); // tracks in-flight logTimeNow calls per callId
 
+  // Returns a { unitId: previousStatus } snapshot of whatever it actually
+  // changed, so a failed server write can be rolled back precisely instead
+  // of leaving the optimistic guess stranded — see revertUnits/logTimeNow.
   const syncUnitsForward = useCallback((call, newStatus) => {
-    if (!setUnits || !call) return;
+    if (!setUnits || !call) return null;
     const unitIds = [...new Set([call.assigned_unit_id, ...(call.co_unit_ids || []), ...(call.additional_unit_ids || [])])].filter(Boolean);
-    if (!unitIds.length) return;
-    setUnits(prev => prev.map(u =>
-      unitIds.includes(u.id) && isForwardUnitStatus(u.status, newStatus)
-        ? { ...u, status: newStatus }
-        : u
-    ));
+    if (!unitIds.length) return null;
+    let snapshot = null;
+    setUnits(prev => {
+      snapshot = {};
+      return prev.map(u => {
+        if (unitIds.includes(u.id) && isForwardUnitStatus(u.status, newStatus)) {
+          snapshot[u.id] = u.status;
+          return { ...u, status: newStatus };
+        }
+        return u;
+      });
+    });
+    return snapshot;
+  }, [setUnits]);
+
+  const revertUnits = useCallback((snapshot) => {
+    if (!setUnits || !snapshot || !Object.keys(snapshot).length) return;
+    setUnits(prev => prev.map(u => Object.prototype.hasOwnProperty.call(snapshot, u.id) ? { ...u, status: snapshot[u.id] } : u));
   }, [setUnits]);
 
   const handleCallCreated      = useCallback((call) => setCalls(prev => prev.some(c => c.id === call.id) ? prev : [call, ...prev]), []);
@@ -145,9 +160,11 @@ export function useCalls(setUnits) {
     loggingRef.current.add(callId);
     const now = new Date().toISOString();
     let nextField = null;
+    let callSnapshot = null;
     let callForSync = null;
     setCalls(prev => prev.map(c => {
       if (c.id !== callId) return c;
+      callSnapshot = c;
       nextField = TS_STEPS.find(f => !c[f]);
       if (!nextField) return c;
       const newStatus = TS_STATUS_MAP[nextField];
@@ -156,12 +173,22 @@ export function useCalls(setUnits) {
     }));
     if (nextField) {
       const newStatus = TS_STATUS_MAP[nextField];
-      if (newStatus) syncUnitsForward(callForSync, newStatus);
-      updateCallTimestamps(callId, { [nextField]: now }).catch(() => {});
-      if (newStatus) updateCallStatus(callId, newStatus).catch(() => {});
+      const unitsSnapshot = newStatus ? syncUnitsForward(callForSync, newStatus) : null;
+      // Both requests must land, or the optimistic call/unit state rolls back
+      // to what it was before this click — otherwise a silently-failed write
+      // (previously swallowed by .catch(() => {})) left the call's status
+      // permanently stuck ahead of the units' real status, with nothing to
+      // ever pull it back except the next successful Log Now overwriting it.
+      Promise.all([
+        updateCallTimestamps(callId, { [nextField]: now }),
+        newStatus ? updateCallStatus(callId, newStatus) : Promise.resolve()
+      ]).catch(() => {
+        setCalls(prev => prev.map(c => c.id === callId ? callSnapshot : c));
+        revertUnits(unitsSnapshot);
+      });
     }
     setTimeout(() => loggingRef.current.delete(callId), 1000);
-  }, [syncUnitsForward]);
+  }, [syncUnitsForward, revertUnits]);
 
   const closeCall = useCallback(async (callId, disposition, close_notes) => {
     let snapshot = null;
