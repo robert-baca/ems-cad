@@ -165,7 +165,14 @@ export function useCalls(setUnits) {
     setCalls(prev => prev.map(c => {
       if (c.id !== callId) return c;
       callSnapshot = c;
-      nextField = TS_STEPS.find(f => !c[f]);
+      // Start the search after the call's current status, not from the
+      // beginning — a call can legitimately reach its current status without
+      // every earlier milestone having been logged (e.g. crew jumped
+      // straight to Patient Contact), leaving that earlier field null
+      // forever. Scanning from the start would offer that already-passed
+      // step as "next" and log it, regressing the call's status backward.
+      const currentIdx = TS_STEPS.indexOf(STATUS_TS_MAP[c.status]);
+      nextField = TS_STEPS.slice(currentIdx + 1).find(f => !c[f]);
       if (!nextField) return c;
       const newStatus = TS_STATUS_MAP[nextField];
       callForSync = { ...c, [nextField]: now, ...(newStatus ? { status: newStatus } : {}) };

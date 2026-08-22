@@ -13,6 +13,18 @@ const TS_SEQUENCE = [
   'on_scene_at', 'patient_contact_at', 'transporting_at', 'arrived_first_aid_at',
   'cleared_at', 'available_at'
 ];
+// Where each call status sits in TS_SEQUENCE — used to start the "what's
+// next" search from the call's actual current progress, not from the
+// beginning. A call can legitimately skip logging some earlier steps (e.g.
+// crew jumped straight to Patient Contact without a separate Acknowledged
+// press), leaving that earlier field permanently null — scanning from the
+// start would then offer that already-passed step as "next" and, if
+// clicked, would regress the call's status backward.
+const STATUS_TO_TS = {
+  dispatched: 'dispatched_at', acknowledged: 'acknowledged_at', en_route: 'en_route_at',
+  on_scene: 'on_scene_at', patient_contact: 'patient_contact_at',
+  transporting: 'transporting_at', cleared: 'cleared_at', available: 'available_at'
+};
 const TS_LABELS = {
   dispatched_at:       'Dispatched',       acknowledged_at:      'Acknowledged',
   en_route_at:         'En Route',         on_scene_at:          'On Scene',
@@ -90,7 +102,8 @@ export default function CallDetail({
   if (!call) return null;
 
   const statusColor = STATUS_COLORS[call.status] || '#9ca3af';
-  const nextTsField = TS_SEQUENCE.find(f => !call[f]);
+  const currentTsIdx = TS_SEQUENCE.indexOf(STATUS_TO_TS[call.status]);
+  const nextTsField = TS_SEQUENCE.slice(currentTsIdx + 1).find(f => !call[f]);
   const nextTsLabel = nextTsField ? TS_LABELS[nextTsField] : null;
   const commentCount = call.comments?.length || 0;
   const isPending = !call.assigned_unit_id;

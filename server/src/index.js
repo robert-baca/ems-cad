@@ -995,6 +995,16 @@ app.patch('/api/calls/:id/status', verifyToken, async (req, res) => {
     return res.status(400).json({ error: 'Invalid status' });
   }
 
+  // This endpoint is only ever meant to advance a call forward (Log Now,
+  // a crew status button, or closing) — a deliberate backward correction
+  // goes through PATCH /calls/:id/timestamps instead, which recalculates
+  // status from the timestamps themselves. Reject anything else here so a
+  // client-side bug (e.g. miscalculating "next status" and landing on one
+  // the call already passed) can't silently regress a live call.
+  if (!isForwardStatusChange(call.status, req.body.status)) {
+    return res.status(409).json({ error: `Call is already past '${req.body.status}' (currently '${call.status}')` });
+  }
+
   const TS_MAP = {
     acknowledged: 'acknowledged_at', en_route: 'en_route_at', on_scene: 'on_scene_at',
     patient_contact: 'patient_contact_at', transporting: 'transporting_at',
