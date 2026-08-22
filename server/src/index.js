@@ -386,7 +386,12 @@ app.post('/api/auth/login', async (req, res) => {
 
   if (role === 'crew') {
     const unit = units.find(u => u.unit_number.toLowerCase() === username.toLowerCase());
-    if (!unit || !bcrypt.compareSync(password, unit.password_hash))
+    // Units created via the quick-add flow (POST /api/crew/add-unit) have no
+    // usable password_hash (null) — bcrypt.compareSync throws synchronously
+    // on a non-string hash, which as an unhandled rejection in this async
+    // handler would crash the whole process on Node 22+. Guard it the same
+    // way a missing unit already is, rather than ever reaching bcrypt.
+    if (!unit || !unit.password_hash || !bcrypt.compareSync(password, unit.password_hash))
       return res.status(401).json({ error: 'Invalid credentials' });
     const token = signToken({ unit_id: unit.id, unit_number: unit.unit_number, role: 'crew' });
     return res.json({
