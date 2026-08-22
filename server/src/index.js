@@ -671,7 +671,7 @@ app.post('/api/units', verifyToken, async (req, res) => {
     station:         null
   };
   units.push(newUnit);
-  await saveUnit(newUnit).catch(console.error);
+  saveUnit(newUnit).catch(console.error);
   const sanitized = { ...newUnit, password_hash: undefined };
   io.to('dispatchers').emit('unit:updated', sanitized);
   res.status(201).json(sanitized);
@@ -686,13 +686,13 @@ app.put('/api/units/:id', verifyToken, async (req, res) => {
   if (unit_number !== undefined) {
     if (units.some(u => u.id !== unit.id && u.unit_number.trim().toLowerCase() === unit_number.trim().toLowerCase()))
       return res.status(409).json({ error: `A unit named "${unit_number.trim()}" already exists` });
-    unit.unit_number = unit_number;
+    unit.unit_number = unit_number.trim();
   }
   if (unit_name   !== undefined)    unit.unit_name    = unit_name;
   if (unit_type   !== undefined)    unit.unit_type    = unit_type;
   if (password)                     unit.password_hash = bcrypt.hashSync(password, 8);
 
-  await saveUnit(unit).catch(console.error);
+  saveUnit(unit).catch(console.error);
   const sanitized = { ...unit, password_hash: undefined };
   io.to('dispatchers').emit('unit:updated', sanitized);
   res.json(sanitized);
@@ -731,6 +731,14 @@ app.delete('/api/units/:id', verifyToken, async (req, res) => {
   if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
   const idx = units.findIndex(u => u.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'Not found' });
+  // Deleting a unit still tied to an open call would leave that call's
+  // assigned_unit_id/additional_unit_ids pointing at nothing — every lookup
+  // for it then returns undefined, orphaning the call with no way to see or
+  // reassign that slot. Remove it from the call (or close the call) first.
+  const activeCall = getUnitActiveCall(req.params.id);
+  if (activeCall) {
+    return res.status(409).json({ error: `Unit is on open call #${activeCall.call_number} — remove it from the call first` });
+  }
   units.splice(idx, 1);
   deleteUnitFromDb(req.params.id).catch(console.error);
   io.to('dispatchers').emit('unit:removed', { unit_id: req.params.id });
@@ -846,7 +854,12 @@ app.post('/api/calls', verifyToken, async (req, res) => {
     assigned_unit_number: hasUnit ? (units.find(u => u.id === req.body.assigned_unit_id)?.unit_number || null) : null
   };
   calls.unshift(call);
-  await saveCall(call).catch(console.error);
+  // Fire-and-forget, matching every other saveCall call site in this file —
+  // this was the only one awaited, which opened a real window: a concurrent
+  // request touching the same unit(s) between this await and the unit
+  // mutations below could have its change silently clobbered back to
+  // 'dispatched' once this handler resumed, with no forward-only guard here.
+  saveCall(call).catch(console.error);
 
   io.to('dispatchers').emit('call:created', call);
   if (hasUnit) {
@@ -1010,6 +1023,16 @@ app.patch('/api/calls/:id/status', verifyToken, async (req, res) => {
     return res.status(400).json({ error: 'Invalid status' });
   }
 
+  // A closed call is final — it's not part of STATUS_SEQUENCE (closing is
+  // always allowed *into*, from anywhere), so isForwardStatusChange alone
+  // wouldn't catch a stale/offline-queued status request landing after the
+  // call was already closed (e.g. a crew phone regaining signal) — that
+  // would silently reopen it, and getUnitActiveCall would then treat it as
+  // active again, blocking that unit from being dispatched elsewhere.
+  if (call.status === 'closed') {
+    return res.status(409).json({ error: 'Call is already closed' });
+  }
+
   // This endpoint is only ever meant to advance a call forward (Log Now,
   // a crew status button, or closing) — a deliberate backward correction
   // goes through PATCH /calls/:id/timestamps instead, which recalculates
@@ -1075,6 +1098,11 @@ app.post('/api/calls/:id/comments', verifyToken, async (req, res) => {
   if (req.user.role === 'overwatch') return res.status(403).json({ error: 'Forbidden' });
   const call = calls.find(c => c.id === req.params.id);
   if (!call) return res.status(404).json({ error: 'Not found' });
+  if (req.user.role === 'crew') {
+    const allIds = [call.assigned_unit_id, ...(call.additional_unit_ids || [])];
+    if (!allIds.includes(req.user.unit_id))
+      return res.status(403).json({ error: 'Forbidden' });
+  }
   if (!req.body.text?.trim()) return res.status(400).json({ error: 'text required' });
   const author = req.user.role === 'crew' ? (req.user.unit_number || 'Crew') : 'Dispatcher';
   const comment = {
@@ -1148,7 +1176,7 @@ app.post('/api/crew/add-unit', async (req, res) => {
       profile: null, crew: null, station: null
     };
     units.push(unit);
-    await saveUnit(unit).catch(console.error);
+    saveUnit(unit).catch(console.error);
     io.to('dispatchers').emit('unit:updated', { ...unit, password_hash: undefined });
   }
 
@@ -1295,7 +1323,12 @@ app.patch('/api/shift/units/:unit_id', verifyToken, async (req, res) => {
   if (crew       !== undefined) unit.crew      = crew;
   if (unit_type  !== undefined) unit.unit_type = unit_type;
   if (station    !== undefined) unit.station   = station;
-  if (in_service !== undefined) unit.status    = in_service ? 'available' : 'out_of_service';
+  // Don't clobber the status of a unit still working an open call (e.g.
+  // still on scene) — the in-service toggle only applies to units that
+  // aren't tied to an active call. Mirrors the same guard in /shift/start.
+  if (in_service !== undefined && !getUnitActiveCall(unit.id)) {
+    unit.status = in_service ? 'available' : 'out_of_service';
+  }
   if (currentShift) {
     const s = currentShift.unit_staffing.find(s => s.unit_id === req.params.unit_id);
     if (s) { Object.assign(s, { crew, unit_type, in_service, station }); }
@@ -1659,15 +1692,24 @@ app.patch('/api/calls/:id/timestamps', verifyToken, async (req, res) => {
   if (newStatus !== call.status) {
     call.status = newStatus;
     changes.status = newStatus;
-    if (newStatus !== 'pending' && newStatus !== 'closed') {
-      const unitIdsToUpdate = [...new Set([call.assigned_unit_id, ...(call.co_unit_ids || []), ...(call.additional_unit_ids || [])])].filter(Boolean);
+    if (newStatus !== 'pending') {
+      // Closing via a backdated closed_at (instead of the normal Close Case
+      // button/PATCH /status) skipped this entirely before, leaving every
+      // associated unit stuck at its last status — matches /status's own
+      // close handling: every unit tied to the call, not just the ones
+      // still being actively synced, goes back to available.
+      const isClose = newStatus === 'closed';
+      const newUnitStatus = isClose ? 'available' : newStatus;
+      const unitIdsToUpdate = isClose
+        ? [call.assigned_unit_id, ...(call.additional_unit_ids || [])].filter(Boolean)
+        : [...new Set([call.assigned_unit_id, ...(call.co_unit_ids || []), ...(call.additional_unit_ids || [])])].filter(Boolean);
       unitIdsToUpdate.forEach(uid => {
         const unit = units.find(u => u.id === uid);
-        if (unit && isForwardStatusChange(unit.status, newStatus)) {
-          unit.status = newStatus;
+        if (unit && isForwardStatusChange(unit.status, newUnitStatus)) {
+          unit.status = newUnitStatus;
           saveUnit(unit).catch(console.error);
-          io.to('dispatchers').emit('unit:status_change', { unit_id: unit.id, status: newStatus });
-          io.to(`crew:${uid}`).emit('unit:status_change', { unit_id: uid, status: newStatus });
+          io.to('dispatchers').emit('unit:status_change', { unit_id: unit.id, status: newUnitStatus });
+          io.to(`crew:${uid}`).emit('unit:status_change', { unit_id: uid, status: newUnitStatus });
         }
       });
     }
