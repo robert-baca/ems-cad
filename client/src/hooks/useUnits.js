@@ -43,8 +43,24 @@ export function useUnits() {
   }, []);
 
   const changeStatus = useCallback(async (unitId, status) => {
-    setUnits(prev => prev.map(u => u.id === unitId ? { ...u, status } : u));
-    try { await updateUnitStatus(unitId, status); } catch {}
+    let snapshot = null;
+    setUnits(prev => {
+      snapshot = prev.find(u => u.id === unitId) || null;
+      return prev.map(u => u.id === unitId ? { ...u, status } : u);
+    });
+    try {
+      await updateUnitStatus(unitId, status);
+      return null;
+    } catch (err) {
+      // This is the crew's own status button (CrewMobile.jsx) as well as the
+      // dispatcher's per-unit override — silently swallowing a failed write
+      // here left a crew member's phone showing a status the server, and
+      // every dispatcher's board, never actually received, with nothing to
+      // ever correct it. Roll back and report the failure like every other
+      // mutating action in this app already does.
+      if (snapshot) setUnits(prev => prev.map(u => u.id === unitId ? snapshot : u));
+      return err?.response?.data?.error || 'Failed to update status';
+    }
   }, []);
 
   const addUnit = useCallback(async (data) => {

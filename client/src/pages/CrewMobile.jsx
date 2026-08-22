@@ -322,11 +322,12 @@ export default function CrewMobile() {
     setStatusLoading(true);
     setStatusError(null);
     try {
-      await changeStatus(myUnit.id, status);
+      const err = await changeStatus(myUnit.id, status);
+      if (err) { setStatusError(err); return; }
       // Only the primary assigned unit drives the call-level status.
       if (myActiveCall && myActiveCall.assigned_unit_id === myUnit.id) {
-        const err = await advanceStatus(myActiveCall.id, status);
-        if (err) setStatusError(err);
+        const callErr = await advanceStatus(myActiveCall.id, status);
+        if (callErr) setStatusError(callErr);
       }
     } catch {
       setStatusError('Status update failed — try again');
