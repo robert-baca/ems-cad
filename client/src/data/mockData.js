@@ -8,7 +8,8 @@ export const STATUS_COLORS = {
   patient_contact: '#ef4444',
   transporting:    '#f472b6',
   cleared:         '#9ca3af',
-  out_of_service:  '#6b7280'
+  out_of_service:  '#6b7280',
+  closed:          '#4b5563'
 };
 
 export const STATUS_LABELS = {
@@ -21,7 +22,8 @@ export const STATUS_LABELS = {
   patient_contact: 'Patient Contact',
   transporting:    'Transporting',
   cleared:         'Cleared',
-  out_of_service:  'Out of Service'
+  out_of_service:  'Out of Service',
+  closed:          'Closed'
 };
 
 export const STATUS_SEQUENCE = [

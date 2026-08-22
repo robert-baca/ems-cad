@@ -499,6 +499,17 @@ app.post('/api/auth/sso', async (req, res) => {
     return res.json({ token: cadToken, user: { role: 'dispatcher', username: identity.name, name: identity.name } });
   }
 
+  if (dest === 'display') {
+    // Same access bar as dispatcher — a display board shows live call/unit
+    // data, and this is the SSO path in place of PIN entry (/display/auth),
+    // which has no identity check at all beyond a shared PIN.
+    if (!identity.can_dispatch && identity.access_role !== 'admin') {
+      return res.status(403).json({ error: 'Your account does not have display board access' });
+    }
+    const cadToken = signToken({ role: 'display', sso: true });
+    return res.json({ token: cadToken, user: { role: 'display' } });
+  }
+
   if (dest === 'crew') {
     // Pre-auth token — no unit assigned yet; caller uses /crew/select-unit to complete login
     const cadToken = signToken({

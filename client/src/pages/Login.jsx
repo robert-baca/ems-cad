@@ -311,8 +311,9 @@ export default function Login() {
   // kiosk browser shouldn't hijack that.
   useEffect(() => {
     if (!user || forceRole) return;
-    if (user.role === 'crew')       navigate('/crew',       { replace: true });
-    else if (user.role === 'dispatcher') navigate('/dispatcher', { replace: true });
+    if (user.role === 'crew') navigate('/crew', { replace: true });
+    else if (user.role === 'dispatcher' || user.role === 'overwatch') navigate('/dispatcher', { replace: true });
+    else if (user.role === 'wayfinding_admin') navigate('/wayfinding', { replace: true });
   }, [user, forceRole]);
 
   const [role,     setRole]    = useState(() => forceRole || (localStorage.getItem(LAST_ROLE_KEY) === 'crew' ? 'crew' : null));

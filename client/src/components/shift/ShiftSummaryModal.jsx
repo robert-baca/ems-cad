@@ -16,7 +16,8 @@ function fmt(min) {
 }
 
 function fmtDuration(min) {
-  const h = Math.floor(min / 60), m = min % 60;
+  const total = Math.round(min);
+  const h = Math.floor(total / 60), m = total % 60;
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
@@ -124,7 +125,7 @@ export default function ShiftSummaryModal({ summary, onClose }) {
                     <span className="text-white text-sm font-bold w-16 flex-shrink-0">{unit}</span>
                     <div className="flex-1 bg-gray-700 rounded-full h-2">
                       <div className="bg-blue-500 h-2 rounded-full"
-                        style={{ width: `${Math.round(count / summary.total_calls * 100)}%` }} />
+                        style={{ width: `${Math.round(count / (summary.total_calls || 1) * 100)}%` }} />
                     </div>
                     <span className="text-gray-300 text-sm font-bold w-6 text-right">{count}</span>
                   </div>

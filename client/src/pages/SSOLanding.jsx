@@ -31,11 +31,6 @@ export default function SSOLanding() {
   useEffect(() => {
     if (!token || !dest) { setErrorMsg('Missing token or destination.'); setStep('error'); return; }
 
-    if (dest === 'display') {
-      navigate('/display', { replace: true });
-      return;
-    }
-
     const verify = async () => {
       try {
         const r    = await fetch(`${apiBase()}/auth/sso`, {
@@ -65,6 +60,15 @@ export default function SSOLanding() {
         if (dest === 'wayfinding') {
           login({ ...data.user, token: data.token });
           navigate('/wayfinding', { replace: true });
+          return;
+        }
+
+        if (dest === 'display') {
+          // DisplayBoard reads its own token from sessionStorage (matching
+          // the PIN-entry flow in Login.jsx) rather than AuthContext, since
+          // it's a kiosk session, not a signed-in user.
+          sessionStorage.setItem('display_token', data.token);
+          navigate('/display', { replace: true });
           return;
         }
       } catch (err) {

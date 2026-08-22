@@ -39,9 +39,20 @@ export default function NewCallModal({ pin, units, onDispatch, onClose, parentCa
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!form.call_type) return;
-    if (form.response_mode === 'cart' && selectedCartId && selectedUnitIds.length === 0) {
-      setError('A cart needs at least one medic assigned — carts can\'t be the lead unit on a call.');
-      return;
+    if (form.response_mode === 'cart') {
+      // Both checks matter independently — gating the medic check behind
+      // selectedCartId meant picking "Taking a Cart" without ever choosing
+      // *which* cart (e.g. none currently available) skipped validation
+      // entirely and could dispatch a call recorded as cart response with
+      // no cart, and possibly no unit at all, actually attached.
+      if (!selectedCartId) {
+        setError('Select which cart is responding.');
+        return;
+      }
+      if (selectedUnitIds.length === 0) {
+        setError('A cart needs at least one medic assigned — carts can\'t be the lead unit on a call.');
+        return;
+      }
     }
 
     // A cart is a ride to the scene, never the lead unit — the first medic
