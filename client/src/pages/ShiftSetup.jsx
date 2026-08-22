@@ -270,19 +270,21 @@ export default function ShiftSetup({ token, onShiftStarted, onViewHistory }) {
                     </div>
 
                     <div className="space-y-3">
-                      {/* Custom number (Other only) */}
-                      {newPreset === 'Other' && (
-                        <div>
-                          <label className="block text-gray-500 text-xs mb-1">Unit Number</label>
-                          <div className="flex gap-2 items-center">
-                            <input
-                              type="text"
-                              value={newNumber}
-                              onChange={e => setNewNumber(e.target.value)}
-                              placeholder="e.g. Medic 3, Bike 1"
-                              autoFocus
-                              className="flex-1 bg-gray-700 text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-green-500 placeholder-gray-500"
-                            />
+                      {/* Unit number — editable for every preset, not just Other, so
+                          e.g. a Cart can be named "Dash" or "Big Red" instead of
+                          being stuck with the auto-suggested "Cart N". */}
+                      <div>
+                        <label className="block text-gray-500 text-xs mb-1">Unit Number</label>
+                        <div className="flex gap-2 items-center">
+                          <input
+                            type="text"
+                            value={newNumber}
+                            onChange={e => setNewNumber(e.target.value)}
+                            placeholder="e.g. Medic 3, Dash"
+                            autoFocus={newPreset === 'Other' || newType === 'Cart'}
+                            className="flex-1 bg-gray-700 text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-green-500 placeholder-gray-500"
+                          />
+                          {newPreset === 'Other' && (
                             <div className="flex gap-1 flex-shrink-0">
                               {UNIT_TYPES.map(t => (
                                 <button key={t} onClick={() => setNewType(t)}
@@ -294,9 +296,9 @@ export default function ShiftSetup({ token, onShiftStarted, onViewHistory }) {
                                 </button>
                               ))}
                             </div>
-                          </div>
+                          )}
                         </div>
-                      )}
+                      </div>
 
                       {/* Medic name — skip for Cart */}
                       {newType !== 'Cart' && (
