@@ -1017,12 +1017,16 @@ app.patch('/api/calls/:id/status', verifyToken, async (req, res) => {
 
   const isClose = req.body.status === 'closed';
   const newUnitStatus = isClose ? 'available' : req.body.status;
-  // On close: all units return to available.
-  // Otherwise: primary + co_unit_ids (initial dispatch) follow the call status together.
-  // Units added mid-call (in additional_unit_ids but not co_unit_ids) stay independent.
+  // On close: all units (initial + added mid-call) return to available.
+  // Otherwise: primary + co_unit_ids + additional_unit_ids all follow the call
+  // status forward together. A unit added mid-call keeps whatever starting
+  // status the dispatcher gave it (e.g. 'en_route' while the call is already
+  // 'on_scene') until the call's own status catches up to or passes it — the
+  // forward-only guard below is what stops it from being yanked backward,
+  // not the unit being left out of the sync entirely.
   const unitIdsToUpdate = isClose
     ? [call.assigned_unit_id, ...(call.additional_unit_ids || [])].filter(Boolean)
-    : [call.assigned_unit_id, ...(call.co_unit_ids || [])].filter(Boolean);
+    : [...new Set([call.assigned_unit_id, ...(call.co_unit_ids || []), ...(call.additional_unit_ids || [])])].filter(Boolean);
 
   unitIdsToUpdate.forEach(uid => {
     const unit = units.find(u => u.id === uid);
@@ -1034,8 +1038,8 @@ app.patch('/api/calls/:id/status', verifyToken, async (req, res) => {
     }
   });
 
-  // Notify co-unit crew phones of the call status update (so their call card stays in sync)
-  (call.co_unit_ids || []).forEach(uid => {
+  // Notify all associated crew phones of the call status update (so their call card stays in sync)
+  [...new Set([...(call.co_unit_ids || []), ...(call.additional_unit_ids || [])])].forEach(uid => {
     io.to(`crew:${uid}`).emit('call:updated', { call_id: call.id, changes: { status: call.status } });
   });
 
@@ -1623,15 +1627,15 @@ app.patch('/api/calls/:id/timestamps', verifyToken, async (req, res) => {
   });
 
   // Recalc call.status from remaining timestamps and sync the primary +
-  // co-dispatched units — matches PATCH /api/calls/:id/status's sync so a
-  // manual time correction can't leave co-units behind at a stale status
-  // (previously this only synced the primary unit).
+  // co-dispatched + mid-call-added units — matches PATCH /api/calls/:id/status's
+  // sync so a manual time correction can't leave any of them behind at a
+  // stale status (previously this only synced the primary unit).
   const newStatus = recalcCallStatus(call);
   if (newStatus !== call.status) {
     call.status = newStatus;
     changes.status = newStatus;
     if (newStatus !== 'pending' && newStatus !== 'closed') {
-      const unitIdsToUpdate = [call.assigned_unit_id, ...(call.co_unit_ids || [])].filter(Boolean);
+      const unitIdsToUpdate = [...new Set([call.assigned_unit_id, ...(call.co_unit_ids || []), ...(call.additional_unit_ids || [])])].filter(Boolean);
       unitIdsToUpdate.forEach(uid => {
         const unit = units.find(u => u.id === uid);
         if (unit && isForwardStatusChange(unit.status, newStatus)) {

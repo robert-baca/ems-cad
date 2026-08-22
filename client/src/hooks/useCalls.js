@@ -56,7 +56,7 @@ export function useCalls(setUnits) {
 
   const syncUnitsForward = useCallback((call, newStatus) => {
     if (!setUnits || !call) return;
-    const unitIds = [call.assigned_unit_id, ...(call.co_unit_ids || [])].filter(Boolean);
+    const unitIds = [...new Set([call.assigned_unit_id, ...(call.co_unit_ids || []), ...(call.additional_unit_ids || [])])].filter(Boolean);
     if (!unitIds.length) return;
     setUnits(prev => prev.map(u =>
       unitIds.includes(u.id) && isForwardUnitStatus(u.status, newStatus)
