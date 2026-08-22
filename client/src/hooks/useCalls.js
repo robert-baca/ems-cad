@@ -30,9 +30,40 @@ const TS_STEPS = [
   'cleared_at', 'available_at'
 ];
 
-export function useCalls() {
+// Mirrors server's STATUS_SEQUENCE/isForwardStatusChange (server/src/index.js)
+// so the local optimistic unit update below can't move a unit backward —
+// same one-directional rule the server enforces for its own unit sync.
+const UNIT_STATUS_SEQUENCE = ['dispatched', 'acknowledged', 'en_route', 'on_scene', 'patient_contact', 'transporting', 'cleared'];
+function isForwardUnitStatus(fromStatus, toStatus) {
+  const fromIdx = UNIT_STATUS_SEQUENCE.indexOf(fromStatus);
+  const toIdx = UNIT_STATUS_SEQUENCE.indexOf(toStatus);
+  if (fromIdx === -1 || toIdx === -1) return true;
+  return toIdx >= fromIdx;
+}
+
+// setUnits is optional (CrewMobile calls useCalls() without it) — when
+// provided, a call-level status advance also optimistically bumps the
+// primary + co-dispatched units' status in the shared units state, the same
+// way the server's own sync does. Without this, the call's status (and
+// anything reading it) updates instantly from local state while the unit's
+// status — read from a separate units array that only updates once the
+// server's unit:status_change event round-trips back — sits stale until
+// whatever event happens to arrive next, which reads as the unit panel
+// getting "stuck" on the previous status.
+export function useCalls(setUnits) {
   const [calls, setCalls] = useState([]);
   const loggingRef = useRef(new Set()); // tracks in-flight logTimeNow calls per callId
+
+  const syncUnitsForward = useCallback((call, newStatus) => {
+    if (!setUnits || !call) return;
+    const unitIds = [call.assigned_unit_id, ...(call.co_unit_ids || [])].filter(Boolean);
+    if (!unitIds.length) return;
+    setUnits(prev => prev.map(u =>
+      unitIds.includes(u.id) && isForwardUnitStatus(u.status, newStatus)
+        ? { ...u, status: newStatus }
+        : u
+    ));
+  }, [setUnits]);
 
   const handleCallCreated      = useCallback((call) => setCalls(prev => prev.some(c => c.id === call.id) ? prev : [call, ...prev]), []);
   const handleCallUpdated      = useCallback(({ call_id, changes }) =>
@@ -85,14 +116,16 @@ export function useCalls() {
   const advanceStatus = useCallback(async (callId, status) => {
     const tsField = STATUS_TS_MAP[status];
     let snapshot = null;
+    let callForSync = null;
     setCalls(prev => {
       snapshot = prev.find(c => c.id === callId) || null;
-      return prev.map(c =>
-        c.id === callId
-          ? { ...c, status, ...(tsField ? { [tsField]: new Date().toISOString() } : {}) }
-          : c
-      );
+      return prev.map(c => {
+        if (c.id !== callId) return c;
+        callForSync = { ...c, status, ...(tsField ? { [tsField]: new Date().toISOString() } : {}) };
+        return callForSync;
+      });
     });
+    syncUnitsForward(callForSync, status);
     try {
       await updateCallStatus(callId, status);
       return null;
@@ -100,7 +133,7 @@ export function useCalls() {
       if (snapshot) setCalls(prev => prev.map(c => c.id === callId ? snapshot : c));
       return err?.response?.data?.error || 'Status update failed';
     }
-  }, []);
+  }, [syncUnitsForward]);
 
   const updateTimestamp = useCallback((callId, field, isoValue) => {
     setCalls(prev => prev.map(c => c.id === callId ? { ...c, [field]: isoValue } : c));
@@ -112,20 +145,23 @@ export function useCalls() {
     loggingRef.current.add(callId);
     const now = new Date().toISOString();
     let nextField = null;
+    let callForSync = null;
     setCalls(prev => prev.map(c => {
       if (c.id !== callId) return c;
       nextField = TS_STEPS.find(f => !c[f]);
       if (!nextField) return c;
       const newStatus = TS_STATUS_MAP[nextField];
-      return { ...c, [nextField]: now, ...(newStatus ? { status: newStatus } : {}) };
+      callForSync = { ...c, [nextField]: now, ...(newStatus ? { status: newStatus } : {}) };
+      return callForSync;
     }));
     if (nextField) {
-      updateCallTimestamps(callId, { [nextField]: now }).catch(() => {});
       const newStatus = TS_STATUS_MAP[nextField];
+      if (newStatus) syncUnitsForward(callForSync, newStatus);
+      updateCallTimestamps(callId, { [nextField]: now }).catch(() => {});
       if (newStatus) updateCallStatus(callId, newStatus).catch(() => {});
     }
     setTimeout(() => loggingRef.current.delete(callId), 1000);
-  }, []);
+  }, [syncUnitsForward]);
 
   const closeCall = useCallback(async (callId, disposition, close_notes) => {
     let snapshot = null;

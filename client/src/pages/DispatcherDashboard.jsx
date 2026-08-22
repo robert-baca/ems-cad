@@ -49,7 +49,7 @@ export default function DispatcherDashboard() {
     handleCommentAdded,
     dispatchCall, assignUnit, closeCall, updateTimestamp, logTimeNow, addComment,
     addUnitToCall, removeUnitFromCall, updatePriority, updateCallLocationPin, addMutualAid, removeMutualAid
-  } = useCalls();
+  } = useCalls(setUnits);
   const { locations, addLocation, removeLocation, clearShiftLocations, setPermLocations } = useLocations();
 
   const [currentShift,      setCurrentShift]      = useState(undefined); // undefined = loading
