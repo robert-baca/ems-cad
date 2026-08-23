@@ -165,12 +165,19 @@ public class GpsTrackerService extends Service {
     // large structures that cause GPS multipath/obstruction — that was the
     // source of fixes that kept posting on schedule without ever reflecting
     // real movement.
+    //
+    // Requested at 2.5s/1.5s rather than 1s/0.5s — MIN_INTERVAL_MS, HEARTBEAT_MS,
+    // and MIN_DISTANCE_M below already throttle actual posts to roughly this
+    // cadence or slower, so the tighter request was just burning battery
+    // polling the GPS chip for fixes that got thrown away before ever being
+    // sent. Same PRIORITY_HIGH_ACCURACY, same posted cadence to dispatch —
+    // only the chip's idle time between reads changes.
     private void startGps() {
         fusedClient = LocationServices.getFusedLocationProviderClient(this);
 
-        LocationRequest request = new LocationRequest.Builder(1_000L)
+        LocationRequest request = new LocationRequest.Builder(2_500L)
                 .setPriority(Priority.PRIORITY_HIGH_ACCURACY)
-                .setMinUpdateIntervalMillis(500L)
+                .setMinUpdateIntervalMillis(1_500L)
                 .build();
 
         locationCallback = new LocationCallback() {

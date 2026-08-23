@@ -118,7 +118,13 @@ export function useCrewGps({ token, unit, enabled = true }) {
           backgroundTitle:    'EMS Crew Tracking',
           requestPermissions: true,
           stale:              true,
-          distanceFilter:     0,
+          // 5m, not 0 — sub-5m jitter gets thrown away by the accuracy/movement
+          // filtering in cb() below anyway, so letting CoreLocation filter it
+          // out before ever waking the JS bridge saves battery for free. Safe
+          // specifically because the "still alive while stationary" signal
+          // below comes from the independent 30s poll, not from this watcher's
+          // callback cadence, so there's no heartbeat trade-off from this.
+          distanceFilter:     5,
         };
         const HEARTBEAT_MS = 5000;
         // Matches the Android tracker's watchdog: some iOS scenarios (a
