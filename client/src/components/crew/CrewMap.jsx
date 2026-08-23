@@ -166,8 +166,10 @@ export default function CrewMap({ call, myUnit, locations = [] }) {
     const map = mapRef.current;
     if (!map || !mapReadyRef.current) return;
     if (expanded && !navControlRef.current) {
+      // bottom-right, not top-right — top-right is where the "✕ Close" button
+      // sits, and Mapbox's own control there was rendering right on top of it.
       navControlRef.current = new mapboxgl.NavigationControl();
-      map.addControl(navControlRef.current, 'top-right');
+      map.addControl(navControlRef.current, 'bottom-right');
     } else if (!expanded && navControlRef.current) {
       map.removeControl(navControlRef.current);
       navControlRef.current = null;

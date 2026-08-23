@@ -118,7 +118,7 @@ function CrewLogin({ onBack, onSuccess }) {
             <label className="block text-gray-400 text-sm mb-1">Username</label>
             <input
               type="text" value={crewUsername} onChange={e => setCrewUsername(e.target.value)}
-              placeholder="your.name" autoFocus autoCapitalize="none" autoCorrect="off"
+              placeholder="e.g. rbaca" autoFocus autoCapitalize="none" autoCorrect="off"
               className="w-full bg-gray-700 text-white rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-green-500 placeholder-gray-500"
             />
           </div>
