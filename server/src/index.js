@@ -1434,6 +1434,22 @@ function getUnitActiveCall(unitId, excludeCallId = null) {
 }
 
 // ── GPS helpers ───────────────────────────────────────────────────
+// Crew units here are all foot/bike/cart inside the park — nothing is ever
+// road-legal-vehicle fast. 20 m/s (~45 mph) is well above real cart speed but
+// well below the 40-185 mph implied speeds multipath fixes near large park
+// structures were observed producing in production, so this only ever catches
+// physically-impossible jumps.
+const MAX_GPS_SPEED_MPS = 20;
+
+function haversineMeters(lat1, lng1, lat2, lng2) {
+  const R = 6371000;
+  const toRad = d => d * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
 // Returns true if the ping was accepted, false if discarded.
 //
 // GPS is on by default for every active-shift unit regardless of call status —
@@ -1466,6 +1482,26 @@ function applyGpsUpdate(unit, lat, lng, timestamp) {
     console.log(`[gps:in] ${unit.unit_number} — rejected by dedup (ts ${timestamp} <= last ${unit.last_gps_fix_ts})`);
     return false;
   }
+
+  // GPS multipath near large structures can produce a fix that self-reports
+  // as accurate but is actually far off — physically impossible speed is the
+  // tell, since accuracy alone can't catch it. Note: timestamp here is
+  // server-receipt time, not original device capture time (neither GPS
+  // source sends the latter), so a burst of offline-queued points draining
+  // in quickly after a signal drop could read as faster than it really was —
+  // same characteristic the dedup check above already has.
+  if (unit.last_lat != null && unit.last_lng != null && unit.last_gps_fix_ts) {
+    const dtS = (new Date(timestamp).getTime() - new Date(unit.last_gps_fix_ts).getTime()) / 1000;
+    if (dtS > 0) {
+      const distM = haversineMeters(unit.last_lat, unit.last_lng, lat, lng);
+      const speedMps = distM / dtS;
+      if (speedMps > MAX_GPS_SPEED_MPS) {
+        console.log(`[gps] ${unit.unit_number} — rejected, implausible speed (${speedMps.toFixed(1)} m/s over ${dtS.toFixed(1)}s, ${distM.toFixed(0)}m)`);
+        return false;
+      }
+    }
+  }
+
   unit.last_lat        = lat;
   unit.last_lng        = lng;
   unit.last_gps_at     = timestamp;
