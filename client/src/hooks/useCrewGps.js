@@ -121,8 +121,17 @@ export function useCrewGps({ token, unit, enabled = true }) {
           distanceFilter:     0,
         };
         const HEARTBEAT_MS = 5000;
+        // Matches the Android tracker's watchdog: some iOS scenarios (a
+        // CoreLocation glitch, the OS quietly deprioritizing the app) can stop
+        // the watcher from ever calling back again with no error either —
+        // silent, not a thrown exception. Recorded on every callback,
+        // success or error, since either proves the pipe itself is still
+        // alive; only true silence means it's actually stuck.
+        const WATCHDOG_STALE_MS = 75000;
         let lastPostMs = 0;
+        let lastCallbackMs = Date.now();
         const cb = (location, error) => {
+          lastCallbackMs = Date.now();
           if (cancelled) return;
           if (error) {
             if (error.code === 'NOT_AUTHORIZED') setBgPermNeeded(true);
@@ -171,6 +180,21 @@ export function useCrewGps({ token, unit, enabled = true }) {
             // for a one-shot fix on an interval as a backstop.
             stationaryIntervalId = setInterval(async () => {
               if (cancelled) return;
+              // Watchdog: the watcher itself has gone completely silent (no
+              // callback at all, success or error) for too long — re-register
+              // it from scratch rather than just leaning on the one-shot
+              // backstop below, so continuous tracking actually resumes
+              // instead of limping along on 30s polls indefinitely.
+              if (Date.now() - lastCallbackMs > WATCHDOG_STALE_MS) {
+                try {
+                  await bgGeo.removeWatcher({ id: watchIdRef.current }).catch(() => {});
+                  if (cancelled) return;
+                  const newId = await bgGeo.addWatcher(opts, cb);
+                  if (cancelled) { bgGeo.removeWatcher({ id: newId }).catch(() => {}); return; }
+                  watchIdRef.current = newId;
+                  lastCallbackMs = Date.now();
+                } catch {}
+              }
               try {
                 const { Geolocation } = await import('@capacitor/geolocation');
                 const pos = await Geolocation.getCurrentPosition({ enableHighAccuracy: false, timeout: 10000 });

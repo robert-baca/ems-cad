@@ -6,6 +6,7 @@ import android.app.NotificationManager;
 import android.app.Service;
 import android.content.Intent;
 import android.location.Location;
+import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.PowerManager;
@@ -52,20 +53,32 @@ public class GpsTrackerService extends Service {
     // fallback fixes get this bad.
     private static final float MAX_HEARTBEAT_ACCURACY_M = 300f;
 
+    // Some OEM battery managers (Samsung/Xiaomi/etc.) silently stop delivering
+    // location callbacks to a foreground service without actually killing the
+    // service or triggering onDestroy/a START_STICKY restart — Android gives
+    // no broadcast for this, so periodically checking for a stale callback and
+    // just re-registering is the only way to recover without the crew member
+    // noticing a frozen pin and manually reopening the app.
+    private static final long WATCHDOG_INTERVAL_MS = 30_000L;
+    private static final long WATCHDOG_STALE_MS     = 75_000L;
+
     private FusedLocationProviderClient fusedClient;
     private LocationCallback            locationCallback;
 
     private String token;
     private String serverUrl;
 
-    private long   lastPostMs      = 0;
-    private long   lastHeartbeatMs = 0;
-    private double lastLat         = Double.NaN;
-    private double lastLng         = Double.NaN;
+    private long   lastPostMs             = 0;
+    private long   lastHeartbeatMs        = 0;
+    private long   lastLocationReceivedMs = 0;
+    private double lastLat                = Double.NaN;
+    private double lastLng                = Double.NaN;
 
     private final LinkedList<double[]> offlineQueue = new LinkedList<>();
 
     private PowerManager.WakeLock wakeLock;
+    private Handler  watchdogHandler;
+    private Runnable watchdogRunnable;
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
@@ -99,7 +112,33 @@ public class GpsTrackerService extends Service {
 
         acquireWakeLock();
         startGps();
+        startWatchdog();
         return START_STICKY;
+    }
+
+    // Guards against duplicate loops if onStartCommand fires again (e.g. the
+    // null-Intent restart case above) while one is already scheduled.
+    private void startWatchdog() {
+        if (watchdogHandler != null) return;
+        watchdogHandler = new Handler(Looper.getMainLooper());
+        watchdogRunnable = () -> {
+            long now = System.currentTimeMillis();
+            if (lastLocationReceivedMs != 0 && now - lastLocationReceivedMs > WATCHDOG_STALE_MS) {
+                restartLocationUpdates();
+            }
+            watchdogHandler.postDelayed(watchdogRunnable, WATCHDOG_INTERVAL_MS);
+        };
+        watchdogHandler.postDelayed(watchdogRunnable, WATCHDOG_INTERVAL_MS);
+    }
+
+    private void restartLocationUpdates() {
+        try {
+            if (fusedClient != null && locationCallback != null) {
+                fusedClient.removeLocationUpdates(locationCallback);
+            }
+        } catch (Exception ignored) {}
+        acquireWakeLock();
+        startGps();
     }
 
     // Without this, the CPU can suspend once the screen locks — the foreground
@@ -149,6 +188,11 @@ public class GpsTrackerService extends Service {
 
     private void onLocation(Location loc) {
         long now = System.currentTimeMillis();
+        // Recorded unconditionally, even on a fix the filters below end up
+        // dropping — the watchdog only cares whether callbacks are still
+        // arriving at all, not whether they're passing the accuracy/movement
+        // checks.
+        lastLocationReceivedMs = now;
         if (now - lastPostMs < MIN_INTERVAL_MS) return;
 
         float   accuracy      = loc.hasAccuracy() ? loc.getAccuracy() : -1f;
@@ -240,6 +284,9 @@ public class GpsTrackerService extends Service {
 
     @Override
     public void onDestroy() {
+        if (watchdogHandler != null && watchdogRunnable != null) {
+            watchdogHandler.removeCallbacks(watchdogRunnable);
+        }
         if (fusedClient != null && locationCallback != null) {
             fusedClient.removeLocationUpdates(locationCallback);
         }
