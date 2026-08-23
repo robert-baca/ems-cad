@@ -324,10 +324,19 @@ export default function CrewMobile() {
     try {
       const err = await changeStatus(myUnit.id, status);
       if (err) { setStatusError(err); return; }
-      // Only the primary assigned unit drives the call-level status.
-      if (myActiveCall && myActiveCall.assigned_unit_id === myUnit.id) {
-        const callErr = await advanceStatus(myActiveCall.id, status);
-        if (callErr) setStatusError(callErr);
+      // Any unit tied to the call (primary or additional) can push the call's
+      // own status/timeline forward — the server already allows this and
+      // guards it forward-only, so a backup unit's real progress isn't stuck
+      // behind the primary's own button presses. The one exception is
+      // cleared/available: only the primary drives the call to a close-out
+      // status, so a backup unit finishing early can't flip the whole call
+      // (and yank the primary back to available) while it's still active.
+      if (myActiveCall) {
+        const isPrimary = myActiveCall.assigned_unit_id === myUnit.id;
+        if (isPrimary || !['cleared', 'available'].includes(status)) {
+          const callErr = await advanceStatus(myActiveCall.id, status);
+          if (callErr) setStatusError(callErr);
+        }
       }
     } catch {
       setStatusError('Status update failed — try again');
