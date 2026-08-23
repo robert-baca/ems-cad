@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
 import { getBearing, getDistanceFt, getCardinal } from '../../lib/geo';
+import { getParkPaths, getWayfindingSettings } from '../../services/api';
 
 mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN;
 
@@ -50,6 +51,19 @@ export default function CrewMap({ call, myUnit, locations = [] }) {
 
   const hasCall = !!(call?.location_lat && call?.location_lng);
   const [mapFailed, setMapFailed] = useState(false);
+
+  const [paths, setPaths] = useState([]);
+  const [pathsEnabled, setPathsEnabled] = useState(false);
+
+  // Published wayfinding paths, if the admin has turned them on for crews.
+  useEffect(() => {
+    Promise.all([getWayfindingSettings(), getParkPaths()])
+      .then(([s, p]) => {
+        setPathsEnabled(!!s.data.enabled);
+        if (Array.isArray(p.data)) setPaths(p.data);
+      })
+      .catch(() => {}); // fail quiet — same pattern as the locations effect below
+  }, []);
 
   // Init map once
   useEffect(() => {
@@ -116,6 +130,15 @@ export default function CrewMap({ call, myUnit, locations = [] }) {
         layout: { 'line-cap': 'round' },
         paint: { 'line-color': '#facc15', 'line-width': 2.5, 'line-dasharray': [2, 1.5], 'line-opacity': 0.85 }
       });
+
+      // Published wayfinding paths — added below crew-line so the dashed
+      // crew→call line stays visually on top.
+      map.addSource('park-paths', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+      map.addLayer({
+        id: 'park-paths-line', type: 'line', source: 'park-paths',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': '#22c55e', 'line-width': 3, 'line-opacity': 0.75 }
+      }, 'crew-line');
 
       setMapLoaded(true); // triggers the locations effect if data arrived before map loaded
     });
@@ -200,6 +223,16 @@ export default function CrewMap({ call, myUnit, locations = [] }) {
         .addTo(map);
     });
   }, [locations, mapLoaded]);
+
+  // Push published paths into the map once loaded — empty when not enabled.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReadyRef.current) return;
+    const features = pathsEnabled
+      ? paths.map(p => ({ type: 'Feature', geometry: { type: 'LineString', coordinates: p.coordinates }, properties: { id: p.id } }))
+      : [];
+    map.getSource('park-paths')?.setData({ type: 'FeatureCollection', features });
+  }, [paths, pathsEnabled, mapLoaded]);
 
   const hasCrewPos = !!(myUnit?.last_lat && myUnit?.last_lng);
   const distFt = hasCall && hasCrewPos

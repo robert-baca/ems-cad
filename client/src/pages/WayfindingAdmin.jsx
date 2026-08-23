@@ -7,6 +7,7 @@ import {
   getWayfindingSettings, setWayfindingEnabled
 } from '../services/api';
 import { cleanTrace, suggestPathFromTraces } from '../lib/pathSuggest';
+import { snapPointToBasemap, snapSuggestedPath } from '../lib/snapToPath';
 
 mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN;
 
@@ -37,9 +38,14 @@ export default function WayfindingAdmin() {
 
   const [drawing,    setDrawing]    = useState(false);
   const [drawPoints, setDrawPoints] = useState([]);
+  const [drawPointsSnapped, setDrawPointsSnapped] = useState([]); // parallel to drawPoints — basemap-snapped or not
   const [pathName,   setPathName]   = useState('');
   const [saving,     setSaving]     = useState(false);
   const [saveError,  setSaveError]  = useState('');
+
+  // Result tier of the last "Suggest From Data" run — drives the status badge.
+  const [suggestSource, setSuggestSource] = useState(null); // 'basemap' | 'mapmatch' | 'raw' | null
+  const [suggesting,    setSuggesting]    = useState(false);
 
   // 'idle' | 'pick-start' | 'pick-end' — picking the two endpoints for a
   // trace-evidence suggestion, which then hands off into the normal
@@ -140,7 +146,7 @@ export default function WayfindingAdmin() {
   // Picking the two suggest endpoints hands off into the normal drawing/review
   // flow — the suggested line is edited/saved exactly like a hand-drawn one.
   useEffect(() => {
-    clickHandlerRef.current = (lngLat) => {
+    clickHandlerRef.current = async (lngLat) => {
       if (suggestMode === 'pick-start') {
         setSuggestStart(lngLat);
         setSuggestMode('pick-end');
@@ -151,18 +157,30 @@ export default function WayfindingAdmin() {
         setSuggestMode('idle');
         setSuggestStart(null);
         if (!result.points) {
+          setSuggestSource(null);
           setSuggestError(result.reason || 'Not enough data along that line yet.');
           return;
         }
         setSuggestError('');
         setDrawing(true);
-        setDrawPoints(result.points);
         setPathName('');
         setSaveError('');
+        setSuggesting(true);
+        setSuggestSource(null);
+        try {
+          const snapped = await snapSuggestedPath(mapRef.current, result.points, mapboxgl.accessToken);
+          setDrawPoints(snapped.points);
+          setDrawPointsSnapped(snapped.flags);
+          setSuggestSource(snapped.source);
+        } finally {
+          setSuggesting(false);
+        }
         return;
       }
       if (!drawing) return;
-      setDrawPoints(prev => [...prev, lngLat]);
+      const { point, snapped } = snapPointToBasemap(mapRef.current, lngLat);
+      setDrawPoints(prev => [...prev, point]);
+      setDrawPointsSnapped(prev => [...prev, snapped]);
     };
   }, [drawing, suggestMode, suggestStart, allCleanedPoints]);
 
@@ -199,14 +217,14 @@ export default function WayfindingAdmin() {
     map.getSource('draw-line')?.setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: drawPoints } });
 
     drawMarkersRef.current.forEach(m => m.remove());
-    drawMarkersRef.current = drawPoints.map(([lng, lat]) =>
-      new mapboxgl.Marker({ color: '#60a5fa', scale: 0.6 }).setLngLat([lng, lat]).addTo(map)
+    drawMarkersRef.current = drawPoints.map(([lng, lat], i) =>
+      new mapboxgl.Marker({ color: drawPointsSnapped[i] ? '#22c55e' : '#60a5fa', scale: 0.6 }).setLngLat([lng, lat]).addTo(map)
     );
-  }, [drawPoints, mapLoaded]);
+  }, [drawPoints, drawPointsSnapped, mapLoaded]);
 
-  const startDrawing  = () => { setDrawing(true); setDrawPoints([]); setPathName(''); setSaveError(''); };
-  const undoLastPoint = () => setDrawPoints(prev => prev.slice(0, -1));
-  const cancelDrawing = () => { setDrawing(false); setDrawPoints([]); setPathName(''); setSaveError(''); };
+  const startDrawing  = () => { setDrawing(true); setDrawPoints([]); setDrawPointsSnapped([]); setPathName(''); setSaveError(''); setSuggestSource(null); };
+  const undoLastPoint = () => { setDrawPoints(prev => prev.slice(0, -1)); setDrawPointsSnapped(prev => prev.slice(0, -1)); };
+  const cancelDrawing = () => { setDrawing(false); setDrawPoints([]); setDrawPointsSnapped([]); setPathName(''); setSaveError(''); setSuggestSource(null); };
 
   const savePath = async () => {
     if (drawPoints.length < 2) { setSaveError('Click at least 2 points on the map first.'); return; }
@@ -358,6 +376,14 @@ export default function WayfindingAdmin() {
                   placeholder="Path name (optional)…"
                   className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500"
                 />
+                {suggesting && <p className="text-gray-500 text-xs">Snapping to walkways…</p>}
+                {!suggesting && suggestSource && (
+                  <p className="text-gray-500 text-xs">
+                    {suggestSource === 'basemap' && '✓ Snapped to basemap walkways'}
+                    {suggestSource === 'mapmatch' && '✓ Snapped via Map Matching'}
+                    {suggestSource === 'raw' && '⚠ Using raw GPS trace — no basemap match found'}
+                  </p>
+                )}
                 <div className="flex gap-2">
                   <button
                     onClick={undoLastPoint}
@@ -376,7 +402,7 @@ export default function WayfindingAdmin() {
                 {saveError && <p className="text-red-400 text-xs">{saveError}</p>}
                 <button
                   onClick={savePath}
-                  disabled={saving || drawPoints.length < 2}
+                  disabled={saving || suggesting || drawPoints.length < 2}
                   className="w-full py-2 bg-green-700 hover:bg-green-600 disabled:bg-gray-600 text-white text-sm font-bold rounded-lg transition-colors"
                 >
                   {saving ? 'Saving…' : '✓ Save Path'}
