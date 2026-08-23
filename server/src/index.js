@@ -48,7 +48,6 @@ const io     = new Server(server, {
 
 app.use(cors({ origin: CORS_ORIGIN }));
 app.use(express.json());
-app.use(express.urlencoded({ extended: false })); // Traccar Client POSTs form-encoded params
 
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-in-production';
 
@@ -784,15 +783,6 @@ app.delete('/api/units/:id', verifyToken, async (req, res) => {
   res.json({ ok: true });
 });
 
-// Returns Traccar Client setup info for a unit (dispatcher only)
-app.get('/api/units/:id/tracking-setup', verifyToken, (req, res) => {
-  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
-  const unit = units.find(u => u.id === req.params.id);
-  if (!unit) return res.status(404).json({ error: 'Not found' });
-  const baseUrl = process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`;
-  res.json({ device_id: unit.unit_number, server_url: baseUrl });
-});
-
 // ── Calls ─────────────────────────────────────────────────────────
 app.get('/api/calls', verifyToken, (req, res) => {
   if (req.user.role === 'crew') {
@@ -1420,9 +1410,9 @@ function getUnitActiveCall(unitId, excludeCallId = null) {
 // PATCH /api/crew/gps-sharing) — a dispatcher can't force a unit to be
 // tracked against that.
 function applyGpsUpdate(unit, lat, lng, timestamp) {
-  // Neither GPS source (Traccar or the crew browser endpoint) validated
-  // coordinate ranges — a garbage/corrupted fix would be accepted as-is and
-  // broadcast as the unit's true position with no sanity check.
+  // The crew GPS endpoint never validated coordinate ranges — a garbage/corrupted
+  // fix would be accepted as-is and broadcast as the unit's true position with
+  // no sanity check.
   if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
     console.log(`[gps] ${unit.unit_number} — rejected, out-of-range fix (${lat}, ${lng})`);
     return false;
@@ -1457,44 +1447,12 @@ function applyGpsUpdate(unit, lat, lng, timestamp) {
   const payload = { unit_id: unit.id, unit_number: unit.unit_number, lat, lng, timestamp };
   io.to('dispatchers').emit('unit:gps_update', payload);
   // Crew app needs this too — the browser GPS fallback hook checks last_gps_at to
-  // know whether Traccar is still active. Without this emit, the hook sees a stale
-  // timestamp after 3 minutes and starts sending redundant browser GPS alongside Traccar.
+  // know whether another source (e.g. the native tracker) is still posting.
+  // Without this emit, the hook sees a stale timestamp after 3 minutes and starts
+  // sending redundant browser GPS alongside it.
   io.to(`crew:${unit.id}`).emit('unit:gps_update', payload);
   return true;
 }
-
-// ── Traccar Client GPS (phone-based, OsmAnd protocol) ────────────
-// Crew setup: install Traccar Client, set Protocol=OsmAnd, Server URL=<this server>,
-// Device Identifier=<unit_number>. Interval 30s recommended.
-// ALWAYS returns 200 — Traccar Client retries forever on any non-2xx response.
-function handleTraccarGps(req, res) {
-  res.sendStatus(200); // respond first, process after
-  const p      = { ...req.query, ...req.body };
-  const unitId = String(p.id ?? p.deviceId ?? '').trim();
-  const lat    = parseFloat(p.lat ?? p.latitude  ?? '');
-  const lng    = parseFloat(p.lon ?? p.lng ?? p.longitude ?? '');
-  if (!unitId || isNaN(lat) || isNaN(lng)) return;
-  const norm = s => s.toLowerCase().replace(/\s+/g, '');
-  const unit = units.find(u => norm(u.unit_number) === norm(unitId));
-  if (!unit) { console.log(`[traccar] unknown device id: ${unitId}`); return; }
-  let ts = new Date().toISOString();
-  if (p.timestamp) {
-    const num = Number(p.timestamp);
-    let parsed;
-    if (!isNaN(num) && num < 9_000_000_000) {
-      parsed = new Date(num * 1000);        // Unix seconds  (~1.75e9 today)
-    } else if (!isNaN(num) && num < 9_000_000_000_000) {
-      parsed = new Date(num);               // Unix milliseconds (~1.75e12 today)
-    } else {
-      parsed = new Date(p.timestamp);       // ISO string fallback
-    }
-    if (!isNaN(parsed.getTime())) ts = parsed.toISOString();
-  }
-  const accepted = applyGpsUpdate(unit, lat, lng, ts);
-  if (accepted) console.log(`[traccar] ${unit.unit_number} → ${lat.toFixed(5)}, ${lng.toFixed(5)}`);
-}
-app.get('/api/gps/traccar',  handleTraccarGps);
-app.post('/api/gps/traccar', handleTraccarGps);
 
 // ── Crew browser GPS ──────────────────────────────────────────────
 app.post('/api/crew/gps', verifyToken, (req, res) => {

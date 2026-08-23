@@ -142,7 +142,6 @@ a unit's location from showing is the crew member opting out themselves.
 - Both platforms filter fixes with accuracy worse than 50m before posting
 - `PATCH /api/crew/gps-sharing` — crew-only self-service opt-out (`unit.gps_sharing_disabled`); this is the *only* thing `applyGpsUpdate()` checks before accepting a ping
 - Each post also carries `gpsPermission`/`gps_permission_status` — the actual OS-level permission tier (`always`/`whenInUse`/`denied`/etc on iOS via the native `LocationAuthPlugin`, permission+battery-optimization status on Android via `GpsPermissionStatus.java`) — so dispatch can see which phones are misconfigured (e.g. iOS stuck on "While Using") without walking around checking each one
-- `GET|POST /api/gps/traccar` — separate mechanism for the Traccar Client phone app (OsmAnd protocol), unrelated to the crew app's own GPS reporting above
 
 ---
 
