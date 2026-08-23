@@ -104,23 +104,31 @@ export function useCalls(setUnits) {
   // rule (server/src/index.js, PATCH /api/calls/:id/assign): only a
   // first-time assignment bumps the call to 'dispatched' — swapping a unit
   // mid-call (e.g. while en route) must leave the call's status alone.
-  const assignUnit = useCallback(async (callId, unitId, initialStatus) => {
+  // additionalUnitIds only takes effect server-side on a call's first
+  // dispatch (see PATCH /api/calls/:id/assign) — ignored on a mid-call swap.
+  const assignUnit = useCallback(async (callId, unitId, initialStatus, additionalUnitIds = []) => {
     let snapshot = null;
     setCalls(prev => {
       snapshot = prev.find(c => c.id === callId) || null;
-      return prev.map(c =>
-        c.id === callId
-          ? {
-              ...c,
-              assigned_unit_id: unitId,
-              status: c.status === 'pending' ? 'dispatched' : c.status,
-              dispatched_at: c.dispatched_at || new Date().toISOString()
-            }
-          : c
-      );
+      return prev.map(c => {
+        if (c.id !== callId) return c;
+        const wasPending = c.status === 'pending';
+        return {
+          ...c,
+          assigned_unit_id: unitId,
+          status: wasPending ? 'dispatched' : c.status,
+          dispatched_at: c.dispatched_at || new Date().toISOString(),
+          ...(wasPending && additionalUnitIds.length
+            ? {
+                additional_unit_ids: [...new Set([...(c.additional_unit_ids || []), ...additionalUnitIds])],
+                co_unit_ids: [...new Set([...(c.co_unit_ids || []), ...additionalUnitIds])]
+              }
+            : {})
+        };
+      });
     });
     try {
-      await assignCall(callId, unitId, initialStatus);
+      await assignCall(callId, unitId, initialStatus, additionalUnitIds);
       return null;
     } catch (err) {
       if (snapshot) setCalls(prev => prev.map(c => c.id === callId ? snapshot : c));

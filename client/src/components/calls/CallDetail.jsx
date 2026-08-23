@@ -52,6 +52,11 @@ export default function CallDetail({
   const [assigningUnit, setAssigningUnit] = useState(false);
   const [addingUnit,    setAddingUnit]    = useState(false);
   const [selectedUnitId, setSelectedUnitId] = useState('');
+  // Extra units picked alongside selectedUnitId when dispatching a still-pending
+  // call — selectedUnitId is always the primary/lead, these ride along as
+  // additional units. Only meaningful pre-dispatch; a mid-call reassign swap
+  // only ever deals with a single unit.
+  const [additionalSelectedIds, setAdditionalSelectedIds] = useState([]);
   const [reassignStatus, setReassignStatus] = useState('dispatched');
   const [addUnitId,      setAddUnitId]      = useState('');
   const [addUnitStatus,  setAddUnitStatus]  = useState('dispatched');
@@ -80,6 +85,7 @@ export default function CallDetail({
     setAssigningUnit(false);
     setAddingUnit(false);
     setSelectedUnitId('');
+    setAdditionalSelectedIds([]);
     setReassignStatus('dispatched');
     setAddUnitId('');
     setAddUnitStatus('dispatched');
@@ -121,23 +127,48 @@ export default function CallDetail({
     u.id !== call.assigned_unit_id &&
     !(call.additional_unit_ids || []).includes(u.id)
   );
-  // A cart is a ride to the scene, never the lead unit — only for picking the
-  // call's primary. Adding one as a backup/additional unit is still fine and
-  // uses availableUnits directly.
-  const primaryEligibleUnits = availableUnits.filter(u => u.unit_type !== 'Cart');
-
   const handleAssign = async () => {
     if (!selectedUnitId || assignSubmitting) return;
     setAssignSubmitting(true);
     setAssignError('');
     // Only a mid-call swap needs a starting status — a first-time assignment
     // (call still pending) always starts fresh at 'dispatched' server-side.
-    const err = await onAssignUnit?.(call.id, selectedUnitId, isPending ? undefined : reassignStatus);
+    // additionalSelectedIds only makes sense on that first dispatch too.
+    const err = await onAssignUnit?.(
+      call.id, selectedUnitId,
+      isPending ? undefined : reassignStatus,
+      isPending ? additionalSelectedIds : undefined
+    );
     setAssignSubmitting(false);
     if (err) { setAssignError(err); return; }
     setAssigningUnit(false);
     setSelectedUnitId('');
+    setAdditionalSelectedIds([]);
     setReassignStatus('dispatched');
+  };
+
+  // Toggle a unit in the pending-dispatch picker — first one picked is the
+  // primary (selectedUnitId), everyone after rides along as additional units.
+  // A cart can never be primary (matches the server's own restriction), so
+  // it's only ever added as an additional unit.
+  const togglePendingUnit = (id) => {
+    const isCart = units.find(u => u.id === id)?.unit_type === 'Cart';
+    if (selectedUnitId === id) {
+      // Dropping the primary promotes the next non-cart pick, if any.
+      const promoteIdx = additionalSelectedIds.findIndex(uid => units.find(u => u.id === uid)?.unit_type !== 'Cart');
+      if (promoteIdx === -1) {
+        setSelectedUnitId('');
+      } else {
+        setSelectedUnitId(additionalSelectedIds[promoteIdx]);
+        setAdditionalSelectedIds(prev => prev.filter((_, i) => i !== promoteIdx));
+      }
+    } else if (additionalSelectedIds.includes(id)) {
+      setAdditionalSelectedIds(prev => prev.filter(x => x !== id));
+    } else if (!selectedUnitId && !isCart) {
+      setSelectedUnitId(id);
+    } else {
+      setAdditionalSelectedIds(prev => [...prev, id]);
+    }
   };
 
   const handleAddUnit = async () => {
@@ -207,20 +238,31 @@ export default function CallDetail({
           </div>
           {assigningUnit ? (
             <div className="space-y-2">
-              {primaryEligibleUnits.length === 0 ? (
+              <div className="text-gray-500 text-xs">
+                Tap units in order — first tap is the primary unit, any others ride along as additional units.
+              </div>
+              {availableUnits.length === 0 ? (
                 <div className="text-gray-500 text-xs py-1">No available units</div>
               ) : (
                 <div className="flex flex-wrap gap-1.5">
-                  {primaryEligibleUnits.map(u => (
-                    <button key={u.id} type="button"
-                      onClick={() => setSelectedUnitId(id => id === u.id ? '' : u.id)}
-                      className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold border-2 transition-all
-                        ${selectedUnitId === u.id
-                          ? 'bg-indigo-600 border-indigo-400 text-white'
-                          : 'bg-gray-700 border-gray-500 text-gray-300 hover:border-gray-400'}`}>
-                      {TYPE_ICONS[u.unit_type] || '🚑'} {u.unit_number}
-                    </button>
-                  ))}
+                  {availableUnits.map(u => {
+                    const isPrimary = selectedUnitId === u.id;
+                    const isAdditional = additionalSelectedIds.includes(u.id);
+                    return (
+                      <button key={u.id} type="button"
+                        onClick={() => togglePendingUnit(u.id)}
+                        title={isPrimary ? 'Primary unit' : isAdditional ? 'Additional unit' : undefined}
+                        className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold border-2 transition-all
+                          ${isPrimary
+                            ? 'bg-indigo-600 border-indigo-400 text-white'
+                            : isAdditional
+                              ? 'bg-blue-700 border-blue-400 text-white'
+                              : 'bg-gray-700 border-gray-500 text-gray-300 hover:border-gray-400'}`}>
+                        {TYPE_ICONS[u.unit_type] || '🚑'} {u.unit_number}
+                        {isPrimary && ' · lead'}
+                      </button>
+                    );
+                  })}
                 </div>
               )}
               <div className="flex gap-2">
@@ -229,10 +271,14 @@ export default function CallDetail({
                   disabled={!selectedUnitId || assignSubmitting}
                   className="flex-1 py-1.5 bg-green-700 hover:bg-green-600 disabled:bg-gray-600 text-white text-xs font-bold rounded-lg transition-colors"
                 >
-                  {assignSubmitting ? 'Dispatching…' : 'Dispatch'}
+                  {assignSubmitting
+                    ? 'Dispatching…'
+                    : additionalSelectedIds.length
+                      ? `Dispatch ${1 + additionalSelectedIds.length} Units`
+                      : 'Dispatch'}
                 </button>
                 <button
-                  onClick={() => { setAssigningUnit(false); setSelectedUnitId(''); setAssignError(''); }}
+                  onClick={() => { setAssigningUnit(false); setSelectedUnitId(''); setAdditionalSelectedIds([]); setAssignError(''); }}
                   className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs rounded-lg transition-colors"
                 >
                   ✕

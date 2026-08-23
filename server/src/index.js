@@ -937,6 +937,17 @@ app.patch('/api/calls/:id/assign', verifyToken, async (req, res) => {
   const previousUnitId = call.assigned_unit_id;
   const wasPending      = call.status === 'pending';
 
+  // Dispatching more than one unit at once only makes sense for a call's
+  // first dispatch — a mid-call reassign already has its own "Add Unit"
+  // flow for backups, so extra IDs are ignored outside the pending case.
+  const additionalIds = wasPending && Array.isArray(req.body.additional_unit_ids)
+    ? [...new Set(req.body.additional_unit_ids.filter(id => id && id !== req.body.unit_id))]
+    : [];
+  for (const uid of additionalIds) {
+    const c = getUnitActiveCall(uid, req.params.id);
+    if (c) return res.status(409).json({ error: `Unit already on call #${c.call_number}` });
+  }
+
   call.assigned_unit_id     = req.body.unit_id;
   call.assigned_unit_number = units.find(u => u.id === req.body.unit_id)?.unit_number || null;
   // Only a first-time assignment (call was pending) bumps the call to 'dispatched'.
@@ -969,6 +980,30 @@ app.patch('/api/calls/:id/assign', verifyToken, async (req, res) => {
       io.to(`crew:${previousUnitId}`).emit('unit:status_change', { unit_id: previousUnitId, status: 'available' });
       io.to(`crew:${previousUnitId}`).emit('call:updated', { call_id: call.id, changes: { assigned_unit_id: call.assigned_unit_id } });
     }
+  }
+
+  if (additionalIds.length) {
+    const now = new Date().toISOString();
+    call.additional_unit_ids = [...new Set([...(call.additional_unit_ids || []), ...additionalIds])];
+    call.co_unit_ids         = [...new Set([...(call.co_unit_ids || []), ...additionalIds])];
+    call.additional_units_added_at = { ...(call.additional_units_added_at || {}) };
+    additionalIds.forEach(uid => { call.additional_units_added_at[uid] = now; });
+
+    additionalIds.forEach(uid => {
+      const u = units.find(u => u.id === uid);
+      if (u) {
+        u.status = 'dispatched';
+        saveUnit(u).catch(console.error);
+        io.to('dispatchers').emit('unit:status_change', { unit_id: u.id, status: 'dispatched' });
+        io.to(`crew:${uid}`).emit('unit:status_change', { unit_id: u.id, status: 'dispatched' });
+        io.to(`crew:${uid}`).emit('call:assigned_to_me', call);
+      }
+    });
+
+    io.to('dispatchers').emit('call:updated', {
+      call_id: call.id,
+      changes: { additional_unit_ids: call.additional_unit_ids, additional_units_added_at: call.additional_units_added_at }
+    });
   }
 
   saveCall(call).catch(console.error);
