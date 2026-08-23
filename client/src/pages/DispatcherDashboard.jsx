@@ -19,6 +19,25 @@ import ShiftSummaryModal from '../components/shift/ShiftSummaryModal';
 import OptionsModal from '../components/settings/OptionsModal';
 import CallSummaryModal from '../components/calls/CallSummaryModal';
 
+// Reconstructs which calls have an unanswered backup request, from comment
+// history alone — sosAlerts otherwise only ever grows/shrinks from live
+// 'call:comment_added' events, so a page refresh or reconnect mid-shift
+// silently dropped an active alert with no way to see it again short of
+// opening that exact call and scrolling its chat.
+function deriveActiveBackupAlerts(calls) {
+  const alerts = [];
+  (calls || []).forEach(call => {
+    const backupComments = (call.comments || [])
+      .filter(c => c.text?.startsWith('🆘 BACKUP REQUESTED') || c.text?.startsWith('✅ Backup no longer needed'))
+      .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    const last = backupComments[backupComments.length - 1];
+    if (last?.text.startsWith('🆘 BACKUP REQUESTED')) {
+      alerts.push({ id: last.id, call_id: call.id, author: last.author, time: last.created_at });
+    }
+  });
+  return alerts;
+}
+
 function Clock() {
   const [time, setTime] = useState(new Date());
   useEffect(() => {
@@ -124,7 +143,10 @@ export default function DispatcherDashboard() {
   }, [currentShift, showNewCallModal, isOverwatch]);
 
   const { isConnected } = useSocket({
-    'init:state':          ({ units: u, calls: c, locations: l }) => { setUnits(u); setCalls(c); if (l) setPermLocations(l); },
+    'init:state':          ({ units: u, calls: c, locations: l }) => {
+      setUnits(u); setCalls(c); if (l) setPermLocations(l);
+      setSosAlerts(deriveActiveBackupAlerts(c));
+    },
     'unit:gps_update':     handleGpsUpdate,
     'unit:status_change':  handleStatusChange,
     'unit:profile_update': handleProfileUpdate,

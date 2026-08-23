@@ -183,7 +183,6 @@ export default function CrewMobile() {
 
   const [statusLoading,    setStatusLoading]    = useState(false);
   const [statusError,      setStatusError]      = useState(null);
-  const [backupRequested,  setBackupRequested]  = useState(false);
   const [backupSubmitting, setBackupSubmitting] = useState(false);
   const [backupError,      setBackupError]      = useState('');
   const [lastActiveCallId, setLastActiveCallId] = useState(null);
@@ -229,6 +228,19 @@ export default function CrewMobile() {
   const myCall = myActiveCall || myLastCall;
   const callIsCompleted = !myActiveCall && !!myLastCall;
 
+  // Derived from the call's own comment history, not local state — a local
+  // flag reset to false on every app restart even if a request was already
+  // sent and dispatch already saw it, making it look like nothing had been
+  // sent (and inviting a duplicate request) after any app kill/reopen.
+  const backupRequested = !!(() => {
+    if (!myActiveCall || !myUnit) return false;
+    const mine = (myActiveCall.comments || [])
+      .filter(c => c.author === myUnit.unit_number &&
+        (c.text?.startsWith('🆘 BACKUP REQUESTED') || c.text?.startsWith('✅ Backup no longer needed')))
+      .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    return mine[mine.length - 1]?.text.startsWith('🆘 BACKUP REQUESTED');
+  })();
+
   // Stale token: unit found by unit_number but ID doesn't match. Force re-login.
   useEffect(() => {
     if (!units.length) return;
@@ -238,9 +250,8 @@ export default function CrewMobile() {
     }
   }, [myUnit?.id, user?.unit_id, units.length]);
 
-  // Reset backup button when active call changes
+  // Reset backup button transient state when active call changes
   useEffect(() => {
-    setBackupRequested(false);
     setBackupSubmitting(false);
     setBackupError('');
   }, [myActiveCall?.id]);
@@ -299,6 +310,22 @@ export default function CrewMobile() {
     return () => handle?.remove();
   }, [isNative]);
 
+  // Status taps and chat messages just failed silently with an inline error
+  // if the network dropped, with nothing ambient telling the crew member
+  // they're offline in the first place. GPS already has its own native-layer
+  // offline queue; this is just a heads-up for everything else.
+  const [isOffline, setIsOffline] = useState(!navigator.onLine);
+  useEffect(() => {
+    const goOnline  = () => setIsOffline(false);
+    const goOffline = () => setIsOffline(true);
+    window.addEventListener('online', goOnline);
+    window.addEventListener('offline', goOffline);
+    return () => {
+      window.removeEventListener('online', goOnline);
+      window.removeEventListener('offline', goOffline);
+    };
+  }, []);
+
   useSocket({
     'unit:gps_update':     handleGpsUpdate,
     'unit:status_change':  handleStatusChange,
@@ -345,9 +372,28 @@ export default function CrewMobile() {
     }
   };
 
-  // Only flips backupRequested once the server has actually confirmed the message —
-  // never optimistically, since a false "Backup Requested" is worse than no request
-  // at all (dispatch never sees it, but the crew member thinks help is coming).
+  // Fixes a misclick on just this unit's own status — deliberately never
+  // touches the call's shared record (that's dispatch's Timestamps editor),
+  // since backing up a multi-unit call's own status could yank a different
+  // unit's genuinely-further-along progress backward with it.
+  const handleUndoStatus = async (prevStatus) => {
+    if (!myUnit) return;
+    setStatusLoading(true);
+    setStatusError(null);
+    try {
+      const err = await changeStatus(myUnit.id, prevStatus);
+      if (err) setStatusError(err);
+    } catch {
+      setStatusError('Status update failed — try again');
+    } finally {
+      setStatusLoading(false);
+    }
+  };
+
+  // backupRequested itself is derived from the call's comments (set by the
+  // server echo), never set optimistically here — a false "Backup Requested"
+  // is worse than no request at all (dispatch never sees it, but the crew
+  // member thinks help is coming).
   const handleRequestBackup = useCallback(async () => {
     if (!myActiveCall || !myUnit || backupSubmitting) return;
     const next = !backupRequested;
@@ -360,9 +406,7 @@ export default function CrewMobile() {
     setBackupSubmitting(false);
     if (err) {
       setBackupError(next ? 'Backup request failed to send — tap to try again' : 'Failed to cancel — tap to try again');
-      return;
     }
-    setBackupRequested(next);
   }, [backupRequested, backupSubmitting, myActiveCall, myUnit, addComment]);
 
   const beaconActive   = !!myUnit?.beacon_active;
@@ -375,6 +419,36 @@ export default function CrewMobile() {
     try { await toggleUnitBeacon(myUnit.id, next); }
     catch { setUnits(prev => prev.map(u => u.id === myUnit.id ? { ...u, beacon_active: beaconActive } : u)); }
   };
+
+  // window.open() inside a Capacitor native WebView is unreliable — it can
+  // silently no-op instead of opening a real browser tab. @capacitor/browser
+  // is the supported way to hand an external link off to the system browser.
+  const openProtocols = async () => {
+    const url = 'https://sfotems.com/protocols';
+    if (isNative) {
+      try {
+        const { Browser } = await import('@capacitor/browser');
+        await Browser.open({ url });
+        return;
+      } catch {}
+    }
+    window.open(url, '_blank');
+  };
+
+  // Ticks every 10s so the GPS staleness check below re-evaluates even with
+  // no new props coming in — otherwise a dead tracker just keeps showing
+  // whatever color it last rendered, silently, with nothing on this screen
+  // to tell the crew member their own GPS stopped (matches the watchdog's
+  // ~75-105s recovery window, so this should light up before or right as
+  // that kicks in rather than long after).
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNowTick(Date.now()), 10000);
+    return () => clearInterval(t);
+  }, []);
+  const GPS_STALE_MS = 90000;
+  const gpsAgeMs = myUnit?.last_gps_at ? nowTick - new Date(myUnit.last_gps_at).getTime() : null;
+  const gpsStale = gpsAgeMs != null && gpsAgeMs > GPS_STALE_MS;
 
   const unitColor = STATUS_COLORS[myUnit?.status] || '#9ca3af';
 
@@ -407,6 +481,14 @@ export default function CrewMobile() {
 
   return (
     <div className="min-h-screen bg-gray-900 text-white flex flex-col max-w-md mx-auto">
+
+      {/* Offline banner — status taps/chat will fail until this clears */}
+      {isOffline && (
+        <div className="bg-gray-950 border-b border-gray-700 px-4 py-2 flex items-center gap-2">
+          <span className="text-gray-400 text-sm flex-shrink-0">📡</span>
+          <span className="text-gray-400 text-xs">No connection — status updates and messages won't send until reconnected</span>
+        </div>
+      )}
 
       {/* Background GPS permission banner */}
       {bgPermNeeded && (
@@ -462,15 +544,17 @@ export default function CrewMobile() {
               onClick={openGpsSettings}
               className="ml-auto flex items-center gap-1.5 px-2 py-1 rounded-full bg-black/20 hover:bg-black/35 transition-colors"
             >
-              <div className={`w-1.5 h-1.5 rounded-full ${myUnit.last_gps_at ? 'bg-green-400' : 'bg-gray-500'}`} />
-              <span className={`text-xs ${myUnit.last_gps_at ? 'text-green-400' : 'text-gray-400'}`}>GPS</span>
+              <div className={`w-1.5 h-1.5 rounded-full ${gpsStale ? 'bg-amber-400' : myUnit.last_gps_at ? 'bg-green-400' : 'bg-gray-500'}`} />
+              <span className={`text-xs ${gpsStale ? 'text-amber-400' : myUnit.last_gps_at ? 'text-green-400' : 'text-gray-400'}`}>
+                {gpsStale ? 'GPS stale' : 'GPS'}
+              </span>
               <span className="text-gray-400 text-xs">⚙️</span>
             </button>
           ) : (
             myUnit.last_gps_at && (
               <div className="ml-auto flex items-center gap-1">
-                <div className="w-1.5 h-1.5 rounded-full bg-green-400" />
-                <span className="text-green-400 text-xs">GPS</span>
+                <div className={`w-1.5 h-1.5 rounded-full ${gpsStale ? 'bg-amber-400' : 'bg-green-400'}`} />
+                <span className={`text-xs ${gpsStale ? 'text-amber-400' : 'text-green-400'}`}>{gpsStale ? 'GPS stale' : 'GPS'}</span>
               </div>
             )
           )}
@@ -539,6 +623,7 @@ export default function CrewMobile() {
           <StatusButtons
             currentStatus={myUnit.status}
             onStatusChange={handleStatusTap}
+            onUndo={handleUndoStatus}
             loading={statusLoading}
             hasCall={!!myActiveCall}
           />
@@ -582,7 +667,7 @@ export default function CrewMobile() {
         </div>
 
         <button
-          onClick={() => window.open('https://sfotems.com/protocols', '_blank')}
+          onClick={openProtocols}
           className="w-full py-3 rounded-2xl bg-gray-800 border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 text-sm font-medium transition-colors flex items-center justify-center gap-2"
         >
           📖 Protocols
@@ -612,7 +697,6 @@ export default function CrewMobile() {
         <BeaconMode
           myUnit={myUnit}
           units={units}
-          token={user?.token}
           beaconActive={beaconActive}
           onToggleBeacon={handleToggleBeacon}
           onClose={() => setShowBeacon(false)}

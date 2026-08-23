@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef } from 'react';
-import { apiBase } from '../../lib/native';
 import { getBearing, getDistanceFt, getCardinal } from '../../lib/geo';
 
 // EMA with wrap-around — alpha=0.2 balances smoothness vs responsiveness
@@ -85,7 +84,7 @@ function ClosePulse({ unitNumber }) {
 }
 
 // ── Compass view ─────────────────────────────────────────────────────
-function Compass({ target, onBack, token }) {
+function Compass({ target, onBack, units }) {
   const [heading,        setHeading]        = useState(null);
   const [myPos,          setMyPos]          = useState(null);
   const [targetPos,      setTargetPos]      = useState({
@@ -95,12 +94,18 @@ function Compass({ target, onBack, token }) {
   const [staleLabel,     setStaleLabel]     = useState(null);
   const [noCompass,      setNoCompass]      = useState(false);
   const [noGps,          setNoGps]          = useState(false);
+  // True when readings are coming in but none have ever been true-north-
+  // anchored (deviceorientationabsolute / webkitCompassHeading) — some
+  // Android browser/device combos never fire an absolute event at all, and
+  // silently treating a relative, arbitrary-zero-point reading as a compass
+  // heading produces an arrow that looks exactly as confident as a correct
+  // one while pointing nowhere near the real direction.
+  const [compassUncertain, setCompassUncertain] = useState(false);
   // iOS 13+ requires requestPermission() to be called from a user-gesture handler.
   // Start as 'needed' when the API exists so we show a tap-to-enable button first.
   const [compassPermission, setCompassPermission] = useState(
     typeof DeviceOrientationEvent?.requestPermission === 'function' ? 'needed' : 'granted'
   );
-  const pollRef    = useRef(null);
   const watchRef   = useRef(null);
   const headingRef = useRef(null);
   const staleRef   = useRef(null);
@@ -144,7 +149,7 @@ function Compass({ target, onBack, token }) {
       let h = null;
       if (e.webkitCompassHeading != null) h = e.webkitCompassHeading;
       else if (e.alpha != null) h = (360 - e.alpha) % 360;
-      if (h != null) { gotAbsolute = true; apply(h); }
+      if (h != null) { gotAbsolute = true; setCompassUncertain(false); apply(h); }
     };
 
     const relHandler = (e) => {
@@ -157,32 +162,32 @@ function Compass({ target, onBack, token }) {
 
     window.addEventListener('deviceorientationabsolute', absHandler, true);
     window.addEventListener('deviceorientation',         relHandler, true);
-    const timeout = setTimeout(() => { if (!gotReading) setNoCompass(true); }, 3000);
+    const noReadingTimeout = setTimeout(() => { if (!gotReading) setNoCompass(true); }, 3000);
+    // Longer grace period than the no-reading check above — this only fires
+    // if readings ARE arriving but none has ever been absolute.
+    const uncertainTimeout = setTimeout(() => {
+      if (gotReading && !gotAbsolute) setCompassUncertain(true);
+    }, 6000);
 
     return () => {
       window.removeEventListener('deviceorientationabsolute', absHandler, true);
       window.removeEventListener('deviceorientation',         relHandler, true);
-      clearTimeout(timeout);
+      clearTimeout(noReadingTimeout);
+      clearTimeout(uncertainTimeout);
     };
   }, [compassPermission]);
 
-  // Poll target position every 2s
+  // Target position comes straight from the app's live, socket-updated units
+  // list — this used to poll GET /units every 2s on its own instead, adding
+  // up to 2s of lag and redundant network traffic for a position that's
+  // already arriving in real time via the normal GPS-update socket event.
   useEffect(() => {
-    const refresh = async () => {
-      try {
-        const res  = await fetch(`${apiBase()}/units`, { headers: { Authorization: `Bearer ${token}` } });
-        const data = await res.json();
-        const found = data.find(u => u.id === target.id);
-        if (found?.last_lat && found?.last_lng) {
-          setTargetPos({ lat: parseFloat(found.last_lat), lng: parseFloat(found.last_lng) });
-          setTargetGpsAt(found.last_gps_at || null);
-        }
-      } catch {}
-    };
-    refresh();
-    pollRef.current = setInterval(refresh, 2000);
-    return () => clearInterval(pollRef.current);
-  }, [target.id, token]);
+    const found = units.find(u => u.id === target.id);
+    if (found?.last_lat && found?.last_lng) {
+      setTargetPos({ lat: parseFloat(found.last_lat), lng: parseFloat(found.last_lng) });
+      setTargetGpsAt(found.last_gps_at || null);
+    }
+  }, [units, target.id]);
 
   // Stale label ticker — recalculate every 5s
   useEffect(() => {
@@ -265,6 +270,15 @@ function Compass({ target, onBack, token }) {
           </div>
         )}
 
+        {/* This phone is only giving a relative (non-true-north) heading —
+            the arrow may be confidently pointing the wrong way. */}
+        {compassUncertain && compassActive && (
+          <div className="flex items-center gap-2 bg-amber-900/30 border border-amber-700/40 rounded-lg px-3 py-1.5">
+            <div className="w-2 h-2 rounded-full bg-amber-500" />
+            <span className="text-amber-400 text-xs">Compass accuracy not confirmed on this device — verify direction before walking</span>
+          </div>
+        )}
+
         {/* Cardinal direction */}
         {compassActive && !isClose && (
           <div className="text-white font-black text-5xl tracking-widest">{cardinal}</div>
@@ -313,18 +327,13 @@ function Compass({ target, onBack, token }) {
 }
 
 // ── Finder (unit picker) ──────────────────────────────────────────────
+// `units` is already the app's live, socket-updated unit list (a beacon
+// toggle broadcasts to every crew phone in real time) — this used to
+// re-fetch its own one-time snapshot on mount and never refresh it again,
+// so a medic turning their beacon on after this screen opened just never
+// showed up until you backed out and reopened it.
 function Finder({ myUnit, units, onSelect, onClose }) {
-  const [liveUnits, setLiveUnits] = useState(units);
-  const token = JSON.parse(localStorage.getItem('cad_user') || '{}').token;
-
-  useEffect(() => {
-    fetch(`${apiBase()}/units`, { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => r.json())
-      .then(data => { if (Array.isArray(data)) setLiveUnits(data); })
-      .catch(() => {});
-  }, [token]);
-
-  const beaconing = liveUnits.filter(u => u.beacon_active && u.id !== myUnit?.id);
+  const beaconing = units.filter(u => u.beacon_active && u.id !== myUnit?.id);
 
   return (
     <div className="fixed inset-0 z-50 bg-gray-950 flex flex-col">
@@ -367,7 +376,7 @@ function Finder({ myUnit, units, onSelect, onClose }) {
 }
 
 // ── Main export ───────────────────────────────────────────────────────
-export default function BeaconMode({ myUnit, units, token, beaconActive, onToggleBeacon, onClose }) {
+export default function BeaconMode({ myUnit, units, beaconActive, onToggleBeacon, onClose }) {
   const [view,   setView]   = useState('finder');
   const [target, setTarget] = useState(null);
 
@@ -375,7 +384,7 @@ export default function BeaconMode({ myUnit, units, token, beaconActive, onToggl
     return (
       <Compass
         target={target}
-        token={token}
+        units={units}
         onBack={() => setView('finder')}
       />
     );
