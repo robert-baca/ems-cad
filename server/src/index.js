@@ -1818,7 +1818,19 @@ app.patch('/api/calls/:id/timestamps', verifyToken, async (req, res) => {
         : [...new Set([call.assigned_unit_id, ...(call.co_unit_ids || []), ...(call.additional_unit_ids || [])])].filter(Boolean);
       unitIdsToUpdate.forEach(uid => {
         const unit = units.find(u => u.id === uid);
-        if (unit && isForwardStatusChange(unit.status, newUnitStatus)) {
+        if (!unit) return;
+        // The call's own timestamps ARE the primary unit's official timeline
+        // (its status button press is what drives them via PATCH .../status),
+        // so a dispatcher backdating/clearing one here to fix a mistake must
+        // be able to correct the primary's status backward too — otherwise
+        // dispatch shows the fix but the primary's own phone is stuck offering
+        // whatever came after the status that got corrected away. Backup/
+        // additional units stay forward-only: their own status is their own
+        // self-reported real progress, and a correction aimed at the primary's
+        // timeline shouldn't be able to yank a backup back from wherever
+        // they've actually gotten to.
+        const isPrimary = uid === call.assigned_unit_id;
+        if (isPrimary || isForwardStatusChange(unit.status, newUnitStatus)) {
           unit.status = newUnitStatus;
           saveUnit(unit).catch(console.error);
           io.to('dispatchers').emit('unit:status_change', { unit_id: unit.id, status: newUnitStatus });
