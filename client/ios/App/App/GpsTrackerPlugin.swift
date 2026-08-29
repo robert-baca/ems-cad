@@ -43,6 +43,15 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
     private var lastHeartbeat = Date.distantPast
     private var lastLocation: CLLocation?
 
+    // Mirrors GpsTrackerService.java's offlineQueue/drainQueue: a dropped
+    // post (no connectivity, server unreachable) isn't just lost -- it's
+    // queued and flushed oldest-first once a later post succeeds. Capped the
+    // same as Android (~100 points of backlog). Locked since didUpdateLocations
+    // can fire again (spawning another Task) before a prior send/drain finishes.
+    private let offlineQueueLock = NSLock()
+    private var offlineQueue: [(lat: Double, lng: Double, accuracy: Double)] = []
+    private let maxQueueSize = 100
+
     // Mirrors the Android watchdog: some scenarios leave CLLocationManager
     // silently not delivering further updates with no error either -- restart
     // the subscription if nothing has arrived in a while instead of the pin
@@ -165,7 +174,16 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
         lastPost = now
         lastLocation = loc
 
-        sendPoint(lat: loc.coordinate.latitude, lng: loc.coordinate.longitude, accuracy: accuracy)
+        let lat = loc.coordinate.latitude
+        let lng = loc.coordinate.longitude
+        Task {
+            let ok = await sendPoint(lat: lat, lng: lng, accuracy: accuracy)
+            if ok {
+                await drainQueue()
+            } else {
+                enqueueOffline(lat: lat, lng: lng, accuracy: accuracy)
+            }
+        }
     }
 
     public func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
@@ -184,9 +202,39 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
         }
     }
 
-    private func sendPoint(lat: Double, lng: Double, accuracy: Double) {
+    private func enqueueOffline(lat: Double, lng: Double, accuracy: Double) {
+        offlineQueueLock.lock()
+        offlineQueue.append((lat, lng, accuracy))
+        while offlineQueue.count > maxQueueSize {
+            offlineQueue.removeFirst()
+        }
+        offlineQueueLock.unlock()
+    }
+
+    // Flushes queued offline points oldest-first after connectivity returns --
+    // mirrors GpsTrackerService.java's drainQueue(). Stops at the first
+    // still-failing send rather than draining out of order.
+    private func drainQueue() async {
+        while true {
+            offlineQueueLock.lock()
+            let next = offlineQueue.first
+            offlineQueueLock.unlock()
+            guard let point = next else { return }
+
+            let ok = await sendPoint(lat: point.lat, lng: point.lng, accuracy: point.accuracy)
+            if !ok { return }
+
+            offlineQueueLock.lock()
+            if !offlineQueue.isEmpty { offlineQueue.removeFirst() }
+            offlineQueueLock.unlock()
+        }
+    }
+
+    // Returns whether the post actually succeeded (2xx) -- callers use this
+    // to decide whether to queue the point for later instead of dropping it.
+    private func sendPoint(lat: Double, lng: Double, accuracy: Double) async -> Bool {
         guard let token = token, let serverUrl = serverUrl,
-            let url = URL(string: serverUrl + "/api/crew/gps") else { return }
+            let url = URL(string: serverUrl + "/api/crew/gps") else { return false }
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -202,6 +250,12 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
         ]
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
-        URLSession.shared.dataTask(with: request).resume()
+        do {
+            let (_, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse else { return false }
+            return (200...299).contains(httpResponse.statusCode)
+        } catch {
+            return false
+        }
     }
 }
