@@ -24,10 +24,19 @@ export default function App() {
   // wayfinding) -- one call at the root covers every screen, no per-page logic.
   useEffect(() => {
     if (!window.Capacitor?.isNativePlatform?.()) return;
-    import('@capacitor/status-bar').then(({ StatusBar, Style }) => {
-      StatusBar.setStyle({ style: Style.Light });
-      StatusBar.setBackgroundColor({ color: '#111827' });
-    });
+    // Purely cosmetic -- must never surface an error or block anything else.
+    // A retry-once covers a native-bridge-not-ready-yet race right after a
+    // fresh page load (this app is reached via allowNavigation from the
+    // portal rather than being the configured server.url origin, so its
+    // plugin bridge may finish wiring up a beat later than the portal's own).
+    const apply = () =>
+      import('@capacitor/status-bar').then(({ StatusBar, Style }) =>
+        Promise.all([
+          StatusBar.setStyle({ style: Style.Light }),
+          StatusBar.setBackgroundColor({ color: '#111827' }),
+        ])
+      );
+    apply().catch(() => { setTimeout(() => { apply().catch(() => {}); }, 1000); });
   }, []);
 
   return (
