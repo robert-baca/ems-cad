@@ -1,9 +1,13 @@
 {
   "appId": "com.sfotems.crew",
-  "appName": "EMS Crew",
+  "appName": "Six Flags EMS",
   "webDir": "dist",
+  "backgroundColor": "#111827",
   "server": {
-    "androidScheme": "https"
+    "androidScheme": "https",
+    "url": "https://sfotems.com",
+    "allowNavigation": ["*.sfotems.com", "localhost"],
+    "errorPath": "fallback.html"
   },
   "plugins": {
     "Geolocation": {

@@ -5,7 +5,7 @@ import { useUnits } from '../hooks/useUnits';
 import { useCalls } from '../hooks/useCalls';
 import { useLocations } from '../hooks/useLocations';
 import { useSocket } from '../hooks/useSocket';
-import { useCrewGps } from '../hooks/useCrewGps';
+import { useCrewGps, stopCrewGpsTracking } from '../hooks/useCrewGps';
 import { useCrewNotifications } from '../hooks/useCrewNotifications';
 import ActiveCall from '../components/crew/ActiveCall';
 import StatusButtons from '../components/crew/StatusButtons';
@@ -267,6 +267,11 @@ export default function CrewMobile() {
     const next = !gpsSharingEnabled;
     setGpsSharingBusy(true);
     setGpsSharingEnabled(next);
+    // The native tracker is no longer stopped implicitly when this flips
+    // `enabled` to false (see useCrewGps.js) -- turning sharing off has to
+    // explicitly stop it, or the phone would keep running the tracker and
+    // draining battery even though dispatch no longer sees the pin.
+    if (!next) stopCrewGpsTracking();
     try {
       await setCrewGpsSharing(next);
     } catch {
@@ -284,10 +289,11 @@ export default function CrewMobile() {
     enabled: !!myUnit && !showNativeSetup && gpsSharingEnabled,
   });
 
-  // Android hardware back button — Capacitor gives no handling for this out of the
-  // box, so by default it falls through to the OS and exits the app entirely. Close
-  // whichever full-screen overlay is open instead; with nothing open, minimize to
-  // the home screen (standard Android behavior) rather than killing the app.
+  // Android hardware back button. Close whichever full-screen overlay is open
+  // first; otherwise step back through WebView history (e.g. back to the
+  // sfotems.com portal this screen was reached from), matching the default
+  // behavior every other screen in this app gets from Capacitor automatically.
+  // Only minimize when there's truly nowhere left to go back to.
   // A ref (kept fresh every render) avoids the listener closing over stale state,
   // since it's registered once on mount.
   const closeTopOverlayRef = useRef(null);
@@ -304,7 +310,9 @@ export default function CrewMobile() {
     let handle;
     import('@capacitor/app').then(({ App }) => {
       App.addListener('backButton', () => {
-        if (!closeTopOverlayRef.current?.()) App.minimizeApp();
+        if (closeTopOverlayRef.current?.()) return;
+        if (window.history.length > 1) { window.history.back(); return; }
+        App.minimizeApp();
       }).then(h => { handle = h; });
     });
     return () => handle?.remove();
@@ -466,7 +474,7 @@ export default function CrewMobile() {
         </div>
         <div className="text-gray-600 text-xs mb-8">Logged in as {user?.unit_number}</div>
         <button
-          onClick={() => { logout(); navigate('/login'); }}
+          onClick={() => { stopCrewGpsTracking(); logout(); navigate('/login'); }}
           className="text-gray-500 hover:text-white text-xs px-3 py-1.5 rounded hover:bg-gray-700 transition-colors border border-gray-700"
         >
           Sign out
@@ -518,7 +526,7 @@ export default function CrewMobile() {
             </div>
           </div>
           <button
-            onClick={() => { logout(); navigate('/login'); }}
+            onClick={() => { stopCrewGpsTracking(); logout(); navigate('/login'); }}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-900/40 hover:bg-red-700 border border-red-700/60 hover:border-red-500 text-red-400 hover:text-white text-xs font-semibold transition-colors"
           >
             <span>⏹</span> End Tracking

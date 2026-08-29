@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
 import Login from './pages/Login';
@@ -19,6 +20,16 @@ function ProtectedRoute({ children, allow }) {
 }
 
 export default function App() {
+  // This app is dark-themed throughout (login, dispatcher, crew, display,
+  // wayfinding) -- one call at the root covers every screen, no per-page logic.
+  useEffect(() => {
+    if (!window.Capacitor?.isNativePlatform?.()) return;
+    import('@capacitor/status-bar').then(({ StatusBar, Style }) => {
+      StatusBar.setStyle({ style: Style.Light });
+      StatusBar.setBackgroundColor({ color: '#111827' });
+    });
+  }, []);
+
   return (
     <Routes>
       <Route path="/login" element={<Login />} />

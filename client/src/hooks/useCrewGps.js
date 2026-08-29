@@ -1,37 +1,40 @@
 import { useEffect, useRef, useState } from 'react';
-import { registerPlugin, Capacitor } from '@capacitor/core';
+import { registerPlugin } from '@capacitor/core';
 import { apiBase, PROD_URL } from '../lib/native';
 
 const STALE_MS = 3 * 60 * 1000;
 
 const isNative = () => !!(window.Capacitor?.isNativePlatform?.());
 
-// Android only — custom foreground service (client/android/.../GpsTrackerPlugin.java).
-// There is no iOS implementation of this plugin.
+// Custom native plugin, one implementation per platform (Android:
+// client/android/.../GpsTrackerPlugin.java + GpsTrackerService.java; iOS:
+// client/ios/App/App/GpsTrackerPlugin.swift), same JS-facing shape on both
+// (startTracking/stopTracking/getStatus). Each owns its own OS-level location
+// subscription and posts directly via native HTTP, independent of any page's
+// JS — deliberately NOT built on a JS-callback-based watcher, since that
+// stops working the moment the WebView navigates to a different origin (e.g.
+// checking QI/Education, which live on separate domains from cad.sfotems.com)
+// and Capacitor resets its bridge on every page load either way.
 let _tracker = null;
 function getTracker() {
   if (!_tracker) _tracker = registerPlugin('GpsTracker');
   return _tracker;
 }
 
-// iOS background tracking (real native impl compiled in — see CapApp-SPM/Package.swift
-// and the NSLocationAlways*/UIBackgroundModes entries in Info.plist). Also used on both
-// platforms just for the settings deep link.
+// Used only for the "open location settings" deep link (openGpsSettings below) —
+// unrelated to which plugin actually tracks location on either platform.
 let _bgGeo = null;
 function getBackgroundGeolocation() {
   if (!_bgGeo) _bgGeo = registerPlugin('BackgroundGeolocation');
   return _bgGeo;
 }
 
-// iOS-only custom plugin (client/ios/App/App/LocationAuthPlugin.swift) — the only way
-// to tell "While Using" apart from "Always", since neither @capacitor/geolocation nor
-// the background-geolocation plugin expose that distinction to JS. Reported alongside
-// every GPS post so dispatch can see which phones are stuck at While Using (GPS drops
-// the moment the screen locks) without having to check each one by hand.
-let _locationAuth = null;
-function getLocationAuth() {
-  if (!_locationAuth) _locationAuth = registerPlugin('LocationAuth');
-  return _locationAuth;
+// Stops the native tracker. Deliberately NOT called from this hook's effect
+// cleanup (see below) — call this explicitly from the real "stop" moments
+// (End Tracking, Sign out, opting out of GPS sharing).
+export function stopCrewGpsTracking() {
+  if (!isNative()) return;
+  try { getTracker().stopTracking(); } catch {}
 }
 
 export function useCrewGps({ token, unit, enabled = true }) {
@@ -68,15 +71,14 @@ export function useCrewGps({ token, unit, enabled = true }) {
           new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms))
         ]);
 
+      // Only used by the rare foreground-fallback path below (the native
+      // plugin call itself throwing) — the normal path posts natively with
+      // no JS involved at all, on both platforms.
       const postGpsJs = async (lat, lng, accuracy) => {
         try {
           let gpsPermission;
           try {
-            if (Capacitor.getPlatform() === 'ios') {
-              gpsPermission = (await withTimeout(getLocationAuth().getStatus(), 3000)).status;
-            } else {
-              gpsPermission = (await withTimeout(getTracker().getStatus(), 3000)).status;
-            }
+            gpsPermission = (await withTimeout(getTracker().getStatus(), 3000)).status;
           } catch {}
           await fetch(`${apiBase()}/crew/gps`, {
             method: 'POST',
@@ -87,8 +89,6 @@ export function useCrewGps({ token, unit, enabled = true }) {
       };
 
       let cancelled = false;
-      let stationaryIntervalId = null;
-      const platform = Capacitor.getPlatform();
 
       const startForegroundFallback = async () => {
         setGpsStatus('falling back to foreground GPS...');
@@ -109,118 +109,18 @@ export function useCrewGps({ token, unit, enabled = true }) {
         }
       };
 
-      // iOS: no native GpsTracker service exists, so use the real background-geolocation
-      // plugin (CLLocationManager-backed — keeps posting after the app backgrounds/screen locks).
-      const startIosTracking = async () => {
-        const bgGeo = getBackgroundGeolocation();
-        const opts = {
-          backgroundMessage:  'EMS Crew GPS is active.',
-          backgroundTitle:    'EMS Crew Tracking',
-          requestPermissions: true,
-          stale:              true,
-          // 5m, not 0 — sub-5m jitter gets thrown away by the accuracy/movement
-          // filtering in cb() below anyway, so letting CoreLocation filter it
-          // out before ever waking the JS bridge saves battery for free. Safe
-          // specifically because the "still alive while stationary" signal
-          // below comes from the independent 30s poll, not from this watcher's
-          // callback cadence, so there's no heartbeat trade-off from this.
-          distanceFilter:     5,
-        };
-        const HEARTBEAT_MS = 5000;
-        // Matches the Android tracker's watchdog: some iOS scenarios (a
-        // CoreLocation glitch, the OS quietly deprioritizing the app) can stop
-        // the watcher from ever calling back again with no error either —
-        // silent, not a thrown exception. Recorded on every callback,
-        // success or error, since either proves the pipe itself is still
-        // alive; only true silence means it's actually stuck.
-        const WATCHDOG_STALE_MS = 75000;
-        let lastPostMs = 0;
-        let lastCallbackMs = Date.now();
-        const cb = (location, error) => {
-          lastCallbackMs = Date.now();
-          if (cancelled) return;
-          if (error) {
-            if (error.code === 'NOT_AUTHORIZED') setBgPermNeeded(true);
-            return;
-          }
-          setBgPermNeeded(false);
-          if (!location) return;
-          // Matches the Android tracker's accuracy filter — near large structures
-          // (e.g. walking to a call through the park's rides) a degraded fix used
-          // to be dropped unconditionally, which meant NO fix got through for as
-          // long as the unit stayed in a bad-accuracy zone — freezing the pin for
-          // the whole response instead of just being less precise. A heartbeat
-          // fallback still lets a degraded fix through periodically so the pin
-          // keeps moving.
-          //
-          // But a fix can also be bad in a different way: with no GPS at all
-          // (e.g. indoors in a station building), the OS can fall back to
-          // network/cell-tower positioning that's off by hundreds of meters to
-          // miles. That's worse than a stale pin — it confidently shows dispatch
-          // the wrong location. MAX_HEARTBEAT_ACCURACY_M rejects those even on
-          // the heartbeat; only MAX_ACCURACY_M is waived for it.
-          const MAX_ACCURACY_M = 50;
-          const MAX_HEARTBEAT_ACCURACY_M = 300;
-          if (location.accuracy != null && location.accuracy > MAX_HEARTBEAT_ACCURACY_M) return;
-          const accurateEnough = location.accuracy == null || location.accuracy <= MAX_ACCURACY_M;
-          const heartbeatDue = Date.now() - lastPostMs >= HEARTBEAT_MS;
-          if (!accurateEnough && !heartbeatDue) return;
-          lastPostMs = Date.now();
-          postGpsJs(location.latitude, location.longitude, location.accuracy);
-        };
-
-        // Service binding can be async right after launch — retry a few times before giving up.
-        for (let attempt = 0; attempt < 8; attempt++) {
-          if (cancelled) return;
-          try {
-            const id = await bgGeo.addWatcher(opts, cb);
-            if (cancelled) { bgGeo.removeWatcher({ id }).catch(() => {}); return; }
-            watchIdRef.current = id;
-            setGpsStatus('background GPS active');
-
-            // CoreLocation's continuous watcher can go quiet indefinitely once the
-            // phone is stationary (screen locked, sitting at a post) — there's no
-            // OS-level guarantee of a periodic callback the way Android's foreground
-            // service has a timed heartbeat. If dispatch clears a stale pin while
-            // the phone genuinely isn't moving, nothing would ever post again. Poll
-            // for a one-shot fix on an interval as a backstop.
-            stationaryIntervalId = setInterval(async () => {
-              if (cancelled) return;
-              // Watchdog: the watcher itself has gone completely silent (no
-              // callback at all, success or error) for too long — re-register
-              // it from scratch rather than just leaning on the one-shot
-              // backstop below, so continuous tracking actually resumes
-              // instead of limping along on 30s polls indefinitely.
-              if (Date.now() - lastCallbackMs > WATCHDOG_STALE_MS) {
-                try {
-                  await bgGeo.removeWatcher({ id: watchIdRef.current }).catch(() => {});
-                  if (cancelled) return;
-                  const newId = await bgGeo.addWatcher(opts, cb);
-                  if (cancelled) { bgGeo.removeWatcher({ id: newId }).catch(() => {}); return; }
-                  watchIdRef.current = newId;
-                  lastCallbackMs = Date.now();
-                } catch {}
-              }
-              try {
-                const { Geolocation } = await import('@capacitor/geolocation');
-                const pos = await Geolocation.getCurrentPosition({ enableHighAccuracy: false, timeout: 10000 });
-                if (cancelled || !pos) return;
-                // Same wildly-inaccurate-fix guard as the main watcher above —
-                // a low-accuracy request makes this more likely, not less.
-                if (pos.coords.accuracy != null && pos.coords.accuracy > 300) return;
-                postGpsJs(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy);
-              } catch {}
-            }, 30000);
-            return;
-          } catch (e) {
-            if (attempt < 7) await new Promise(r => setTimeout(r, 500));
-          }
-        }
-        if (!cancelled) await startForegroundFallback();
-      };
-
-      // Android: native foreground service posts GPS directly without JS involvement.
-      const startAndroidTracking = async () => {
+      // Same custom native plugin on both platforms (GpsTracker — Android:
+      // GpsTrackerPlugin.java/GpsTrackerService.java, iOS: GpsTrackerPlugin.swift).
+      // Each owns its own OS-level location subscription and posts directly via
+      // native HTTP, independent of this page's JS, so tracking survives
+      // navigating away to check QI/Education/Admin/etc. and back. Deliberately
+      // no cleanup-based stop here (see stopCrewGpsTracking, called explicitly
+      // from CrewMobile's End Tracking / Sign out / GPS-sharing-opt-out) — both
+      // native implementations guard startTracking() to be a safe no-op if
+      // already running, so this effect re-running (e.g. on a 30-minute JWT
+      // refresh, or simply remounting after other in-app navigation) never
+      // duplicates the location subscription.
+      const startTracking = async () => {
         try {
           const { Geolocation } = await import('@capacitor/geolocation');
           const status = await Geolocation.requestPermissions({ permissions: ['location'] });
@@ -235,31 +135,20 @@ export function useCrewGps({ token, unit, enabled = true }) {
 
         try {
           await getTracker().startTracking({ token, serverUrl: PROD_URL });
-          if (!cancelled) setGpsStatus('native service running');
+          if (!cancelled) setGpsStatus('native tracker running');
         } catch (e) {
           if (!cancelled) await startForegroundFallback();
         }
       };
 
-      if (platform === 'ios') {
-        startIosTracking();
-      } else {
-        startAndroidTracking();
-      }
+      startTracking();
 
       return () => {
         cancelled = true;
-        if (stationaryIntervalId) clearInterval(stationaryIntervalId);
+        // Only ever cleans up the rare foreground-fallback watch (which is
+        // JS-callback-based and wouldn't survive cross-origin navigation
+        // anyway) — the native tracker itself is untouched here by design.
         const id = watchIdRef.current;
-
-        if (platform === 'ios') {
-          if (id && !(typeof id === 'string' && id.startsWith('geo:'))) {
-            getBackgroundGeolocation().removeWatcher({ id }).catch(() => {});
-          }
-        } else {
-          try { getTracker().stopTracking(); } catch {}
-        }
-
         if (id && typeof id === 'string' && id.startsWith('geo:')) {
           import('@capacitor/geolocation').then(({ Geolocation }) => {
             Geolocation.clearWatch({ id: id.slice(4) }).catch(() => {});

@@ -110,9 +110,18 @@ public class GpsTrackerService extends Service {
                 .build();
         startForeground(NOTIF_ID, notif);
 
-        acquireWakeLock();
-        startGps();
-        startWatchdog();
+        // Idempotent: a repeat startTracking() call (the JS side's periodic JWT
+        // refresh calls it again with a fresh token every ~30 min, and simply
+        // returning to the crew screen after navigating elsewhere in the app
+        // does too, now that tracking is no longer stopped on unmount) must not
+        // register a second location subscription -- token/serverUrl above are
+        // still updated either way, this just skips re-subscribing when one is
+        // already running, avoiding duplicate callbacks and duplicate posts.
+        if (fusedClient == null || locationCallback == null) {
+            acquireWakeLock();
+            startGps();
+            startWatchdog();
+        }
         return START_STICKY;
     }
 

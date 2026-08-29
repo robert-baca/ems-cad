@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">EMS Crew</string>
-    <string name="title_activity_main">EMS Crew</string>
+    <string name="app_name">Six Flags EMS</string>
+    <string name="title_activity_main">Six Flags EMS</string>
     <string name="package_name">com.sfotems.crew</string>
     <string name="custom_url_scheme">com.sfotems.crew</string>
 </resources>

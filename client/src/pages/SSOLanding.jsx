@@ -12,7 +12,7 @@ const TYPE_COLORS = { ALS: 'text-red-400', BLS: 'text-blue-400', Cart: 'text-gre
 export default function SSOLanding() {
   const navigate       = useNavigate();
   const [params]       = useSearchParams();
-  const { login }      = useAuth();
+  const { login, user } = useAuth();
 
   const token = params.get('token');
   const dest  = params.get('dest');
@@ -30,6 +30,17 @@ export default function SSOLanding() {
 
   useEffect(() => {
     if (!token || !dest) { setErrorMsg('Missing token or destination.'); setStep('error'); return; }
+
+    // Already have an active crew session on this device (e.g. just came back
+    // from checking QI/Education/Admin elsewhere in the app) -- skip the
+    // whole re-auth + unit-picker round trip and go straight back in, so
+    // returning to crew never requires remembering to log in again. Falls
+    // through to the normal flow below for a genuinely fresh login (no
+    // session, expired, or a different role).
+    if (dest === 'crew' && user?.role === 'crew') {
+      navigate('/crew', { replace: true });
+      return;
+    }
 
     const verify = async () => {
       try {
