@@ -28,6 +28,14 @@ public class MainActivity extends BridgeActivity {
     private static final long AUTH_SETTLE_MS = 500;
     private final android.os.Handler handler = new android.os.Handler(android.os.Looper.getMainLooper());
 
+    // Brief interruptions (a quick app-switch, a notification, glancing away
+    // for a few seconds) don't need a fresh biometric prompt -- only re-lock
+    // once the app's been backgrounded longer than this. 0 means "never
+    // paused yet" (first launch), which always falls through to a real
+    // prompt regardless of this window.
+    private static final long LOCK_GRACE_MS = 60_000;
+    private long pausedAtMs = 0;
+
     private View lockOverlay;
     private boolean locked = true;
     private boolean authInProgress = false;
@@ -59,10 +67,12 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onResume() {
         super.onResume();
-        // onResume always follows onCreate, so this alone also covers first launch.
-        if (locked && !authInProgress) {
-            promptUnlock();
-        }
+        if (authInProgress) return;
+        // onResume always follows onCreate, so locked's initial "true" value
+        // alone already covers first launch here, grace period or not.
+        if (!locked && withinGracePeriod()) return;
+        locked = true;
+        promptUnlock();
     }
 
     @Override
@@ -70,12 +80,17 @@ public class MainActivity extends BridgeActivity {
         super.onPause();
         // Keep WebView JS running after screen turns off so socket/UI updates continue
         bridge.getWebView().onResume();
-        // Re-lock on the way out -- unless this pause was caused by the biometric
+        // Record when we left, unless this pause was caused by the biometric
         // prompt itself taking focus (some OS versions/OEM skins cycle the host
-        // Activity through pause/resume while the system prompt is shown).
+        // Activity through pause/resume while the system prompt is shown) --
+        // that's not a real backgrounding event and shouldn't start the clock.
         if (!authInProgress) {
-            locked = true;
+            pausedAtMs = System.currentTimeMillis();
         }
+    }
+
+    private boolean withinGracePeriod() {
+        return pausedAtMs != 0 && (System.currentTimeMillis() - pausedAtMs) < LOCK_GRACE_MS;
     }
 
     private void showLockOverlay() {
