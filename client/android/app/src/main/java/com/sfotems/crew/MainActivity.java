@@ -20,6 +20,14 @@ import com.getcapacitor.BridgeActivity;
 import java.util.concurrent.Executor;
 
 public class MainActivity extends BridgeActivity {
+    // Some OEM skins bounce the host Activity through pause/resume while
+    // dismissing the system biometric prompt AFTER the auth callback already
+    // fired, not just during it -- a short settle delay before clearing
+    // authInProgress absorbs that bounce so it doesn't immediately re-lock
+    // and re-prompt right after a real, successful unlock.
+    private static final long AUTH_SETTLE_MS = 500;
+    private final android.os.Handler handler = new android.os.Handler(android.os.Looper.getMainLooper());
+
     private View lockOverlay;
     private boolean locked = true;
     private boolean authInProgress = false;
@@ -127,15 +135,15 @@ public class MainActivity extends BridgeActivity {
             @Override
             public void onAuthenticationSucceeded(@NonNull BiometricPrompt.AuthenticationResult result) {
                 super.onAuthenticationSucceeded(result);
-                authInProgress = false;
                 hideLockOverlay();
+                handler.postDelayed(() -> authInProgress = false, AUTH_SETTLE_MS);
             }
 
             @Override
             public void onAuthenticationError(int errorCode, @NonNull CharSequence errString) {
                 super.onAuthenticationError(errorCode, errString);
-                authInProgress = false;
                 // Overlay and its manual "Unlock" button stay up; no auto-retry loop.
+                handler.postDelayed(() -> authInProgress = false, AUTH_SETTLE_MS);
             }
 
             @Override

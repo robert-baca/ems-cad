@@ -245,6 +245,7 @@ export default function CrewMobile() {
   useEffect(() => {
     if (!units.length) return;
     if (myUnit && user?.unit_id && myUnit.id !== user.unit_id) {
+      stopCrewGpsTracking();
       logout();
       navigate('/login');
     }

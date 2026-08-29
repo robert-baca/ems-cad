@@ -5,6 +5,7 @@
   "backgroundColor": "#111827",
   "server": {
     "androidScheme": "https",
+    "iosScheme": "https",
     "url": "https://sfotems.com",
     "allowNavigation": ["*.sfotems.com", "localhost"],
     "errorPath": "fallback.html"

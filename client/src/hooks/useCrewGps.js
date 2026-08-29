@@ -143,8 +143,26 @@ export function useCrewGps({ token, unit, enabled = true }) {
 
       startTracking();
 
+      // Live permission-loss detection: the check inside startTracking() only
+      // reflects state at mount. Re-polling means revoking location access
+      // mid-shift (or Android re-enabling battery restrictions) still surfaces
+      // the "needs background access" banner, instead of GPS silently going
+      // stale with no on-screen indication anything's wrong. Each platform's
+      // getStatus() reports a different shape (Android: no_permission/ok/
+      // battery_restricted; iOS: always/whenInUse/denied/etc) so what counts
+      // as "needs attention" is interpreted per platform.
+      const permissionPollId = setInterval(async () => {
+        try {
+          const { status } = await withTimeout(getTracker().getStatus(), 3000);
+          if (cancelled) return;
+          const isIos = window.Capacitor?.getPlatform?.() === 'ios';
+          setBgPermNeeded(isIos ? status !== 'always' : status !== 'ok');
+        } catch {}
+      }, 60000);
+
       return () => {
         cancelled = true;
+        clearInterval(permissionPollId);
         // Only ever cleans up the rare foreground-fallback watch (which is
         // JS-callback-based and wouldn't survive cross-origin navigation
         // anyway) — the native tracker itself is untouched here by design.

@@ -189,7 +189,7 @@ public class GpsTrackerService extends Service {
                 .setMinUpdateIntervalMillis(1_500L)
                 .build();
 
-        locationCallback = new LocationCallback() {
+        LocationCallback callback = new LocationCallback() {
             @Override
             public void onLocationResult(@NonNull LocationResult result) {
                 Location loc = result.getLastLocation();
@@ -198,7 +198,13 @@ public class GpsTrackerService extends Service {
         };
 
         try {
-            fusedClient.requestLocationUpdates(request, locationCallback, Looper.getMainLooper());
+            fusedClient.requestLocationUpdates(request, callback, Looper.getMainLooper());
+            // Only assign this on success -- onStartCommand's idempotency guard
+            // checks locationCallback == null to decide whether to retry
+            // startGps(). If permission isn't granted yet and this throws,
+            // leaving it null lets the next onStartCommand (e.g. the ~30-min
+            // JWT refresh) retry instead of being permanently skipped.
+            locationCallback = callback;
         } catch (SecurityException ignored) {}
     }
 
