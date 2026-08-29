@@ -19,6 +19,7 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
         CAPPluginMethod(name: "startTracking", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "stopTracking", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "getStatus", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "isTracking", returnType: CAPPluginReturnPromise),
     ]
 
     private static let defaultsTokenKey = "GpsTrackerToken"
@@ -104,6 +105,14 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
         DispatchQueue.main.async {
             call.resolve(["status": GpsTrackerPlugin.authStatusString(self.locationManager.authorizationStatus)])
         }
+    }
+
+    // Lets any page in the app (not just the crew screen) show a "tracking is
+    // active" reminder -- reads the same flag startTracking()/stopTracking()
+    // already maintain, so it reflects the real state regardless of which
+    // origin is currently loaded.
+    @objc func isTracking(_ call: CAPPluginCall) {
+        call.resolve(["active": UserDefaults.standard.bool(forKey: GpsTrackerPlugin.defaultsActiveKey)])
     }
 
     // Idempotent by design: a repeat startTracking() call -- the JS side's

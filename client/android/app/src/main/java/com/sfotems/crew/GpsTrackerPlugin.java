@@ -52,4 +52,17 @@ public class GpsTrackerPlugin extends Plugin {
         ret.put("status", GpsPermissionStatus.get(getContext()));
         call.resolve(ret);
     }
+
+    // Lets any page in the app (not just the crew screen) show a "tracking is
+    // active" reminder -- reads the same flag startTracking()/stopTracking()
+    // already maintain, so it reflects the real state regardless of which
+    // origin is currently loaded.
+    @PluginMethod
+    public void isTracking(PluginCall call) {
+        boolean active = getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getBoolean("active", false);
+        JSObject ret = new JSObject();
+        ret.put("active", active);
+        call.resolve(ret);
+    }
 }
