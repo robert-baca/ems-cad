@@ -95,6 +95,24 @@ cad-system/
 
 ---
 
+## Cross-App Native Plugins
+
+This app is also the native shell that `sfotems.com` (ems-credentials) loads
+as its home screen (see that repo's page.js `server.url` config). A couple
+of native plugins registered *here* are called only from JS living in *that*
+other repo, not from anything in this codebase — don't remove them as
+"unused" without checking there first:
+
+- `@capgo/capacitor-native-biometric` — called from `ems-credentials/lib/native.js`
+  for the portal's biometric-login feature (Face/Fingerprint sign-in stored
+  credential). This app's own lock screen (`MainActivity.java`) uses
+  AndroidX Biometric directly and has no relation to this plugin.
+- `GpsTracker.isTracking()` — called from `ems-credentials/lib/native.js`'s
+  `isCrewGpsTracking()`, which drives the "GPS tracking active" reminder
+  shown on the portal's home screen.
+
+---
+
 ## Key Environment Variables (Railway)
 
 | Variable | Purpose |

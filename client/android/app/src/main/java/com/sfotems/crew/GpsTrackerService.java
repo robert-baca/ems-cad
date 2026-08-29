@@ -146,6 +146,15 @@ public class GpsTrackerService extends Service {
                 fusedClient.removeLocationUpdates(locationCallback);
             }
         } catch (Exception ignored) {}
+        // Must null this out before re-subscribing: if permission has been
+        // revoked since the last successful subscription, startGps() below
+        // will throw and leave locationCallback untouched. Without clearing
+        // it first, it would still point at the callback just removed above
+        // (non-null) -- onStartCommand()'s idempotency guard checks exactly
+        // this field, so a stale non-null reference here would make it think
+        // tracking is still fine and never retry again (e.g. on the next
+        // ~30-min JWT refresh), even after permission is re-granted.
+        locationCallback = null;
         acquireWakeLock();
         startGps();
     }

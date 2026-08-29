@@ -11,7 +11,6 @@
 		4D22ABE92AF431CB00220026 /* CapApp-SPM in Frameworks */ = {isa = PBXBuildFile; productRef = 4D22ABE82AF431CB00220026 /* CapApp-SPM */; };
 		50379B232058CBB4000EE86E /* capacitor.config.json in Resources */ = {isa = PBXBuildFile; fileRef = 50379B222058CBB4000EE86E /* capacitor.config.json */; };
 		504EC3081FED79650016851F /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 504EC3071FED79650016851F /* AppDelegate.swift */; };
-		E2D14FFEA6FD420B57D81B6A /* LocationAuthPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1325F62F5CA3C4DDF0AB12E1 /* LocationAuthPlugin.swift */; };
 		AB12CD34EF56078899AABBCC /* GpsTrackerPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 112233445566778899AABBCC /* GpsTrackerPlugin.swift */; };
 		7C222714A347E6241BD7907B /* MainViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 814353A77566B86864E1BCDD /* MainViewController.swift */; };
 		504EC30D1FED79650016851F /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC30B1FED79650016851F /* Main.storyboard */; };
@@ -26,7 +25,6 @@
 		50379B222058CBB4000EE86E /* capacitor.config.json */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.json; path = capacitor.config.json; sourceTree = "<group>"; };
 		504EC3041FED79650016851F /* App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = App.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		504EC3071FED79650016851F /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
-		1325F62F5CA3C4DDF0AB12E1 /* LocationAuthPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationAuthPlugin.swift; sourceTree = "<group>"; };
 		112233445566778899AABBCC /* GpsTrackerPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GpsTrackerPlugin.swift; sourceTree = "<group>"; };
 		814353A77566B86864E1BCDD /* MainViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainViewController.swift; sourceTree = "<group>"; };
 		504EC30C1FED79650016851F /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/Main.storyboard; sourceTree = "<group>"; };
@@ -73,7 +71,6 @@
 				9582B6822FE993A50072D4E8 /* SceneDelegate.swift */,
 				50379B222058CBB4000EE86E /* capacitor.config.json */,
 				504EC3071FED79650016851F /* AppDelegate.swift */,
-				1325F62F5CA3C4DDF0AB12E1 /* LocationAuthPlugin.swift */,
 				112233445566778899AABBCC /* GpsTrackerPlugin.swift */,
 				814353A77566B86864E1BCDD /* MainViewController.swift */,
 				504EC30B1FED79650016851F /* Main.storyboard */,
@@ -168,7 +165,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				504EC3081FED79650016851F /* AppDelegate.swift in Sources */,
-				E2D14FFEA6FD420B57D81B6A /* LocationAuthPlugin.swift in Sources */,
 				AB12CD34EF56078899AABBCC /* GpsTrackerPlugin.swift in Sources */,
 				7C222714A347E6241BD7907B /* MainViewController.swift in Sources */,
 				9582B6832FE993A70072D4E8 /* SceneDelegate.swift in Sources */,

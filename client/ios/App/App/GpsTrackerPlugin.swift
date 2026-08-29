@@ -51,6 +51,12 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
     private let offlineQueueLock = NSLock()
     private var offlineQueue: [(lat: Double, lng: Double, accuracy: Double)] = []
     private let maxQueueSize = 100
+    // Guards against two location updates arriving close together (only
+    // minIntervalS = 0.9s apart) each spawning their own concurrent
+    // send-then-drain sequence -- without this, two overlapping drains could
+    // both peek the same queued point, both send it (duplicate post), then
+    // both remove an entry, silently losing a different unsent point.
+    private var isSendingOrDraining = false
 
     // Mirrors the Android watchdog: some scenarios leave CLLocationManager
     // silently not delivering further updates with no error either -- restart
@@ -177,12 +183,7 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
         let lat = loc.coordinate.latitude
         let lng = loc.coordinate.longitude
         Task {
-            let ok = await sendPoint(lat: lat, lng: lng, accuracy: accuracy)
-            if ok {
-                await drainQueue()
-            } else {
-                enqueueOffline(lat: lat, lng: lng, accuracy: accuracy)
-            }
+            await sendOrEnqueue(lat: lat, lng: lng, accuracy: accuracy)
         }
     }
 
@@ -200,6 +201,34 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
         case .notDetermined: return "notDetermined"
         @unknown default: return "unknown"
         }
+    }
+
+    // Single entry point for handling a fresh, filter-passed fix. Serializes
+    // against any send-or-drain sequence already in flight -- if one's
+    // running, this fix is just enqueued for that sequence's own drain loop
+    // to pick up, rather than starting a second concurrent send/drain that
+    // could race the first over the shared queue.
+    private func sendOrEnqueue(lat: Double, lng: Double, accuracy: Double) async {
+        offlineQueueLock.lock()
+        if isSendingOrDraining {
+            offlineQueue.append((lat, lng, accuracy))
+            while offlineQueue.count > maxQueueSize { offlineQueue.removeFirst() }
+            offlineQueueLock.unlock()
+            return
+        }
+        isSendingOrDraining = true
+        offlineQueueLock.unlock()
+
+        let ok = await sendPoint(lat: lat, lng: lng, accuracy: accuracy)
+        if ok {
+            await drainQueue()
+        } else {
+            enqueueOffline(lat: lat, lng: lng, accuracy: accuracy)
+        }
+
+        offlineQueueLock.lock()
+        isSendingOrDraining = false
+        offlineQueueLock.unlock()
     }
 
     private func enqueueOffline(lat: Double, lng: Double, accuracy: Double) {

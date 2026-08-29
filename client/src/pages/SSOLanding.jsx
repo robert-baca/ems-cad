@@ -6,6 +6,17 @@ import { apiBase } from '../lib/native';
 const UNIT_TYPES = ['ALS', 'BLS', 'Cart'];
 const TYPE_COLORS = { ALS: 'text-red-400', BLS: 'text-blue-400', Cart: 'text-green-400' };
 
+// Pulls personnel_id out of a JWT payload without a library (same approach
+// as AuthContext.jsx's parseJwtExp) -- used only to compare identities
+// below, never trusted for anything security-sensitive on its own.
+function decodeJwtPersonnelId(token) {
+  try {
+    return JSON.parse(atob(token.split('.')[1])).personnel_id ?? null;
+  } catch {
+    return null;
+  }
+}
+
 // Handles the /sso?token=xxx&dest=dispatcher|crew|display route.
 // sfotems.com passes the session token here so users land directly
 // into the right CAD view without a second login.
@@ -31,17 +42,6 @@ export default function SSOLanding() {
   useEffect(() => {
     if (!token || !dest) { setErrorMsg('Missing token or destination.'); setStep('error'); return; }
 
-    // Already have an active crew session on this device (e.g. just came back
-    // from checking QI/Education/Admin elsewhere in the app) -- skip the
-    // whole re-auth + unit-picker round trip and go straight back in, so
-    // returning to crew never requires remembering to log in again. Falls
-    // through to the normal flow below for a genuinely fresh login (no
-    // session, expired, or a different role).
-    if (dest === 'crew' && user?.role === 'crew') {
-      navigate('/crew', { replace: true });
-      return;
-    }
-
     const verify = async () => {
       try {
         const r    = await fetch(`${apiBase()}/auth/sso`, {
@@ -59,6 +59,24 @@ export default function SSOLanding() {
         }
 
         if (dest === 'crew') {
+          // If this is really the same person who already has a valid,
+          // unit-selected crew session on this device, skip re-picking a
+          // unit and go straight back in -- but only now, AFTER the SSO
+          // token above has actually been verified and its real identity
+          // extracted, never based on the locally-cached session alone.
+          // Otherwise a stale leftover session (this device last used by a
+          // different crew member, or by this same person on a prior shift
+          // who never explicitly signed out) could silently be reused for a
+          // fresh sign-in meant for someone else entirely.
+          const preAuthPersonnelId = decodeJwtPersonnelId(data.token);
+          if (
+            user?.role === 'crew' && user?.unit_id && preAuthPersonnelId &&
+            preAuthPersonnelId === user.personnel_id
+          ) {
+            navigate('/crew', { replace: true });
+            return;
+          }
+
           // Pre-auth token received; now show the unit picker
           setPreAuthToken(data.token);
           setCrewName(data.user.name || '');

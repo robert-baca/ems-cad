@@ -5,9 +5,9 @@ import AddUnitModal from './AddUnitModal';
 
 const TYPE_ICONS = { ALS: '🚑', BLS: '🚐', Cart: '🛺', Bike: '🚴' };
 
-// gps_permission_status values, iOS (LocationAuthPlugin) and Android
-// (GpsPermissionStatus) — 'always'/'ok' both mean "nothing to fix" and are
-// filtered out before this ever gets consulted.
+// gps_permission_status values, iOS and Android (GpsTrackerPlugin's
+// getStatus() on both platforms) — 'always'/'ok' both mean "nothing to fix"
+// and are filtered out before this ever gets consulted.
 const GPS_PERMISSION_LABELS = {
   whenInUse: 'While Using only — locks up once the screen locks',
   denied: 'location denied',
