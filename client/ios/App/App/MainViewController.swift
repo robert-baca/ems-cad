@@ -9,7 +9,6 @@ import WebKit
 // instead of the default CAPBridgeViewController so this actually runs.
 class MainViewController: CAPBridgeViewController {
     private var backButton: UIButton?
-    private var canGoBackObservation: NSKeyValueObservation?
 
     override open func capacitorDidLoad() {
         bridge?.registerPluginInstance(GpsTrackerPlugin())
@@ -21,7 +20,7 @@ class MainViewController: CAPBridgeViewController {
     // hardware back button the way Android does, and per-site JS back
     // buttons would need adding separately in every one of those repos.
     private func addBackButton() {
-        guard let webView = self.webView else { return }
+        guard self.webView != nil else { return }
 
         let button = UIButton(type: .system)
         button.setTitle("‹", for: .normal)
@@ -30,7 +29,14 @@ class MainViewController: CAPBridgeViewController {
         button.backgroundColor = UIColor.black.withAlphaComponent(0.55)
         button.layer.cornerRadius = 22
         button.translatesAutoresizingMaskIntoConstraints = false
-        button.isHidden = true
+        // Always visible rather than tied to webView.canGoBack -- closing an
+        // in-app overlay via window.__handleNativeBack (e.g. CrewMobile's
+        // disposition/case-summary/case-history/beacon views) doesn't depend
+        // on WebView navigation history at all, since those are local React
+        // state, not real navigations. Hiding based on canGoBack meant the
+        // button could disappear exactly when it was needed to back out of
+        // one of those screens. An occasional no-op tap is a much smaller
+        // problem than a button that's invisible when it's actually needed.
         button.addTarget(self, action: #selector(goBackTapped), for: .touchUpInside)
 
         view.addSubview(button)
@@ -41,12 +47,6 @@ class MainViewController: CAPBridgeViewController {
             button.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: 16),
         ])
         backButton = button
-
-        // WKWebView's canGoBack is KVO-observable, so the button can show/hide
-        // itself in sync with real navigation state instead of guessing.
-        canGoBackObservation = webView.observe(\.canGoBack, options: [.new, .initial]) { [weak button] wv, _ in
-            DispatchQueue.main.async { button?.isHidden = !wv.canGoBack }
-        }
     }
 
     @objc private func goBackTapped() {
