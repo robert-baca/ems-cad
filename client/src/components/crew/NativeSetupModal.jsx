@@ -6,7 +6,7 @@ const ALL_STEPS = [
     key: 'location',
     icon: '📍',
     title: 'Location — Always',
-    body: 'Required so your GPS dot shows on the dispatch map even when the screen is off.',
+    body: "Required so your GPS dot shows on the dispatch map even when the screen is off. You'll see two popups — the first won't have an \"Always\" option, that's normal. A second popup follows right after asking to upgrade — choose \"Always\" (or \"Change to Always Allow\") on that one.",
     button: 'Grant Location',
   },
   {

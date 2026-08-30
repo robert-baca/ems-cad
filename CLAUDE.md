@@ -204,11 +204,19 @@ call: {
 ## Build Commands (run from `client/`)
 ```bash
 npm run build              # build React app
-npx cap copy android       # copy web assets to Android project
+npx cap sync android       # copy web assets AND regenerate capacitor.plugins.json / gradle plugin deps
 cd android
 .\gradlew bundleRelease    # signed AAB for Play Store
 .\gradlew assembleDebug    # debug APK for direct install
 ```
+Use `cap sync`, not `cap copy` — `copy` only pushes web assets and leaves
+`capacitor.plugins.json` (gitignored, machine-local) untouched. If a native
+plugin was ever added without a `cap sync` on whatever machine built the
+release, that plugin's class never gets registered with the bridge, and
+calling it throws `"X" plugin is not implemented on <platform>` at runtime
+even though the plugin is a normal dependency and compiles in fine — this
+is exactly what happened with `@capacitor/app` shipping without ever being
+registered on Android.
 
 ---
 
