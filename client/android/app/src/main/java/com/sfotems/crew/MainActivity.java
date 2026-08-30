@@ -17,7 +17,12 @@ import androidx.biometric.BiometricPrompt;
 import androidx.core.content.ContextCompat;
 
 import com.getcapacitor.BridgeActivity;
+import com.getcapacitor.JSExport;
+import com.getcapacitor.PluginHandle;
+import com.getcapacitor.WebViewListener;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.Executor;
 
 public class MainActivity extends BridgeActivity {
@@ -63,7 +68,66 @@ public class MainActivity extends BridgeActivity {
         webView.setOverScrollMode(View.OVER_SCROLL_NEVER);
 
         addBackHandler(webView);
+        fixMissingPluginBridgeOnSecondaryOrigins(webView);
         showLockOverlay();
+    }
+
+    // Capacitor's own bridge injection (window.Capacitor.PluginHeaders, plus
+    // the nativePromise/nativeCallback/addListener functions every plugin call
+    // needs) is scoped to this app's primary configured origin (server.url =
+    // sfotems.com) -- confirmed via a diagnostic dump added to the crash
+    // overlay, which showed PluginHeaders as an empty array on
+    // cad.sfotems.com/crew even though every plugin is registered correctly
+    // natively. allowNavigation lets the WebView *load* other origins, but
+    // Capacitor never re-injects its bridge for them, so every plugin call
+    // made from JS running on cad.sfotems.com (GPS start/stop, location
+    // permission requests, etc.) was silently doomed regardless of native-side
+    // fixes. This re-injects the missing pieces by hand on any page where
+    // Capacitor's own injection didn't happen, using its own JSExport so the
+    // generated JS stays identical to what a correctly-injected primary origin
+    // would get.
+    //
+    // NOTE: this list must be kept in sync with the plugins actually
+    // registered (see MainActivity's manual registerPlugin call above, plus
+    // whatever @capacitor/* / @capgo/* packages are npm dependencies) --
+    // update it when adding or removing a native plugin.
+    private static final String[] KNOWN_PLUGIN_IDS = {
+        "CapacitorCookies", "WebView", "CapacitorHttp", "SystemBars",
+        "GpsTracker", "BackgroundGeolocation", "Browser", "Geolocation",
+        "LocalNotifications", "StatusBar", "NativeBiometric"
+    };
+
+    private void fixMissingPluginBridgeOnSecondaryOrigins(WebView webView) {
+        bridge.addWebViewListener(
+            new WebViewListener() {
+                @Override
+                public void onPageLoaded(WebView view) {
+                    view.evaluateJavascript(
+                        "!!(window.Capacitor && window.Capacitor.PluginHeaders && window.Capacitor.PluginHeaders.length)",
+                        result -> {
+                            if (!"true".equals(result)) {
+                                injectPluginBridge(view);
+                            }
+                        }
+                    );
+                }
+            }
+        );
+    }
+
+    private void injectPluginBridge(WebView webView) {
+        List<PluginHandle> handles = new ArrayList<>();
+        for (String id : KNOWN_PLUGIN_IDS) {
+            PluginHandle handle = bridge.getPlugin(id);
+            if (handle != null) handles.add(handle);
+        }
+        try {
+            String bridgeJS = JSExport.getBridgeJS(getApplicationContext());
+            String pluginJS = JSExport.getPluginJS(handles);
+            webView.evaluateJavascript(bridgeJS + "\n" + pluginJS, null);
+        } catch (Exception ex) {
+            android.util.Log.e("MainActivity", "Failed to inject fallback plugin bridge", ex);
+        }
     }
 
     // Hardware/gesture back calls into window.__handleNativeBack (set by
