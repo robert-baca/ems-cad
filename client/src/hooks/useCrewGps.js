@@ -15,10 +15,20 @@ const isNative = () => !!(window.Capacitor?.isNativePlatform?.());
 // stops working the moment the WebView navigates to a different origin (e.g.
 // checking QI/Education, which live on separate domains from cad.sfotems.com)
 // and Capacitor resets its bridge on every page load either way.
-let _tracker = null;
-function getTracker() {
-  if (!_tracker) _tracker = registerPlugin('GpsTracker');
-  return _tracker;
+//
+// Deliberately NOT using @capacitor/core's registerPlugin() proxy here.
+// Confirmed via a live diagnostic dump on a real device: window.Capacitor.
+// Plugins includes "GpsTracker" (the JS-side proxy object exists), but
+// window.Capacitor.PluginHeaders never gets an entry for it, on iOS,
+// permanently, regardless of page/origin -- registerPlugin()'s proxy checks
+// PluginHeaders on every call and throws "plugin is not implemented" since
+// it never finds one, even though the plugin is registered and working
+// natively (confirmed via GpsTrackerPlugin's own NSLog output). Calling
+// window.Capacitor.nativePromise() directly bypasses that check entirely --
+// it's the same low-level dispatch registerPlugin()'s proxy would have used
+// anyway, just without the broken PluginHeaders lookup gating it.
+function callGpsTracker(method, options = {}) {
+  return window.Capacitor.nativePromise('GpsTracker', method, options);
 }
 
 // Used only for the "open location settings" deep link (openGpsSettings below) —
@@ -34,7 +44,7 @@ function getBackgroundGeolocation() {
 // (End Tracking, Sign out, opting out of GPS sharing).
 export function stopCrewGpsTracking() {
   if (!isNative()) return;
-  try { getTracker().stopTracking(); } catch {}
+  try { callGpsTracker('stopTracking'); } catch {}
 }
 
 export function useCrewGps({ token, unit, enabled = true }) {
@@ -78,7 +88,7 @@ export function useCrewGps({ token, unit, enabled = true }) {
         try {
           let gpsPermission;
           try {
-            gpsPermission = (await withTimeout(getTracker().getStatus(), 3000)).status;
+            gpsPermission = (await withTimeout(callGpsTracker('getStatus'), 3000)).status;
           } catch {}
           await fetch(`${apiBase()}/crew/gps`, {
             method: 'POST',
@@ -134,7 +144,7 @@ export function useCrewGps({ token, unit, enabled = true }) {
         if (cancelled) return;
 
         try {
-          await getTracker().startTracking({ token, serverUrl: PROD_URL });
+          await callGpsTracker('startTracking', { token, serverUrl: PROD_URL });
           if (!cancelled) setGpsStatus('native tracker running');
         } catch (e) {
           if (!cancelled) await startForegroundFallback();
@@ -153,7 +163,7 @@ export function useCrewGps({ token, unit, enabled = true }) {
       // as "needs attention" is interpreted per platform.
       const permissionPollId = setInterval(async () => {
         try {
-          const { status } = await withTimeout(getTracker().getStatus(), 3000);
+          const { status } = await withTimeout(callGpsTracker('getStatus'), 3000);
           if (cancelled) return;
           const isIos = window.Capacitor?.getPlatform?.() === 'ios';
           setBgPermNeeded(isIos ? status !== 'always' : status !== 'ok');
