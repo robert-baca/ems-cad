@@ -10,6 +10,7 @@ import android.view.WindowManager;
 import android.webkit.WebView;
 import android.widget.Button;
 
+import androidx.activity.OnBackPressedCallback;
 import androidx.annotation.NonNull;
 import androidx.biometric.BiometricManager;
 import androidx.biometric.BiometricPrompt;
@@ -61,13 +62,39 @@ public class MainActivity extends BridgeActivity {
         webView.getSettings().setDisplayZoomControls(false);
         webView.setOverScrollMode(View.OVER_SCROLL_NEVER);
 
+        addBackHandler(webView);
         showLockOverlay();
     }
 
-    // No native floating back button here -- Android already has a real
-    // hardware/gesture back button, handled in JS via App.addListener('backButton')
-    // in CrewMobile.jsx. iOS has no equivalent, which is why it gets one
-    // (see MainViewController.swift).
+    // Hardware/gesture back calls into window.__handleNativeBack (set by
+    // CrewMobile.jsx) via a plain JS evaluation, mirroring the floating button
+    // on iOS (see MainViewController.swift) -- @capacitor/app's own JS bridge
+    // call (App.addListener('backButton', ...)) turned out to be unreliable
+    // here: this app runs with a remote server.url (sfotems.com) as its
+    // primary origin, and Capacitor only fully re-injects its native bridge
+    // (window.Capacitor.PluginHeaders) for that primary origin -- cad.sfotems.com,
+    // reached via allowNavigation, loads without it, so any @capacitor/app call
+    // there throws "plugin is not implemented" even though it's registered
+    // natively. evaluateJavascript() doesn't go through that machinery at all.
+    private void addBackHandler(WebView webView) {
+        getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
+            @Override
+            public void handleOnBackPressed() {
+                webView.evaluateJavascript(
+                    "window.__handleNativeBack ? window.__handleNativeBack() : false",
+                    result -> {
+                        if ("true".equals(result)) return;
+                        if (webView.canGoBack()) {
+                            webView.goBack();
+                        } else {
+                            moveTaskToBack(true);
+                        }
+                    }
+                );
+            }
+        });
+    }
+
     @Override
     public void onResume() {
         super.onResume();

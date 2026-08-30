@@ -290,13 +290,19 @@ export default function CrewMobile() {
     enabled: !!myUnit && !showNativeSetup && gpsSharingEnabled,
   });
 
-  // Android hardware back button. Close whichever full-screen overlay is open
-  // first; otherwise step back through WebView history (e.g. back to the
-  // sfotems.com portal this screen was reached from), matching the default
-  // behavior every other screen in this app gets from Capacitor automatically.
-  // Only minimize when there's truly nowhere left to go back to.
-  // A ref (kept fresh every render) avoids the listener closing over stale state,
-  // since it's registered once on mount.
+  // Hardware/gesture back on Android and the floating back button on iOS both
+  // call into window.__handleNativeBack natively (MainActivity.java /
+  // MainViewController.swift) instead of going through @capacitor/app's JS
+  // bridge. That bridge call turned out to be unreliable on this screen: this
+  // app runs with a remote server.url (sfotems.com) as its primary origin, and
+  // Capacitor only fully re-injects its native bridge (window.Capacitor.
+  // PluginHeaders) for that primary origin -- cad.sfotems.com, reached via
+  // allowNavigation, loads without it, so any @capacitor/app call here throws
+  // "plugin is not implemented" even though the plugin is registered natively.
+  // A plain evaluateJavascript() call doesn't go through that machinery at all,
+  // so it works regardless. Close whichever full-screen overlay is open first;
+  // otherwise step back through WebView history. A ref (kept fresh every
+  // render) avoids the native call reading stale state.
   const closeTopOverlayRef = useRef(null);
   closeTopOverlayRef.current = () => {
     if (showDisposition)  { setShowDisposition(false); return true; }
@@ -308,24 +314,8 @@ export default function CrewMobile() {
 
   useEffect(() => {
     if (!isNative) return;
-    let handle;
-    import('@capacitor/app').then(({ App }) => {
-      App.addListener('backButton', () => {
-        if (closeTopOverlayRef.current?.()) return;
-        if (window.history.length > 1) { window.history.back(); return; }
-        App.minimizeApp();
-      }).then(h => { handle = h; });
-    });
-    // iOS has no hardware back button, so MainViewController.swift's floating
-    // back button calls into this instead of blindly doing webView.goBack() --
-    // the overlays above (disposition/case summary/history/beacon) are local
-    // component state, not real navigations, so plain WebView history has no
-    // idea they're open and can't close them on its own.
     window.__handleNativeBack = () => closeTopOverlayRef.current?.() || false;
-    return () => {
-      handle?.remove();
-      delete window.__handleNativeBack;
-    };
+    return () => { delete window.__handleNativeBack; };
   }, [isNative]);
 
   // Status taps and chat messages just failed silently with an inline error

@@ -10,6 +10,9 @@
     "allowNavigation": ["*.sfotems.com", "localhost"],
     "errorPath": "fallback.html"
   },
+  "android": {
+    "loggingBehavior": "production"
+  },
   "plugins": {
     "Geolocation": {
       "permissions": ["location", "coarseLocation", "backgroundLocation"]
