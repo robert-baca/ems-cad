@@ -70,7 +70,15 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
     public override func load() {
         locationManager.delegate = self
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
-        locationManager.distanceFilter = 5
+        // kCLDistanceFilterNone, not a fixed distance -- distanceFilter is an
+        // OS-level gate that suppresses didUpdateLocations entirely below the
+        // threshold, with no periodic override. That silently defeated the
+        // heartbeat logic below: a stationary unit (parked, standing by) would
+        // get an initial fix or two and then nothing at all, forever, since
+        // CoreLocation never called back again to give the heartbeat check a
+        // chance to run. All distance/heartbeat filtering already happens in
+        // didUpdateLocations -- CoreLocation doesn't need to also do it.
+        locationManager.distanceFilter = kCLDistanceFilterNone
         locationManager.allowsBackgroundLocationUpdates = true
         locationManager.pausesLocationUpdatesAutomatically = false
         locationManager.showsBackgroundLocationIndicator = true
