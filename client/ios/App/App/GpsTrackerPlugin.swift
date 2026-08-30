@@ -112,6 +112,7 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
         watchdogTimer = nil
         DispatchQueue.main.async {
             self.locationManager.stopUpdatingLocation()
+            self.locationManager.stopMonitoringSignificantLocationChanges()
         }
         call.resolve()
     }
@@ -141,6 +142,15 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
         isTracking = true
         DispatchQueue.main.async {
             self.locationManager.startUpdatingLocation()
+            // Backup wake mechanism for when iOS suspends the whole app process
+            // (not just pauses location delivery) -- the regular watchdog below
+            // can't help with that since a suspended process runs no code at
+            // all, including its own Timer. Significant-change monitoring is
+            // independent of the process: iOS tracks it at the OS level and
+            // will relaunch this app in the background specifically to deliver
+            // one, at which point load() below sees the persisted "active" flag
+            // and calls this same method again to resume full-rate tracking.
+            self.locationManager.startMonitoringSignificantLocationChanges()
         }
         startWatchdog()
     }
