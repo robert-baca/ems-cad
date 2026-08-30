@@ -50,6 +50,15 @@ class MainViewController: CAPBridgeViewController {
     }
 
     @objc private func goBackTapped() {
-        webView?.goBack()
+        guard let webView = self.webView else { return }
+        // Some screens (e.g. CrewMobile's disposition/case-summary/case-history/
+        // beacon views) are local component state, not real navigations -- plain
+        // WebView history has no idea they're "open" and can't close them. Pages
+        // that need that can expose window.__handleNativeBack to intercept first;
+        // everything else falls through to normal WebView back navigation.
+        webView.evaluateJavaScript("window.__handleNativeBack ? window.__handleNativeBack() : false") { result, _ in
+            if (result as? Bool) == true { return }
+            if webView.canGoBack { webView.goBack() }
+        }
     }
 }

@@ -316,7 +316,16 @@ export default function CrewMobile() {
         App.minimizeApp();
       }).then(h => { handle = h; });
     });
-    return () => handle?.remove();
+    // iOS has no hardware back button, so MainViewController.swift's floating
+    // back button calls into this instead of blindly doing webView.goBack() --
+    // the overlays above (disposition/case summary/history/beacon) are local
+    // component state, not real navigations, so plain WebView history has no
+    // idea they're open and can't close them on its own.
+    window.__handleNativeBack = () => closeTopOverlayRef.current?.() || false;
+    return () => {
+      handle?.remove();
+      delete window.__handleNativeBack;
+    };
   }, [isNative]);
 
   // Status taps and chat messages just failed silently with an inline error

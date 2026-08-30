@@ -2,17 +2,13 @@ package com.sfotems.crew;
 
 import android.app.KeyguardManager;
 import android.content.Context;
-import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.Bundle;
-import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.webkit.WebView;
 import android.widget.Button;
-import android.widget.FrameLayout;
-import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.biometric.BiometricManager;
@@ -65,58 +61,13 @@ public class MainActivity extends BridgeActivity {
         webView.getSettings().setDisplayZoomControls(false);
         webView.setOverScrollMode(View.OVER_SCROLL_NEVER);
 
-        addBackButton(webView);
-        // Added after the back button so it draws on top and fully blocks it
-        // while locked -- otherwise the button would poke through the lock
-        // screen and let someone navigate before authenticating.
         showLockOverlay();
     }
 
-    // Every page loaded here (portal, CAD, QI, credentials) shares this one
-    // WebView, so one native back button covers all of them instead of
-    // needing a per-site JS back button added separately in each repo.
-    private void addBackButton(WebView webView) {
-        ViewGroup root = findViewById(android.R.id.content);
-        float density = getResources().getDisplayMetrics().density;
-
-        TextView backButton = new TextView(this);
-        backButton.setText("‹");
-        backButton.setTextColor(0xFFFFFFFF);
-        backButton.setTextSize(24);
-        backButton.setGravity(Gravity.CENTER);
-        backButton.setElevation(12f);
-        backButton.setVisibility(View.GONE);
-
-        GradientDrawable bg = new GradientDrawable();
-        bg.setShape(GradientDrawable.OVAL);
-        bg.setColor(0xCC1F2937);
-        backButton.setBackground(bg);
-
-        int sizePx = (int) (44 * density);
-        int marginPx = (int) (20 * density);
-        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(sizePx, sizePx);
-        params.gravity = Gravity.BOTTOM | Gravity.START;
-        params.setMargins(marginPx, marginPx, marginPx, marginPx);
-        backButton.setLayoutParams(params);
-
-        backButton.setOnClickListener(v -> {
-            if (webView.canGoBack()) webView.goBack();
-        });
-        root.addView(backButton);
-
-        // WebView has no canGoBack-changed callback, and replacing Capacitor's
-        // own WebViewClient to hook navigation risks breaking its URL/redirect
-        // handling -- a light poll is the safe way to keep visibility in sync.
-        Runnable poll = new Runnable() {
-            @Override
-            public void run() {
-                backButton.setVisibility(webView.canGoBack() ? View.VISIBLE : View.GONE);
-                handler.postDelayed(this, 400);
-            }
-        };
-        handler.post(poll);
-    }
-
+    // No native floating back button here -- Android already has a real
+    // hardware/gesture back button, handled in JS via App.addListener('backButton')
+    // in CrewMobile.jsx. iOS has no equivalent, which is why it gets one
+    // (see MainViewController.swift).
     @Override
     public void onResume() {
         super.onResume();
