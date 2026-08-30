@@ -12,6 +12,17 @@ class MainViewController: CAPBridgeViewController {
 
     override open func capacitorDidLoad() {
         bridge?.registerPluginInstance(GpsTrackerPlugin())
+    }
+
+    // capacitorDidLoad() fires before the WebView is added to the view
+    // hierarchy (per CAPBridgeViewController's own doc comment) -- adding the
+    // button there meant the WebView, added afterward in viewDidLoad(), was
+    // stacked on top and covered it completely. viewDidAppear() runs after
+    // loadWebView() has already added it, so the button reliably ends up on
+    // top. Guarded to run once even though viewDidAppear can fire again
+    // (e.g. returning from background).
+    override open func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
         addBackButton()
     }
 
@@ -20,7 +31,7 @@ class MainViewController: CAPBridgeViewController {
     // hardware back button the way Android does, and per-site JS back
     // buttons would need adding separately in every one of those repos.
     private func addBackButton() {
-        guard self.webView != nil else { return }
+        guard backButton == nil, self.webView != nil else { return }
 
         let button = UIButton(type: .system)
         button.setTitle("‹", for: .normal)
