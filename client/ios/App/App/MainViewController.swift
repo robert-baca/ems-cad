@@ -14,13 +14,18 @@ class MainViewController: CAPBridgeViewController {
         bridge?.registerPluginInstance(GpsTrackerPlugin())
     }
 
-    // capacitorDidLoad() fires before the WebView is added to the view
-    // hierarchy (per CAPBridgeViewController's own doc comment) -- adding the
-    // button there meant the WebView, added afterward in viewDidLoad(), was
-    // stacked on top and covered it completely. viewDidAppear() runs after
-    // loadWebView() has already added it, so the button reliably ends up on
-    // top. Guarded to run once even though viewDidAppear can fire again
-    // (e.g. returning from background).
+    // CAPBridgeViewController.loadView() (which we can't override -- it's
+    // `final`) does `view = webView`: this controller's view IS the WKWebView
+    // itself, not a plain container with the webview as a child. Adding the
+    // button via view.addSubview() therefore added it as a subview of the
+    // WebView, and WKWebView's own internal content/scroll-view compositing
+    // covered it regardless of *when* it was added -- an earlier fix that
+    // moved this from capacitorDidLoad() to viewDidAppear() addressed the
+    // wrong problem (timing) and had no effect, confirmed by a real TestFlight
+    // build still showing no button. Adding it to the window instead sidesteps
+    // WKWebView's internal view entirely, guaranteeing it renders above
+    // everything. Needs the view actually attached to a window, hence
+    // viewDidAppear rather than capacitorDidLoad.
     override open func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         addBackButton()
@@ -31,7 +36,7 @@ class MainViewController: CAPBridgeViewController {
     // hardware back button the way Android does, and per-site JS back
     // buttons would need adding separately in every one of those repos.
     private func addBackButton() {
-        guard backButton == nil, self.webView != nil else { return }
+        guard backButton == nil, let window = self.view.window else { return }
 
         let button = UIButton(type: .system)
         button.setTitle("‹", for: .normal)
@@ -50,12 +55,12 @@ class MainViewController: CAPBridgeViewController {
         // problem than a button that's invisible when it's actually needed.
         button.addTarget(self, action: #selector(goBackTapped), for: .touchUpInside)
 
-        view.addSubview(button)
+        window.addSubview(button)
         NSLayoutConstraint.activate([
             button.widthAnchor.constraint(equalToConstant: 44),
             button.heightAnchor.constraint(equalToConstant: 44),
-            button.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
-            button.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: 16),
+            button.leadingAnchor.constraint(equalTo: window.safeAreaLayoutGuide.leadingAnchor, constant: 16),
+            button.bottomAnchor.constraint(equalTo: window.safeAreaLayoutGuide.bottomAnchor, constant: 16),
         ])
         backButton = button
     }
