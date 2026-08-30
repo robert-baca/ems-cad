@@ -67,7 +67,19 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
     private let watchdogIntervalS: TimeInterval = 30
     private let watchdogStaleS: TimeInterval = 75
 
+    // Plain NSLog rather than Capacitor's own Logger/CAPLog -- those are
+    // gated by config.isLoggingEnabled(), which defaults to off in release
+    // builds (the same gap that made an earlier Android investigation
+    // falsely conclude "no error was logged" when logging was silently
+    // disabled the whole time). NSLog always reaches the unified system log,
+    // visible via Xcode's device console or Console.app, in a release/
+    // TestFlight build included -- no config needed for it to work.
+    private static func log(_ msg: String) {
+        NSLog("[GpsTracker] %@", msg)
+    }
+
     public override func load() {
+        GpsTrackerPlugin.log("load() called")
         locationManager.delegate = self
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
         // kCLDistanceFilterNone, not a fixed distance -- distanceFilter is an
@@ -87,17 +99,21 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
         // a memory-pressure kill) -- mirrors Android's BootReceiver + the
         // GpsTrackerService onStartCommand(null, ...) SharedPreferences fallback.
         let defaults = UserDefaults.standard
-        if defaults.bool(forKey: GpsTrackerPlugin.defaultsActiveKey),
+        let wasActive = defaults.bool(forKey: GpsTrackerPlugin.defaultsActiveKey)
+        GpsTrackerPlugin.log("load(): persisted active=\(wasActive), authStatus=\(GpsTrackerPlugin.authStatusString(locationManager.authorizationStatus))")
+        if wasActive,
             let savedToken = defaults.string(forKey: GpsTrackerPlugin.defaultsTokenKey),
             let savedUrl = defaults.string(forKey: GpsTrackerPlugin.defaultsUrlKey) {
             token = savedToken
             serverUrl = savedUrl
+            GpsTrackerPlugin.log("load(): auto-resuming tracking (relaunch or significant-change wake)")
             beginTrackingIfNeeded()
         }
     }
 
     @objc func startTracking(_ call: CAPPluginCall) {
         guard let newToken = call.getString("token"), let newServerUrl = call.getString("serverUrl") else {
+            GpsTrackerPlugin.log("startTracking(): rejected, missing token or serverUrl")
             call.reject("Missing token or serverUrl")
             return
         }
@@ -109,11 +125,13 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
         defaults.set(newServerUrl, forKey: GpsTrackerPlugin.defaultsUrlKey)
         defaults.set(true, forKey: GpsTrackerPlugin.defaultsActiveKey)
 
+        GpsTrackerPlugin.log("startTracking() called, authStatus=\(GpsTrackerPlugin.authStatusString(locationManager.authorizationStatus)), alreadyTracking=\(isTracking)")
         beginTrackingIfNeeded()
         call.resolve()
     }
 
     @objc func stopTracking(_ call: CAPPluginCall) {
+        GpsTrackerPlugin.log("stopTracking() called")
         UserDefaults.standard.set(false, forKey: GpsTrackerPlugin.defaultsActiveKey)
         isTracking = false
         watchdogTimer?.invalidate()
@@ -146,8 +164,12 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
     // token/serverUrl above are updated either way; this just skips
     // re-subscribing when one is already running.
     private func beginTrackingIfNeeded() {
-        guard !isTracking else { return }
+        guard !isTracking else {
+            GpsTrackerPlugin.log("beginTrackingIfNeeded(): already tracking, skipping re-subscribe")
+            return
+        }
         isTracking = true
+        GpsTrackerPlugin.log("beginTrackingIfNeeded(): starting location subscription, authStatus=\(GpsTrackerPlugin.authStatusString(locationManager.authorizationStatus))")
         DispatchQueue.main.async {
             self.locationManager.startUpdatingLocation()
             // Backup wake mechanism for when iOS suspends the whole app process
@@ -168,7 +190,9 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
             self.watchdogTimer?.invalidate()
             self.watchdogTimer = Timer.scheduledTimer(withTimeInterval: self.watchdogIntervalS, repeats: true) { [weak self] _ in
                 guard let self = self else { return }
-                if Date().timeIntervalSince(self.lastLocationReceived) > self.watchdogStaleS {
+                let silentFor = Date().timeIntervalSince(self.lastLocationReceived)
+                if silentFor > self.watchdogStaleS {
+                    GpsTrackerPlugin.log("watchdog: silent for \(Int(silentFor))s, restarting location subscription, authStatus=\(GpsTrackerPlugin.authStatusString(self.locationManager.authorizationStatus))")
                     self.locationManager.stopUpdatingLocation()
                     self.locationManager.startUpdatingLocation()
                 }
@@ -179,6 +203,7 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
     public func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let loc = locations.last else { return }
         lastLocationReceived = Date()
+        GpsTrackerPlugin.log("didUpdateLocations: acc=\(Int(loc.horizontalAccuracy))m age=\(String(format: "%.1f", -loc.timestamp.timeIntervalSinceNow))s")
 
         let now = Date()
         if now.timeIntervalSince(lastPost) < minIntervalS { return }
@@ -188,7 +213,10 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
         let accurateEnough = accuracy < 0 || accuracy <= maxAccuracyM
 
         // Never post a fix this bad, heartbeat or not -- see GpsTrackerService.java.
-        if accuracy > maxHeartbeatAccuracyM { return }
+        if accuracy > maxHeartbeatAccuracyM {
+            GpsTrackerPlugin.log("didUpdateLocations: dropped, accuracy \(Int(accuracy))m exceeds maxHeartbeatAccuracyM")
+            return
+        }
         if !accurateEnough && !heartbeatDue { return }
 
         if accurateEnough, let last = lastLocation {
@@ -207,7 +235,17 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
 
     public func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         // CLLocationManager keeps retrying on its own; the watchdog above
-        // catches a subscription that's gone truly silent.
+        // catches a subscription that's gone truly silent. This was
+        // previously silently ignored with no logging at all, so a real
+        // recurring failure here (e.g. kCLErrorDenied after a mid-shift
+        // permission revocation) was invisible.
+        GpsTrackerPlugin.log("didFailWithError: \(error.localizedDescription)")
+    }
+
+    // Never previously implemented -- authorization changes (including a
+    // mid-shift downgrade or revocation) were completely invisible.
+    public func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        GpsTrackerPlugin.log("locationManagerDidChangeAuthorization: now \(GpsTrackerPlugin.authStatusString(manager.authorizationStatus))")
     }
 
     private static func authStatusString(_ status: CLAuthorizationStatus) -> String {
@@ -281,7 +319,10 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
     // to decide whether to queue the point for later instead of dropping it.
     private func sendPoint(lat: Double, lng: Double, accuracy: Double) async -> Bool {
         guard let token = token, let serverUrl = serverUrl,
-            let url = URL(string: serverUrl + "/api/crew/gps") else { return false }
+            let url = URL(string: serverUrl + "/api/crew/gps") else {
+            GpsTrackerPlugin.log("sendPoint: aborted, missing token/serverUrl/valid URL (token set=\(token != nil), serverUrl=\(serverUrl ?? "nil"))")
+            return false
+        }
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -299,9 +340,15 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
 
         do {
             let (_, response) = try await URLSession.shared.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse else { return false }
-            return (200...299).contains(httpResponse.statusCode)
+            guard let httpResponse = response as? HTTPURLResponse else {
+                GpsTrackerPlugin.log("sendPoint: no HTTPURLResponse")
+                return false
+            }
+            let ok = (200...299).contains(httpResponse.statusCode)
+            if !ok { GpsTrackerPlugin.log("sendPoint: server returned \(httpResponse.statusCode)") }
+            return ok
         } catch {
+            GpsTrackerPlugin.log("sendPoint: network error: \(error.localizedDescription)")
             return false
         }
     }
