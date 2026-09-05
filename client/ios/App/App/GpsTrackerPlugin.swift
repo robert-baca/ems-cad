@@ -1,5 +1,6 @@
 import Capacitor
 import CoreLocation
+import UserNotifications
 
 // iOS counterpart to android/.../GpsTrackerPlugin.java + GpsTrackerService.java.
 // Deliberately mirrors that architecture rather than using
@@ -67,6 +68,17 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
     private let watchdogIntervalS: TimeInterval = 30
     private let watchdogStaleS: TimeInterval = 75
 
+    // Mirrors GpsTrackerService.java's stale-warning alarm: rescheduled
+    // further into the future on every successful post, so it only ever
+    // fires if tracking silently stops for good (an app-update install
+    // killing the process, a crash, permission revoked, a long dead zone)
+    // and nothing resets it -- alerting the crew member directly on their
+    // own phone instead of relying on a dispatcher noticing the "GPS stale"
+    // badge on the dashboard. Same 12-minute delay as Android, just past the
+    // dashboard's own 10-minute stale threshold.
+    private static let staleWarningId = "gps-stale-warning"
+    private let staleWarningDelayS: TimeInterval = 12 * 60
+
     // Plain NSLog rather than Capacitor's own Logger/CAPLog -- those are
     // gated by config.isLoggingEnabled(), which defaults to off in release
     // builds (the same gap that made an earlier Android investigation
@@ -126,6 +138,7 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
         defaults.set(true, forKey: GpsTrackerPlugin.defaultsActiveKey)
 
         GpsTrackerPlugin.log("startTracking() called, authStatus=\(GpsTrackerPlugin.authStatusString(locationManager.authorizationStatus)), alreadyTracking=\(isTracking)")
+        requestNotificationAuthorizationIfNeeded()
         beginTrackingIfNeeded()
         call.resolve()
     }
@@ -134,6 +147,12 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
         GpsTrackerPlugin.log("stopTracking() called")
         UserDefaults.standard.set(false, forKey: GpsTrackerPlugin.defaultsActiveKey)
         isTracking = false
+        // A deliberate stop (logout, end of shift) shouldn't leave a stale-
+        // warning notification pending -- if the process is instead killed
+        // outright (app update, crash), this line never runs, and the
+        // already-scheduled warning is deliberately left armed since that's
+        // exactly the case it exists to catch.
+        cancelStaleWarning()
         // watchdogTimer is only ever created inside startWatchdog()'s
         // DispatchQueue.main.async block (Timer.scheduledTimer schedules it on
         // the main run loop) -- Apple requires invalidate() be called from that
@@ -256,6 +275,35 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
         GpsTrackerPlugin.log("locationManagerDidChangeAuthorization: now \(GpsTrackerPlugin.authStatusString(manager.authorizationStatus))")
     }
 
+    private func requestNotificationAuthorizationIfNeeded() {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, error in
+            GpsTrackerPlugin.log("notification authorization: granted=\(granted) error=\(error?.localizedDescription ?? "none")")
+        }
+    }
+
+    // Adding a request with an identifier that's already pending replaces it
+    // rather than stacking a second one -- this is what makes "call this on
+    // every successful post" behave as a reschedule instead of queuing up a
+    // pile of duplicate future notifications.
+    private func scheduleStaleWarning() {
+        let content = UNMutableNotificationContent()
+        content.title = "GPS Tracking Stopped"
+        content.body = "Your location hasn't updated in a while. Please reopen the EMS Crew app."
+        content.sound = .default
+
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: staleWarningDelayS, repeats: false)
+        let request = UNNotificationRequest(identifier: GpsTrackerPlugin.staleWarningId, content: content, trigger: trigger)
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error = error {
+                GpsTrackerPlugin.log("scheduleStaleWarning: failed to schedule: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func cancelStaleWarning() {
+        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [GpsTrackerPlugin.staleWarningId])
+    }
+
     private static func authStatusString(_ status: CLAuthorizationStatus) -> String {
         switch status {
         case .authorizedAlways: return "always"
@@ -285,6 +333,7 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
 
         let ok = await sendPoint(lat: lat, lng: lng, accuracy: accuracy)
         if ok {
+            scheduleStaleWarning()
             await drainQueue()
         } else {
             enqueueOffline(lat: lat, lng: lng, accuracy: accuracy)
@@ -316,6 +365,7 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
 
             let ok = await sendPoint(lat: point.lat, lng: point.lng, accuracy: point.accuracy)
             if !ok { return }
+            scheduleStaleWarning()
 
             offlineQueueLock.lock()
             if !offlineQueue.isEmpty { offlineQueue.removeFirst() }

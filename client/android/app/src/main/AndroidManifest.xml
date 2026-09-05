@@ -31,6 +31,10 @@
             </intent-filter>
         </receiver>
 
+        <!-- Only ever triggered by our own AlarmManager PendingIntent, not by
+             anything outside the app. -->
+        <receiver android:name=".GpsStaleWarningReceiver" android:exported="false" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

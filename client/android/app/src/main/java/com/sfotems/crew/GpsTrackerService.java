@@ -1,8 +1,10 @@
 package com.sfotems.crew;
 
+import android.app.AlarmManager;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
 import android.location.Location;
@@ -61,6 +63,16 @@ public class GpsTrackerService extends Service {
     // noticing a frozen pin and manually reopening the app.
     private static final long WATCHDOG_INTERVAL_MS = 30_000L;
     private static final long WATCHDOG_STALE_MS     = 75_000L;
+
+    // Rescheduled further into the future on every successful post (see
+    // scheduleStaleWarning()) -- if tracking silently stops for any reason
+    // (killed by an app update install, a crash, a dead zone, permission
+    // revoked) and nothing resets it, it fires on its own and tells the crew
+    // member directly on their phone, rather than relying on a dispatcher
+    // noticing the "GPS stale" badge on the dashboard. Picked just past the
+    // dashboard's own 10-minute stale threshold, so the phone buzzes at
+    // roughly the same time dispatch would already be seeing it flagged.
+    private static final long STALE_WARNING_DELAY_MS = 12 * 60 * 1000L;
 
     private FusedLocationProviderClient fusedClient;
     private LocationCallback            locationCallback;
@@ -178,6 +190,36 @@ public class GpsTrackerService extends Service {
         getSystemService(NotificationManager.class).createNotificationChannel(ch);
     }
 
+    private PendingIntent staleWarningIntent() {
+        Intent intent = new Intent(this, GpsStaleWarningReceiver.class);
+        // FLAG_UPDATE_CURRENT: re-arming with a new PendingIntent for the same
+        // request code replaces the alarm's fire time instead of stacking a
+        // second one. FLAG_IMMUTABLE is required targeting Android 12+ since
+        // this PendingIntent is never filled in by the receiving component.
+        return PendingIntent.getBroadcast(this, 0, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+    }
+
+    // Called on every successful post. Plain set() rather than an exact alarm --
+    // a reminder notification arriving a few minutes late is fine, and it avoids
+    // needing Android 12+'s SCHEDULE_EXACT_ALARM permission entirely.
+    private void scheduleStaleWarning() {
+        AlarmManager am = (AlarmManager) getSystemService(ALARM_SERVICE);
+        if (am == null) return;
+        am.set(AlarmManager.RTC_WAKEUP, System.currentTimeMillis() + STALE_WARNING_DELAY_MS, staleWarningIntent());
+    }
+
+    // Called on a deliberate stop (onDestroy running normally, e.g. logout or
+    // end of shift) so the warning doesn't fire after tracking was
+    // intentionally turned off. If the process is instead killed outright
+    // (an app update install, a crash, an OS low-memory kill), onDestroy may
+    // never run at all -- the alarm is then deliberately left armed, since
+    // that's exactly the case this feature exists to catch.
+    private void cancelStaleWarning() {
+        AlarmManager am = (AlarmManager) getSystemService(ALARM_SERVICE);
+        if (am != null) am.cancel(staleWarningIntent());
+    }
+
     // Fused location blends GPS with WiFi/cell/sensor data via Google Play
     // Services, which holds up far better than raw GPS_PROVIDER near rides and
     // large structures that cause GPS multipath/obstruction — that was the
@@ -264,6 +306,7 @@ public class GpsTrackerService extends Service {
         new Thread(() -> {
             boolean ok = sendPoint(lat, lng, acc);
             if (ok) {
+                scheduleStaleWarning();
                 drainQueue();
             } else {
                 synchronized (offlineQueue) {
@@ -283,6 +326,7 @@ public class GpsTrackerService extends Service {
             }
             if (pt == null) return;
             if (!sendPoint(pt[0], pt[1], (float) pt[2])) return; // still offline, stop trying
+            scheduleStaleWarning();
             synchronized (offlineQueue) {
                 offlineQueue.pollFirst();
             }
@@ -322,6 +366,7 @@ public class GpsTrackerService extends Service {
             fusedClient.removeLocationUpdates(locationCallback);
         }
         if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
+        cancelStaleWarning();
         super.onDestroy();
     }
 
