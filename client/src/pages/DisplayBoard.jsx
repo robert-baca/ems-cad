@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { io } from 'socket.io-client';
+import { useSocket } from '../hooks/useSocket';
 import ParkMap from '../components/map/ParkMap';
 import { STATUS_COLORS } from '../data/mockData';
 
@@ -22,84 +22,76 @@ export default function DisplayBoard() {
   const [units, setUnits] = useState([]);
   const [calls, setCalls] = useState([]);
 
+  const kickToLogin = useCallback(() => {
+    sessionStorage.removeItem('display_token');
+    navigate('/login', { state: { forceRole: 'display' } });
+  }, [navigate]);
+
   useEffect(() => {
-    const displayToken = sessionStorage.getItem('display_token');
-    if (!displayToken) {
-      navigate('/login', { state: { forceRole: 'display' } });
-      return;
-    }
+    if (!sessionStorage.getItem('display_token')) kickToLogin();
+  }, [kickToLogin]);
 
-    const socket = io(window.location.origin, { auth: { token: displayToken } });
-
-    socket.on('error:auth', () => {
-      sessionStorage.removeItem('display_token');
-      navigate('/login', { state: { forceRole: 'display' } });
-    });
-
-    // Join on every connect so the room is re-joined after reconnects
-    socket.on('connect', () => socket.emit('join:dispatcher'));
-
-    socket.on('init:state', ({ units: u, calls: c }) => {
+  // Routed through the shared useSocket hook (rather than a hand-rolled
+  // socket.io client) so this public board gets the same connection-health
+  // tracking and forced-reconnect-on-visibility guard as the dispatcher and
+  // crew apps — without it, a silently-dropped connection could leave the
+  // park's public display frozen on stale data while still claiming "LIVE".
+  const { isConnected } = useSocket({
+    'error:auth': kickToLogin,
+    'init:state': ({ units: u, calls: c }) => {
       setUnits(u);
       setCalls(c.filter(c => c.status !== 'closed'));
-    });
-
-    socket.on('unit:gps_update', ({ unit_id, lat, lng, timestamp }) => {
+    },
+    'unit:gps_update': ({ unit_id, lat, lng, timestamp }) => {
       setUnits(prev => prev.map(u =>
         u.id === unit_id ? { ...u, last_lat: lat, last_lng: lng, last_gps_at: timestamp } : u
       ));
-    });
-
-    socket.on('unit:status_change', ({ unit_id, status }) => {
+    },
+    'unit:status_change': ({ unit_id, status }) => {
       setUnits(prev => prev.map(u => u.id === unit_id ? { ...u, status } : u));
-    });
-
-    socket.on('unit:updated', (unit) => {
+    },
+    'unit:updated': (unit) => {
       setUnits(prev =>
         prev.some(u => u.id === unit.id)
           ? prev.map(u => u.id === unit.id ? unit : u)
           : [...prev, unit]
       );
-    });
-
-    socket.on('unit:removed', ({ unit_id }) => {
+    },
+    'unit:removed': ({ unit_id }) => {
       setUnits(prev => prev.filter(u => u.id !== unit_id));
-    });
-
-    socket.on('call:created', (call) => {
+    },
+    'call:created': (call) => {
       setCalls(prev => prev.some(c => c.id === call.id) ? prev : [call, ...prev]);
-    });
-
-    socket.on('call:status_change', ({ call_id, status }) => {
+    },
+    'call:status_change': ({ call_id, status }) => {
       setCalls(prev =>
         status === 'closed'
           ? prev.filter(c => c.id !== call_id)
           : prev.map(c => c.id === call_id ? { ...c, status } : c)
       );
-    });
-
-    socket.on('call:assigned', ({ call_id, unit_id }) => {
+    },
+    'call:assigned': ({ call_id, unit_id }) => {
       setCalls(prev => prev.map(c =>
         c.id === call_id ? { ...c, assigned_unit_id: unit_id, status: 'dispatched' } : c
       ));
-    });
-
-    socket.on('call:updated', ({ call_id, changes }) => {
+    },
+    'call:updated': ({ call_id, changes }) => {
       setCalls(prev => prev.map(c => c.id === call_id ? { ...c, ...changes } : c));
-    });
-
-    socket.on('shift:started', ({ units: u }) => {
+    },
+    'shift:started': ({ units: u }) => {
       setUnits(u);
       setCalls([]);
-    });
-
-    socket.on('shift:ended', ({ units: u }) => {
+    },
+    'shift:ended': ({ units: u }) => {
       setCalls([]);
       if (u) setUnits(u);
-    });
-
-    return () => socket.disconnect();
-  }, [navigate]);
+    }
+  }, {
+    getToken: () => sessionStorage.getItem('display_token'),
+    // Join on every connect (including reconnects) so the room membership
+    // survives the visibility-triggered forced reconnect in useSocket.
+    onConnect: (socket) => socket.emit('join:dispatcher')
+  });
 
   const activeCalls = calls.filter(c => c.status !== 'closed');
 
@@ -118,8 +110,10 @@ export default function DisplayBoard() {
           <span className="font-bold text-white tracking-wide">Six Flags EMS</span>
           <span className="text-gray-500 text-xs">Over Texas</span>
           <div className="flex items-center gap-1.5 ml-2 bg-gray-700 px-2 py-1 rounded-full">
-            <div className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse" />
-            <span className="text-green-400 text-xs font-medium">LIVE</span>
+            <div className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-green-400 animate-pulse' : 'bg-red-500'}`} />
+            <span className={`text-xs font-medium ${isConnected ? 'text-green-400' : 'text-red-400'}`}>
+              {isConnected ? 'LIVE' : 'RECONNECTING'}
+            </span>
           </div>
         </div>
         <div className="flex items-center gap-4">

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
+import { apiBase } from '../lib/native';
 import { useUnits } from '../hooks/useUnits';
 import { useCalls } from '../hooks/useCalls';
 import { useLocations } from '../hooks/useLocations';
@@ -97,7 +98,7 @@ export default function DispatcherDashboard() {
   // Load current shift on mount
   useEffect(() => {
     if (!user?.token) { setCurrentShift(null); return; }
-    fetch('/api/shift/current', { headers: { Authorization: `Bearer ${user.token}` } })
+    fetch(`${apiBase()}/shift/current`, { headers: { Authorization: `Bearer ${user.token}` } })
       .then(r => r.json())
       .then(data => setCurrentShift(data || null))
       .catch(() => setCurrentShift(null));
@@ -191,7 +192,7 @@ export default function DispatcherDashboard() {
     if (!window.confirm(confirmMsg)) return;
     setEndingShift(true);
     try {
-      const res  = await fetch('/api/shift/end', {
+      const res  = await fetch(`${apiBase()}/shift/end`, {
         method:  'POST',
         headers: { Authorization: `Bearer ${user.token}` }
       });

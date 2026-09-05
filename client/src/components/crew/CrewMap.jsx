@@ -44,6 +44,7 @@ export default function CrewMap({ call, myUnit, locations = [] }) {
   const mapRef              = useRef(null);
   const mapReadyRef         = useRef(false);
   const crewMarkerRef       = useRef(null);
+  const callMarkerRef       = useRef(null);
   const locationMarkersRef  = useRef({});
   const navControlRef       = useRef(null);
   const [mapLoaded, setMapLoaded] = useState(false);
@@ -101,9 +102,10 @@ export default function CrewMap({ call, myUnit, locations = [] }) {
     map.on('load', () => {
       mapReadyRef.current = true;
 
-      // Fixed call location pin
+      // Call location pin — kept up to date by the effect below if a
+      // dispatcher repositions it mid-call.
       if (hasCall) {
-        new mapboxgl.Marker({ element: makeCallEl(call.priority), anchor: 'center' })
+        callMarkerRef.current = new mapboxgl.Marker({ element: makeCallEl(call.priority), anchor: 'center' })
           .setLngLat([call.location_lng, call.location_lat])
           .addTo(map);
       }
@@ -148,10 +150,11 @@ export default function CrewMap({ call, myUnit, locations = [] }) {
       mapRef.current       = null;
       mapReadyRef.current  = false;
       crewMarkerRef.current = null;
+      callMarkerRef.current = null;
       locationMarkersRef.current = {};
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // intentionally only runs once — call location is static after dispatch
+  }, []); // init only runs once; the call pin's position is kept live by the effect below
 
   // Resize the map when its container size changes (e.g. full-screen expand/collapse)
   useEffect(() => {
@@ -196,6 +199,29 @@ export default function CrewMap({ call, myUnit, locations = [] }) {
         : EMPTY_LINE);
     }
   }, [myUnit?.last_lat, myUnit?.last_lng, hasCall, call?.location_lng, call?.location_lat]);
+
+  // A dispatcher can reposition a call's pin mid-call (see CallDetail's
+  // "reposition pin" action) — keep the marker in sync instead of only
+  // placing it once at map init.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReadyRef.current) return;
+
+    if (!hasCall) {
+      callMarkerRef.current?.remove();
+      callMarkerRef.current = null;
+      return;
+    }
+
+    const lngLat = [call.location_lng, call.location_lat];
+    if (callMarkerRef.current) {
+      callMarkerRef.current.setLngLat(lngLat);
+    } else {
+      callMarkerRef.current = new mapboxgl.Marker({ element: makeCallEl(call.priority), anchor: 'center' })
+        .setLngLat(lngLat)
+        .addTo(map);
+    }
+  }, [hasCall, call?.location_lat, call?.location_lng, call?.priority, mapLoaded]);
 
   // Landmark markers — incremental add/remove, same pattern ParkMap.jsx uses,
   // minus the delete button (read-only for crew).

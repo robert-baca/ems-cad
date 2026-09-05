@@ -48,7 +48,7 @@ export default function CloseCallModal({ call, onConfirm, onClose }) {
         </div>
 
         <div className="p-5 space-y-4">
-          {/* Closing comment — required, shown first */}
+          {/* Closing comment — optional, shown first */}
           <div>
             <label className="block text-gray-300 text-xs uppercase tracking-wider mb-1.5 font-semibold">
               Closing Comment <span className="text-gray-500 normal-case font-normal">(optional)</span>

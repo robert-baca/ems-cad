@@ -2,12 +2,19 @@ import { useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 import { sockUrl } from '../lib/native';
 
-export function useSocket(handlers = {}) {
+// `options.getToken` / `options.onConnect` let callers that don't authenticate
+// via the normal `cad_user` localStorage entry (e.g. the public display board,
+// which uses its own sessionStorage token and room) reuse this hook's
+// connection-health tracking and reconnect-on-visibility handling instead of
+// hand-rolling their own socket setup.
+export function useSocket(handlers = {}, options = {}) {
   const socketRef = useRef(null);
   const handlersRef = useRef(handlers);
   const registeredEventsRef = useRef(new Set());
   const [isConnected, setIsConnected] = useState(false);
   handlersRef.current = handlers;
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
 
   useEffect(() => {
     const getUser = () => {
@@ -16,7 +23,10 @@ export function useSocket(handlers = {}) {
     };
 
     socketRef.current = io(sockUrl(), {
-      auth: (cb) => { const u = getUser(); cb({ token: u?.token || null }); },
+      auth: (cb) => {
+        const token = optionsRef.current.getToken ? optionsRef.current.getToken() : getUser()?.token || null;
+        cb({ token });
+      },
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000
     });
@@ -25,6 +35,10 @@ export function useSocket(handlers = {}) {
 
     socket.on('connect', () => {
       setIsConnected(true);
+      if (optionsRef.current.onConnect) {
+        optionsRef.current.onConnect(socket);
+        return;
+      }
       const u = getUser();
       if (u?.role === 'dispatcher') {
         socket.emit('join:dispatcher');
@@ -62,18 +76,22 @@ export function useSocket(handlers = {}) {
   // at mount, so any event name absent from that first render's handlers
   // object would never get registered even if added afterward. Each
   // registration dispatches through handlersRef.current, which is always
-  // current, so re-running this on every render is safe and idempotent
-  // (registeredEventsRef guards against calling socket.on twice for the
-  // same event).
+  // current, so re-running this is safe and idempotent (registeredEventsRef
+  // guards against calling socket.on twice for the same event). Depending on
+  // a sorted-keys string rather than `handlers` itself means this only
+  // re-runs when the *set* of event names changes, not on every render just
+  // because a caller passes a fresh inline handlers object literal each time.
+  const handlerKeys = Object.keys(handlers).sort().join(',');
   useEffect(() => {
     const socket = socketRef.current;
     if (!socket) return;
-    Object.keys(handlers).forEach(event => {
+    Object.keys(handlersRef.current).forEach(event => {
       if (registeredEventsRef.current.has(event)) return;
       registeredEventsRef.current.add(event);
       socket.on(event, (...args) => handlersRef.current[event]?.(...args));
     });
-  }, [handlers]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [handlerKeys]);
 
   return { socketRef, isConnected };
 }

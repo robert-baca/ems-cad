@@ -51,7 +51,7 @@ export default function UnitHistoryModal({ unit, calls, onClose }) {
                 </span>
               </div>
               <div className="text-gray-400 text-xs mt-0.5">
-                {unit.unit_type} · {unitCalls.length} calls today
+                {unit.unit_type} · {unitCalls.length} calls this shift
                 {avgResp !== null && ` · Avg response ${avgResp}m`}
               </div>
             </div>
@@ -76,7 +76,7 @@ export default function UnitHistoryModal({ unit, calls, onClose }) {
           {unitCalls.length === 0 ? (
             <div className="text-center text-gray-500 py-12">
               <div className="text-3xl mb-2">📋</div>
-              No calls assigned today
+              No calls assigned this shift
             </div>
           ) : (
             <div className="divide-y divide-gray-700">

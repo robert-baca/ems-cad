@@ -13,25 +13,28 @@
 // would be wrong, so those still surface as an inline error the crew member
 // has to act on.
 //
-// Known edge case, deliberately not solved here: if a "close call" action
-// for a given call is queued and a later status update for that *same*
-// call gets queued behind it (e.g. crew taps a status button again before
-// noticing the call already closed), that status update is moot — the
-// server will likely reject it once the close-call ahead of it lands. Since
-// this queue stops-and-keeps on the first failure rather than dropping or
-// reordering, a permanently-invalid queued action like that would sit at
-// the head of the queue and block everything queued after it (for any
-// call/unit) from ever being retried. Not handled — flagging it here for
-// whoever revisits this.
+// If a "close call" action for a given call is queued and a later status
+// update for that *same* call gets queued behind it (e.g. crew taps a status
+// button again before noticing the call already closed), that status update
+// is moot — the server will reject it once the close-call ahead of it lands.
+// That rejection surfaces as a real HTTP response (`err.response` set), which
+// retryOfflineQueue below treats as "permanently invalid" and drops — as
+// opposed to a network failure (`err.response` unset), which stops the pass
+// so the still-possibly-valid action at the head can be retried later without
+// losing its place.
 //
-// Also not handled: a queued action replays with whatever JWT is in
-// localStorage at retry time, not the one active when it was queued. If the
-// crew member logs out and a different person logs into the same device
-// before the queue drains, a stale queued action would replay under the new
-// session's identity. Unlikely in practice (shift handoffs don't usually
-// happen mid-dead-zone), not worth the complexity of snapshotting tokens.
+// Each queued action also snapshots the JWT active at enqueue time and
+// replays under that exact token (see `token` field below and api.js's
+// request interceptor, which only falls back to localStorage's current token
+// when the caller hasn't already set an Authorization header) — so a shift
+// handoff on the same device while actions are still queued can't replay
+// under the wrong crew member's identity.
 
 import { updateUnitStatus, updateCallStatus, closeCall as apiCloseCall, addCallComment } from '../services/api';
+
+function getCurrentToken() {
+  try { return JSON.parse(localStorage.getItem('cad_user') || 'null')?.token || null; } catch { return null; }
+}
 
 const STORAGE_KEY = 'cad_offline_action_queue';
 const RETRY_INTERVAL_MS = 15000; // matches the app's existing polling-lite feel (see nowTick in CrewMobile.jsx)
@@ -64,10 +67,10 @@ function notify() {
 // eventual success is picked up the same way any other client's change
 // would be: the socket broadcast the server sends once the write lands.
 const RUNNERS = {
-  unit_status: ({ unitId, status }) => updateUnitStatus(unitId, status),
-  call_status: ({ callId, status }) => updateCallStatus(callId, status),
-  close_call:  ({ callId, disposition, close_notes }) => apiCloseCall(callId, disposition, close_notes),
-  comment:     ({ callId, text, author }) => addCallComment(callId, text, author),
+  unit_status: ({ unitId, status }, config) => updateUnitStatus(unitId, status, config),
+  call_status: ({ callId, status }, config) => updateCallStatus(callId, status, config),
+  close_call:  ({ callId, disposition, close_notes }, config) => apiCloseCall(callId, disposition, close_notes, config),
+  comment:     ({ callId, text, author }, config) => addCallComment(callId, text, author, config),
 };
 
 /** Current queue snapshot (array of { id, type, payload, createdAt }). */
@@ -91,7 +94,7 @@ export function enqueueOfflineAction(type, payload) {
   if (!RUNNERS[type]) return; // unknown type — programmer error, not a queueable failure
   const id = `${type}:${JSON.stringify(payload)}`;
   if (queue.some(a => a.id === id)) return;
-  queue = [...queue, { id, type, payload, createdAt: Date.now() }];
+  queue = [...queue, { id, type, payload, createdAt: Date.now(), token: getCurrentToken() }];
   saveQueue(queue);
   notify();
   scheduleRetryLoop();
@@ -100,10 +103,14 @@ export function enqueueOfflineAction(type, payload) {
 let retrying = false;
 
 /**
- * Retry queued actions in FIFO order. Each success is removed immediately;
- * the first failure (network or server) stops this pass and leaves it —
- * and everything queued after it — in place for the next attempt. Never
- * reorders, never drops a failed action.
+ * Retry queued actions in FIFO order. Each success is removed immediately.
+ * A network failure (no server response) stops this pass and leaves that
+ * action — and everything queued after it — in place for the next attempt,
+ * since the server isn't reachable to evaluate any of them right now. A
+ * genuine server rejection (a real HTTP response — e.g. a status update for
+ * a call that a close-call ahead of it already closed) means this exact
+ * action can never succeed, so it's dropped and the pass continues with the
+ * next one, instead of wedging every later action behind it forever.
  */
 export async function retryOfflineQueue() {
   if (retrying) return;
@@ -122,9 +129,16 @@ export async function retryOfflineQueue() {
         continue;
       }
       try {
-        await run(action.payload);
-      } catch {
-        break; // stop-and-keep — see module comment above for why
+        const config = action.token ? { headers: { Authorization: `Bearer ${action.token}` } } : undefined;
+        await run(action.payload, config);
+      } catch (err) {
+        if (err?.response) {
+          queue = queue.slice(1);
+          saveQueue(queue);
+          notify();
+          continue; // permanently invalid — drop and keep draining the rest
+        }
+        break; // network failure — stop-and-keep, see doc comment above
       }
       queue = queue.slice(1);
       saveQueue(queue);

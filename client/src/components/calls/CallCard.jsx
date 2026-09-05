@@ -1,5 +1,6 @@
 import { memo, useState, useEffect } from 'react';
 import { STATUS_COLORS, STATUS_LABELS } from '../../data/mockData';
+import { isCallPending } from '../../lib/calls';
 
 const PRIORITY_LABELS = { 1: 'P1 · High Acuity', 2: 'P2 · Medium Acuity', 3: 'P3 · Low Acuity' };
 const PRIORITY_COLORS = { 1: 'bg-red-500', 2: 'bg-orange-500', 3: 'bg-blue-500' };
@@ -19,10 +20,7 @@ function CallCard({ call, unit, isSelected, onClick }) {
 
   const elapsed     = elapsedMin(call.received_at);
   const statusColor = STATUS_COLORS[call.status] || '#9ca3af';
-  // NOTE: CallDetail.jsx defines "pending" as `!call.assigned_unit_id`
-  // instead of checking status. The two are meant to be equivalent — if
-  // either definition changes, update the other to match.
-  const isPending   = call.status === 'pending';
+  const isPending   = isCallPending(call);
   const isStale     = isPending && elapsed !== null && elapsed >= 5;
   const extraUnits  = (call.additional_unit_ids || []).length;
 

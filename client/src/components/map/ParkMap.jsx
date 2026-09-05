@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
 import { STATUS_COLORS } from '../../data/mockData';
+import { isCallPending } from '../../lib/calls';
 
 const TOKEN = import.meta.env.VITE_MAPBOX_TOKEN;
 mapboxgl.accessToken = TOKEN;
@@ -150,19 +151,39 @@ export default function ParkMap({
     source.setData({ type: 'FeatureCollection', features });
   }, [units, mapLoaded]);
 
-  // Update call pin markers
+  // Update call pin markers — incremental, same reasoning as the location
+  // markers effect below: only touch pins whose rendered fields actually
+  // changed, keyed by a signature of those fields. `calls` gets a new array
+  // reference on nearly any socket event (a comment on a different call, a
+  // status bump elsewhere), so unconditionally removing+recreating every
+  // marker here was closing whatever popup a dispatcher had open and
+  // flickering every pin on the map for unrelated updates.
   useEffect(() => {
     const map = mapRef.current;
-    if (!map) return;
-    Object.values(callMarkersRef.current).forEach(m => m.remove());
-    callMarkersRef.current = {};
+    if (!map || !mapReadyRef.current) return;
 
     const PRIORITY_COLORS = { 1: '#ef4444', 2: '#f97316', 3: '#6366f1' };
+    const locatedCalls = calls.filter(c => c.location_lat && c.location_lng);
+    const currentIds = new Set(locatedCalls.map(c => c.id));
 
-    calls.forEach(call => {
-      if (!call.location_lat || !call.location_lng) return;
-      const isPending = call.status === 'pending';
+    Object.keys(callMarkersRef.current).forEach(id => {
+      if (!currentIds.has(id)) {
+        callMarkersRef.current[id].marker.remove();
+        delete callMarkersRef.current[id];
+      }
+    });
+
+    locatedCalls.forEach(call => {
+      const isPending = isCallPending(call);
       const color = PRIORITY_COLORS[call.priority] || '#ef4444';
+      const signature = JSON.stringify([
+        call.location_lat, call.location_lng, call.priority, call.status,
+        call.call_number, call.call_type, call.location_name
+      ]);
+
+      const existing = callMarkersRef.current[call.id];
+      if (existing && existing.signature === signature) return;
+      existing?.marker.remove();
 
       const el = document.createElement('div');
       el.className = 'call-pin-wrapper';
@@ -192,7 +213,7 @@ export default function ParkMap({
         .setPopup(popup)
         .addTo(map);
 
-      callMarkersRef.current[call.id] = marker;
+      callMarkersRef.current[call.id] = { marker, signature };
     });
   }, [calls, mapLoaded]);
 

@@ -5,6 +5,7 @@ import CloseCallModal from './CloseCallModal';
 import GpsTrackTab from './GpsTrackTab';
 import { STATUS_COLORS, STATUS_LABELS, VALID_UNIT_STATUSES, CALL_TYPES } from '../../data/mockData';
 import { updateCallNarrative, updateCallLocation, updateCallDetails } from '../../services/api';
+import { isCallPending } from '../../lib/calls';
 
 const PRIORITY_COLORS = { 1: 'text-red-400', 2: 'text-orange-400', 3: 'text-blue-400' };
 
@@ -136,12 +137,7 @@ export default function CallDetail({
   const nextTsField = TS_SEQUENCE.slice(currentTsIdx + 1).find(f => !call[f]);
   const nextTsLabel = nextTsField ? TS_LABELS[nextTsField] : null;
   const commentCount = call.comments?.length || 0;
-  // NOTE: CallCard.jsx defines "pending" as `call.status === 'pending'`
-  // instead of checking assigned_unit_id. The two are meant to be equivalent
-  // (a call only reaches assigned_unit_id === null before its first
-  // assignment, at which point status is still 'pending') — if either
-  // definition changes, update the other to match.
-  const isPending = !call.assigned_unit_id;
+  const isPending = isCallPending(call);
 
   const TYPE_ICONS = { ALS: '🚑', BLS: '🚐', Cart: '🛺' };
 
