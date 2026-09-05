@@ -258,7 +258,18 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
         var postLoc = loc
         var withinNoiseRadius = false
         if accurateEnough, let last = lastLocation {
-            if loc.distance(from: last) < minDistanceM {
+            // A fixed minDistanceM only caught noise smaller than 5m -- but a
+            // "15-30m accuracy" fix near the park's steel structures/rides can
+            // easily read 10-40m from the true position on plain multipath,
+            // comfortably clearing a 5m threshold and still posting as "real
+            // movement" (confirmed on Android's Medic 1: repeated 10-50m
+            // jumps paired with 15-65m reported accuracy -- movement smaller
+            // than the fix's own admitted error margin, not statistically
+            // distinguishable from noise). Scaling the dead-band to this
+            // fix's own accuracy catches that; minDistanceM is just the floor
+            // for genuinely tight fixes.
+            let noiseRadius = max(minDistanceM, accuracy)
+            if loc.distance(from: last) < noiseRadius {
                 if !heartbeatDue { return }
                 withinNoiseRadius = true
                 postLoc = last

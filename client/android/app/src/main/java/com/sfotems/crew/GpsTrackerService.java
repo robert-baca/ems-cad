@@ -292,7 +292,18 @@ public class GpsTrackerService extends Service {
         if (accurateEnough && !Double.isNaN(lastLat)) {
             float[] result = new float[1];
             Location.distanceBetween(lastLat, lastLng, loc.getLatitude(), loc.getLongitude(), result);
-            if (result[0] < MIN_DISTANCE_M) {
+            // A fixed 5m dead-band only caught noise smaller than 5m — but a
+            // "15-30m accuracy" fix near the park's steel structures/rides can
+            // easily read 10-40m away from the true position on plain
+            // multipath, comfortably clearing a 5m threshold and still getting
+            // posted as "real movement" (confirmed on Medic 1: repeated log
+            // entries showed 10-50m jumps paired with 15-65m reported
+            // accuracy — movement smaller than the fix's own admitted error
+            // margin, which isn't statistically distinguishable from noise).
+            // Scaling the dead-band to this fix's own accuracy catches that;
+            // MIN_DISTANCE_M is just the floor for genuinely tight fixes.
+            float noiseRadius = Math.max(MIN_DISTANCE_M, accuracy);
+            if (result[0] < noiseRadius) {
                 if (!heartbeatDue) return;
                 // Heartbeat firing on a unit that hasn't actually moved — GPS
                 // noise this small (under MIN_DISTANCE_M) used to still get
