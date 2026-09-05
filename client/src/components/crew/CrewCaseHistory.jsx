@@ -64,6 +64,9 @@ export default function CrewCaseHistory({ units, onClose }) {
                   </span>
                 </div>
                 <div className="text-gray-500 text-xs mt-0.5">{fmtDate(call.received_at)}</div>
+                {call.location_name && (
+                  <div className="text-gray-400 text-xs mt-0.5 truncate">📍 {call.location_name}</div>
+                )}
                 <div className="flex gap-3 text-xs mt-1 text-gray-400">
                   {respMin !== null && <span>Response {respMin}m</span>}
                   {durMin !== null && <span>Duration {durMin}m</span>}
