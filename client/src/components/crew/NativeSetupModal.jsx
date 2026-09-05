@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Capacitor, registerPlugin } from '@capacitor/core';
+import { nativeCall } from '../../lib/native';
 
 const ALL_STEPS = [
   {
@@ -65,8 +66,7 @@ export default function NativeSetupModal({ onDone }) {
     setPermWarning('');
     try {
       if (current.key === 'location') {
-        const { Geolocation } = await import('@capacitor/geolocation');
-        const status = await Geolocation.requestPermissions({ permissions: ['location'] });
+        const status = await nativeCall('Geolocation', 'requestPermissions', { permissions: ['location'] });
         if (status.location !== 'granted') {
           setLoading(false);
           setPermWarning("Location wasn't granted — GPS tracking won't work until you allow it. You can retry, or continue and fix it later from the GPS banner.");
@@ -96,8 +96,7 @@ export default function NativeSetupModal({ onDone }) {
           }
         }
       } else if (current.key === 'notifications') {
-        const { LocalNotifications } = await import('@capacitor/local-notifications');
-        const status = await LocalNotifications.requestPermissions();
+        const status = await nativeCall('LocalNotifications', 'requestPermissions');
         if (status.display !== 'granted') {
           setLoading(false);
           setPermWarning("Notifications weren't granted — you won't get alert sounds for new calls. You can retry, or continue and fix it later.");

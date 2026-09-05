@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { registerPlugin } from '@capacitor/core';
-import { apiBase, PROD_URL } from '../lib/native';
+import { apiBase, PROD_URL, nativeCall } from '../lib/native';
 
 const STALE_MS = 3 * 60 * 1000;
 
@@ -132,14 +132,12 @@ export function useCrewGps({ token, unit, enabled = true }) {
       // duplicates the location subscription.
       const startTracking = async () => {
         try {
-          const { Geolocation } = await import('@capacitor/geolocation');
-          const status = await Geolocation.requestPermissions({ permissions: ['location'] });
+          const status = await nativeCall('Geolocation', 'requestPermissions', { permissions: ['location'] });
           if (!cancelled) setBgPermNeeded(status.location !== 'granted');
         } catch {}
         if (cancelled) return;
         try {
-          const { LocalNotifications } = await import('@capacitor/local-notifications');
-          await LocalNotifications.requestPermissions();
+          await nativeCall('LocalNotifications', 'requestPermissions');
         } catch {}
         if (cancelled) return;
 
