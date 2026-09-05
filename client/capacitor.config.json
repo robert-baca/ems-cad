@@ -13,6 +13,9 @@
   "android": {
     "loggingBehavior": "production"
   },
+  "ios": {
+    "contentInset": "automatic"
+  },
   "plugins": {
     "Geolocation": {
       "permissions": ["location", "coarseLocation", "backgroundLocation"]
