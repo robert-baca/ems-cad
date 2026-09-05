@@ -76,8 +76,15 @@ cad-system/
 
 ### Dispatcher Login
 - `POST /api/auth/login` with `{ username, password, role: 'dispatcher' }`
-- Password checked against bcrypt hash in-memory
-- Returns JWT with `{ role: 'dispatcher', id, name }`
+- Rate-limited (`loginRateLimit`, 20/min per IP) and per-username locked out after 5 failed attempts
+- Accounts live in the `dispatchers` Postgres table (id, username, full_name, password_hash, role: 'dispatcher'|'overwatch', token_version) — seeded from `DISPATCHER_DEFAULT_PASSWORD`/'ems2024' once if the table is empty, loaded into the in-memory `dispatcherAccounts` array at boot
+- Returns JWT with `{ role: 'dispatcher'|'overwatch', dispatcher_id/id, username, token_version, jti }`
+- `POST /api/auth/change-password` (self-service, dispatcher/overwatch only, wired to the "Change Password" section of `OptionsModal.jsx`) — bumps `token_version`, which invalidates every token issued before the change (see Token Lifecycle below)
+- There is no `role: 'crew'` branch here anymore — see the removed-legacy-login note in the Data Model section below.
+
+### Token Lifecycle
+- Every JWT carries a random `jti`. `POST /api/auth/logout` (called from `AuthContext.jsx`'s `logout()`) revokes that exact token immediately via an in-memory `revokedJtis` map, instead of leaving it valid for the rest of its 30-day life once the client just forgets it locally.
+- Dispatcher/overwatch tokens also carry `token_version`, checked against the account's current value on every request — changing a password invalidates *every* previously issued token for that account in one shot, not just the one used to change it.
 
 ### Crew Login (two-step)
 1. `POST /api/auth/crew-login` with `{ username, pin }`
@@ -118,7 +125,7 @@ other repo, not from anything in this codebase — don't remove them as
 | Variable | Purpose |
 |---|---|
 | `DATABASE_URL` | PostgreSQL connection string |
-| `JWT_SECRET` | Signs all JWTs |
+| `JWT_SECRET` | Signs all JWTs — **required in production**; the server calls `process.exit(1)` at boot if `NODE_ENV=production` and this isn't set, rather than falling back to the hardcoded dev secret (that fallback string is sitting in this repo's source, so running on it in prod means anyone who's seen the code can forge a token for any role) |
 | `DISPLAY_PIN` | PIN for display board access |
 | `SUPABASE_URL` | `https://okffzzlydmrcjfjwfdam.supabase.co` |
 | `SUPABASE_SERVICE_KEY` | `sb_secret_...` format key (new format, not legacy JWT) |
@@ -157,7 +164,8 @@ a unit's location from showing is the crew member opting out themselves.
 
 - Android: native foreground service (`GpsTrackerService.java`) posts `POST /api/crew/gps` on a 5s heartbeat via `FusedLocationProviderClient`
 - iOS: JS-side `useCrewGps.js` uses `BackgroundGeolocation.addWatcher()`, also posts to `POST /api/crew/gps`
-- Both platforms filter fixes with accuracy worse than 50m before posting
+- Client-side, both platforms filter fixes with accuracy worse than 50m before posting
+- Server-side (`applyGpsUpdate()` in `server/src/index.js`), the real threshold is looser on purpose: a fix worse than 100m (`DEGRADED_ACCURACY_M`) is only rejected if a better fix landed within the last 120s (`DEGRADED_ACCURACY_OVERRIDE_S`) — otherwise it's accepted so the dispatcher's map pin doesn't freeze during a longer signal-degraded stretch (e.g. near large structures). This is deliberate, not a gap to tighten to 50m — see the comment directly above `DEGRADED_ACCURACY_M`.
 - `PATCH /api/crew/gps-sharing` — crew-only self-service opt-out (`unit.gps_sharing_disabled`); this is the *only* thing `applyGpsUpdate()` checks before accepting a ping
 - Each post also carries `gpsPermission`/`gps_permission_status` — the actual OS-level permission tier (`always`/`whenInUse`/`denied`/etc on iOS via the native `LocationAuthPlugin`, permission+battery-optimization status on Android via `GpsPermissionStatus.java`) — so dispatch can see which phones are misconfigured (e.g. iOS stuck on "While Using") without walking around checking each one
 
@@ -174,7 +182,9 @@ unit: {
   last_lat, last_lng, last_gps_at,
   gps_sharing_disabled,  // bool — crew opted out of location sharing; in-memory only
   gps_permission_status, // 'always'/'whenInUse'/'ok'/'denied'/etc — in-memory only
-  password_hash,    // legacy unit password (not used for crew login anymore)
+  password_hash,    // dead column — the unit-number+password crew login it backed was
+                     // removed (unreachable from the app, no lockout, shared default
+                     // password); always null on newly created units now
   profile,          // JSONB — unit profile info
   beacon_active     // bool — in-memory only, not persisted to DB
 }
@@ -220,19 +230,39 @@ registered on Android.
 
 ---
 
-## iOS (Pending — needs Mac)
+## iOS (built, not yet build-verified — needs a Mac)
 
-The web code is already iOS-compatible:
-- `webkitCompassHeading` handled in `BeaconMode.jsx`
-- `DeviceOrientationEvent.requestPermission()` handled in `BeaconMode.jsx`
-- `@capacitor-community/background-geolocation` supports iOS
+This section previously said iOS was "Pending — needs Mac" as if `cap add ios` had never
+been run. That was stale: a real, hand-written iOS project already exists at `client/ios/`,
+with its own custom native GPS plugin mirroring the Android one.
 
-To add iOS:
-1. `npx cap add ios` (requires macOS + Xcode)
-2. Add to `Info.plist`: `NSLocationAlwaysAndWhenInUseUsageDescription`, `NSLocationWhenInUseUsageDescription`, `NSMotionUsageDescription`
-3. Configure background geolocation plugin for iOS
-4. Build with Xcode and submit via App Store Connect
-5. Apple Developer Program required ($99/year)
+- `client/ios/App/App/GpsTrackerPlugin.swift` — full CLLocationManager-based background
+  tracker (foreground-service equivalent): `allowsBackgroundLocationUpdates`,
+  `pausesLocationUpdatesAutomatically = false`, significant-change relaunch fallback, a
+  30s watchdog against silent stalls, and an offline queue. This — not
+  `@capacitor-community/background-geolocation` — is what actually posts
+  `POST /api/crew/gps` on iOS.
+- `@capacitor-community/background-geolocation` is still a dependency, but only used for
+  `openSettings()` (deep-link to iOS Settings) — see the comment at the top of
+  `GpsTrackerPlugin.swift` and in `useCrewGps.js`.
+- `Info.plist` has all the required usage-description keys and `UIBackgroundModes: location`.
+- `webkitCompassHeading` and `DeviceOrientationEvent.requestPermission()` are handled in
+  `BeaconMode.jsx`, same as documented above.
+- No Face ID/Touch ID lock screen exists on iOS yet — Android's `MainActivity.java` has one,
+  iOS doesn't. Open gap, not yet scheduled.
+- `SceneDelegate.swift` had a bug where it rooted the app in a plain `CAPBridgeViewController`
+  instead of `MainViewController` (the subclass that registers `GpsTrackerPlugin` with the
+  bridge in `capacitorDidLoad()`), which meant the plugin likely never registered and iOS GPS
+  tracking may have silently never worked. Fixed by rooting in `MainViewController` instead —
+  **still needs an actual Xcode build/run on a Mac to confirm**, since none was available when
+  this was fixed.
+
+To ship it:
+1. Open `client/ios/App/App.xcodeproj` in Xcode on a Mac, set a signing team, build for device.
+2. Confirm `GpsTrackerPlugin` registers on launch (watch for its `load()` log line) and the
+   native back button (added in `MainViewController.viewDidAppear`) renders.
+3. Decide whether a biometric lock screen is required for parity with Android before shipping.
+4. Submit via App Store Connect. Apple Developer Program required ($99/year).
 
 ---
 
