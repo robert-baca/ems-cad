@@ -283,13 +283,21 @@ public class GpsTrackerService extends Service {
         // Only suppress it between heartbeats now; the heartbeat always gets through.
         if (!accurateEnough && !heartbeatDue) return;
 
-        // Movement-distance dedup only makes sense with a trustworthy fix — skip it
-        // for degraded ones so a heartbeat-forced post isn't blocked by a bogus
-        // "hasn't moved" reading computed from an inaccurate position.
+        // This used to only run when accurateEnough (accuracy <= MAX_ACCURACY_M),
+        // on the reasoning that movement-distance dedup only makes sense with a
+        // trustworthy fix. But that let any degraded-but-not-dropped fix (50-300m
+        // accuracy) post its raw noise straight through on every heartbeat,
+        // un-dead-banded — confirmed on Medic 1/Medic 5: fixes landing just above
+        // the 50m cutoff (e.g. 51-65m) kept bouncing even after the dead-band below
+        // was scaled to accuracy, because they never reached this block at all.
+        // Scaling the radius to accuracy already makes the comparison trustworthy
+        // regardless of accuracy tier -- a 200m-accuracy fix gets a 200m radius, so
+        // real movement past that still clears it -- so there's no reason left to
+        // gate this on accurateEnough.
         double  postLat           = loc.getLatitude();
         double  postLng           = loc.getLongitude();
         boolean withinNoiseRadius = false;
-        if (accurateEnough && !Double.isNaN(lastLat)) {
+        if (!Double.isNaN(lastLat)) {
             float[] result = new float[1];
             Location.distanceBetween(lastLat, lastLng, loc.getLatitude(), loc.getLongitude(), result);
             // A fixed 5m dead-band only caught noise smaller than 5m — but a

@@ -255,9 +255,19 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
         // moving. Re-post the existing stable fix instead when within noise
         // range -- last_gps_at still refreshes (pin doesn't look frozen), it
         // just doesn't let raw noise move the pin.
+        //
+        // This block used to be gated on accurateEnough too, but that let any
+        // degraded-but-not-dropped fix (accuracy between maxAccuracyM and
+        // maxHeartbeatAccuracyM) post its raw noise straight through every
+        // heartbeat, un-dead-banded -- confirmed on Android's Medic 1/Medic 5:
+        // fixes just above the accurateEnough cutoff (e.g. 51-65m) kept
+        // bouncing even after the radius below was scaled to accuracy, since
+        // they never reached this block at all. Scaling the radius to
+        // accuracy already makes the comparison trustworthy at any accuracy
+        // tier, so there's no reason left to gate it on accurateEnough.
         var postLoc = loc
         var withinNoiseRadius = false
-        if accurateEnough, let last = lastLocation {
+        if let last = lastLocation {
             // A fixed minDistanceM only caught noise smaller than 5m -- but a
             // "15-30m accuracy" fix near the park's steel structures/rides can
             // easily read 10-40m from the true position on plain multipath,
