@@ -105,6 +105,16 @@ async function initDb() {
       profile JSONB
     )
   `);
+  try {
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS units_unit_number_unique_idx ON units (LOWER(unit_number))`);
+  } catch (err) {
+    console.error('[db] Could not create unique index on units.unit_number — duplicate unit names likely exist and need manual cleanup:', err.message);
+    const dupes = await pool.query(`
+      SELECT LOWER(unit_number) AS name, array_agg(id) AS ids
+      FROM units GROUP BY LOWER(unit_number) HAVING COUNT(*) > 1
+    `);
+    if (dupes.rows.length) console.error('[db] Duplicate unit_number rows:', dupes.rows);
+  }
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS calls (
@@ -709,7 +719,13 @@ app.post('/api/units', verifyToken, async (req, res) => {
     station:         null
   };
   units.push(newUnit);
-  saveUnit(newUnit).catch(console.error);
+  try {
+    await saveUnit(newUnit);
+  } catch (err) {
+    units = units.filter(u => u.id !== newUnit.id);
+    console.error('[units] failed to save new unit:', err);
+    return res.status(500).json({ error: 'Failed to save unit — please try again' });
+  }
   const sanitized = { ...newUnit, password_hash: undefined };
   io.to('dispatchers').emit('unit:updated', sanitized);
   res.status(201).json(sanitized);
@@ -720,6 +736,7 @@ app.put('/api/units/:id', verifyToken, async (req, res) => {
   const unit = units.find(u => u.id === req.params.id);
   if (!unit) return res.status(404).json({ error: 'Not found' });
 
+  const previous = { ...unit };
   const { unit_number, unit_name, unit_type, password } = req.body;
   if (unit_number !== undefined) {
     if (units.some(u => u.id !== unit.id && u.unit_number.trim().toLowerCase() === unit_number.trim().toLowerCase()))
@@ -730,7 +747,13 @@ app.put('/api/units/:id', verifyToken, async (req, res) => {
   if (unit_type   !== undefined)    unit.unit_type    = unit_type;
   if (password)                     unit.password_hash = bcrypt.hashSync(password, 8);
 
-  saveUnit(unit).catch(console.error);
+  try {
+    await saveUnit(unit);
+  } catch (err) {
+    Object.assign(unit, previous);
+    console.error('[units] failed to save unit update:', err);
+    return res.status(500).json({ error: 'Failed to save unit — please try again' });
+  }
   const sanitized = { ...unit, password_hash: undefined };
   io.to('dispatchers').emit('unit:updated', sanitized);
   res.json(sanitized);
@@ -777,8 +800,14 @@ app.delete('/api/units/:id', verifyToken, async (req, res) => {
   if (activeCall) {
     return res.status(409).json({ error: `Unit is on open call #${activeCall.call_number} — remove it from the call first` });
   }
-  units.splice(idx, 1);
-  deleteUnitFromDb(req.params.id).catch(console.error);
+  const [removed] = units.splice(idx, 1);
+  try {
+    await deleteUnitFromDb(req.params.id);
+  } catch (err) {
+    units.splice(idx, 0, removed);
+    console.error('[units] failed to delete unit:', err);
+    return res.status(500).json({ error: 'Failed to delete unit — please try again' });
+  }
   io.to('dispatchers').emit('unit:removed', { unit_id: req.params.id });
   res.json({ ok: true });
 });

@@ -117,13 +117,27 @@ export default function ShiftSetup({ token, onShiftStarted, onViewHistory }) {
     }
   };
 
-  const handleRemoveUnit = (unit_id) => {
+  const handleRemoveUnit = async (unit_id) => {
+    const removedUnit     = units.find(u => u.id === unit_id);
+    const removedStaffing = staffing[unit_id];
     setUnits(prev => prev.filter(u => u.id !== unit_id));
     setStaffing(prev => { const next = { ...prev }; delete next[unit_id]; return next; });
-    fetch(`${apiBase()}/units/${unit_id}`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${token}` }
-    }).catch(() => {});
+    try {
+      const res = await fetch(`${apiBase()}/units/${unit_id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to remove unit');
+      }
+    } catch (err) {
+      // Removal didn't actually persist — restore it so the UI matches the
+      // server instead of drifting until the next full-list refresh.
+      if (removedUnit) setUnits(prev => [...prev, removedUnit]);
+      if (removedStaffing) setStaffing(prev => ({ ...prev, [unit_id]: removedStaffing }));
+      setError(err.message);
+    }
   };
 
   const doStart = async () => {
