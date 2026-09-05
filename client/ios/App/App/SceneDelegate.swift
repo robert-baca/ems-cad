@@ -34,7 +34,8 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 
         // Show the overlay opaque from the very first frame -- otherwise
         // there'd be a brief flash of the WebView's content before
-        // sceneDidBecomeActive fires and starts the real biometric prompt.
+        // sceneWillEnterForeground fires (later in this same cold-launch
+        // sequence) and starts the real biometric prompt.
         ensureOverlayExists()
         showOverlay()
 
@@ -49,11 +50,34 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         SceneDelegateProxy.shared.scene(scene, continue: userActivity)
     }
 
-    func sceneDidBecomeActive(_ scene: UIScene) {
+    // Deliberately NOT hooking the lock decision off sceneDidBecomeActive/
+    // sceneWillResignActive -- those fire for ANY transient loss of "active"
+    // state, and presenting the system's OWN Face ID / passcode-fallback UI
+    // is exactly such a transient: the scene briefly resigns/reactivates
+    // around it without ever actually backgrounding. Reproduced on-device:
+    // a stray reactivation from that transient landed right as
+    // authInProgress flipped back to false after a failed attempt, and
+    // re-triggered promptUnlock() -- a fresh LAContext + evaluatePolicy call
+    // with no user action at all -- which tore down the very UI (including
+    // the system's own "Enter Passcode" fallback) the user needed to use
+    // instead, over and over. sceneDidEnterBackground/sceneWillEnterForeground
+    // only fire on a genuine background<->foreground transition, which
+    // Face ID's own UI does not cause, so they can't race with it this way.
+    func sceneDidEnterBackground(_ scene: UIScene) {
+        pausedAt = Date()
+        ensureOverlayExists()
+        if !locked {
+            lockOverlay?.showBlankForSnapshot()
+        }
+        showOverlay()
+    }
+
+    func sceneWillEnterForeground(_ scene: UIScene) {
         if authInProgress { return }
-        // sceneDidBecomeActive always follows willConnectTo, so locked's
-        // initial "true" value alone already covers first launch here, grace
-        // period or not (mirrors MainActivity.onResume's equivalent comment).
+        // This also fires once during the cold-launch sequence (right after
+        // willConnectTo, before sceneDidBecomeActive), so it alone covers
+        // both "just launched" and "returning from background" -- no need
+        // to also call promptUnlock() from willConnectTo.
         if !locked && withinGracePeriod() {
             lockOverlay?.isHidden = true
             return
@@ -63,24 +87,30 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         promptUnlock()
     }
 
+    // Only used to cover/uncover already-unlocked content around a
+    // transient inactive moment (Control Center, a system alert, Face ID's
+    // own UI) that never actually backgrounds the app -- NOT used to decide
+    // whether to (re)lock; sceneWillEnterForeground owns that decision.
     func sceneWillResignActive(_ scene: UIScene) {
-        if !authInProgress {
-            pausedAt = Date()
-        }
+        guard !locked, !authInProgress else { return }
         // iOS snapshots the current view hierarchy right after this call for
         // the app-switcher card -- there's no FLAG_SECURE equivalent on iOS to
         // block that outright (see MainActivity.java's FLAG_SECURE comment for
         // the Android side of this), so the best available equivalent is to
-        // cover sensitive content before the snapshot is taken. If we're
-        // already locked, the overlay is already up and doing this; if not,
-        // show a blank cover now and let sceneDidBecomeActive decide whether
-        // to remove it (grace period still valid) or turn it into a real
-        // unlock prompt.
+        // cover sensitive content before the snapshot is taken.
         ensureOverlayExists()
-        if !locked {
-            lockOverlay?.showBlankForSnapshot()
-        }
+        lockOverlay?.showBlankForSnapshot()
         showOverlay()
+    }
+
+    func sceneDidBecomeActive(_ scene: UIScene) {
+        // Undo the blank-for-snapshot cover from sceneWillResignActive if
+        // that was just a transient inactive moment, not a real
+        // backgrounding (which sceneWillEnterForeground would have already
+        // turned into a real lock prompt instead).
+        if !locked && !authInProgress {
+            lockOverlay?.isHidden = true
+        }
     }
 
     private func withinGracePeriod() -> Bool {
