@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { changePassword } from '../../services/api';
 
 const STORAGE_KEY = 'ems_cad_quick_types';
 
@@ -21,9 +22,34 @@ export default function OptionsModal({
   const [input,      setInput]      = useState('');
   const [error,      setError]      = useState('');
 
+  const [currentPw, setCurrentPw] = useState('');
+  const [newPw,      setNewPw]     = useState('');
+  const [confirmPw,  setConfirmPw] = useState('');
+  const [pwError,    setPwError]   = useState('');
+  const [pwSuccess,  setPwSuccess] = useState('');
+  const [pwSaving,   setPwSaving]  = useState(false);
+
   useEffect(() => {
     setQuickTypes(loadQuickTypes());
   }, []);
+
+  const handleChangePassword = async () => {
+    setPwError('');
+    setPwSuccess('');
+    if (!currentPw || !newPw || !confirmPw) { setPwError('Fill in all three fields.'); return; }
+    if (newPw.length < 8) { setPwError('New password must be at least 8 characters.'); return; }
+    if (newPw !== confirmPw) { setPwError('New password and confirmation don\'t match.'); return; }
+    setPwSaving(true);
+    try {
+      await changePassword(currentPw, newPw);
+      setPwSuccess('Password changed. You\'ll need it next time you sign in.');
+      setCurrentPw(''); setNewPw(''); setConfirmPw('');
+    } catch (err) {
+      setPwError(err.response?.data?.error || 'Failed to change password — please try again.');
+    } finally {
+      setPwSaving(false);
+    }
+  };
 
   const handleAdd = () => {
     const val = input.trim();
@@ -136,6 +162,46 @@ export default function OptionsModal({
                 ))}
               </div>
             )}
+          </div>
+
+          {/* ── Change password ── */}
+          <div>
+            <div className="text-gray-300 text-sm font-semibold mb-1">Change Password</div>
+            <div className="text-gray-500 text-xs mb-3">
+              Changing your password signs out every other device using this account.
+            </div>
+            <div className="space-y-2">
+              <input
+                type="password"
+                value={currentPw}
+                onChange={e => { setCurrentPw(e.target.value); setPwError(''); setPwSuccess(''); }}
+                placeholder="Current password"
+                className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500"
+              />
+              <input
+                type="password"
+                value={newPw}
+                onChange={e => { setNewPw(e.target.value); setPwError(''); setPwSuccess(''); }}
+                placeholder="New password (min. 8 characters)"
+                className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500"
+              />
+              <input
+                type="password"
+                value={confirmPw}
+                onChange={e => { setConfirmPw(e.target.value); setPwError(''); setPwSuccess(''); }}
+                placeholder="Confirm new password"
+                className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500"
+              />
+              <button
+                onClick={handleChangePassword}
+                disabled={pwSaving}
+                className="w-full py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-semibold rounded-lg transition-colors"
+              >
+                {pwSaving ? 'Saving…' : 'Update Password'}
+              </button>
+            </div>
+            {pwError && <p className="text-red-400 text-xs mt-1">{pwError}</p>}
+            {pwSuccess && <p className="text-green-400 text-xs mt-1">{pwSuccess}</p>}
           </div>
 
         </div>

@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { apiBase } from '../lib/native';
+import { stopCrewGpsTracking } from '../hooks/useCrewGps';
 
 const api = axios.create({
   baseURL: apiBase(),
@@ -24,6 +25,7 @@ export const createUnit = (data) => api.post('/units', data);
 export const updateUnitStatus = (unitId, status) =>
   api.patch(`/units/${unitId}/status`, { status });
 export const editUnit = (unitId, data) => api.put(`/units/${unitId}`, data);
+export const updateUnitProfile = (unitId, profile) => api.put(`/units/${unitId}/profile`, profile);
 export const deleteUnit = (unitId) => api.delete(`/units/${unitId}`);
 export const clearUnitGps = (unitId) => api.delete(`/units/${unitId}/gps`);
 export const toggleUnitBeacon  = (unitId, active) => api.patch(`/units/${unitId}/beacon`,   { active });
@@ -75,15 +77,25 @@ export const setWayfindingEnabled  = (enabled) => api.put('/wayfinding/settings'
 // ── Auth ───────────────────────────────────────────────────────────
 export const loginDispatcher = (username, password) =>
   api.post('/auth/login', { username, password, role: 'dispatcher' });
-export const loginCrew = (unit_number, password) =>
-  api.post('/auth/login', { username: unit_number, password, role: 'crew' });
 export const refreshToken = () => api.post('/auth/refresh');
+// Revokes this exact token server-side immediately, rather than leaving it
+// valid for the rest of its 30-day lifetime after we merely forget it locally.
+export const logoutRequest = () => api.post('/auth/logout');
+export const changePassword = (currentPassword, newPassword) =>
+  api.post('/auth/change-password', { currentPassword, newPassword });
 
 // Redirect to login when token expires or is invalid
 api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
+      // An involuntary token invalidation (admin-forced logout, secret
+      // rotation, clock skew) must stop the native GPS tracker the same way
+      // every other logout path does (see CrewMobile.jsx) — otherwise the
+      // Android/iOS foreground service keeps running and posting to
+      // /api/crew/gps with a dead token indefinitely, since it's independent
+      // of this JS layer once started.
+      stopCrewGpsTracking();
       localStorage.removeItem('cad_user');
       window.location.href = '/login';
     }

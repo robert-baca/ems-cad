@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useRef } from 'react';
-import { refreshToken } from '../services/api';
+import { refreshToken, logoutRequest } from '../services/api';
 
 const AuthContext = createContext(null);
 
@@ -93,6 +93,10 @@ export function AuthProvider({ children }) {
   };
 
   const logout = () => {
+    // Best-effort: revoke this token server-side (see api.js) before we
+    // forget it locally. Fire-and-forget — a network hiccup or the token
+    // already being invalid shouldn't block the user from signing out.
+    logoutRequest().catch(() => {});
     localStorage.removeItem('cad_user');
     clearInterval(refreshTimerRef.current);
     setUser(null);
