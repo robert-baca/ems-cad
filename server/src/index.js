@@ -1486,6 +1486,24 @@ function getUnitActiveCall(unitId, excludeCallId = null) {
 // physically-impossible jumps.
 const MAX_GPS_SPEED_MPS = 20;
 
+// Confirmed live 2026-09-05: a phone that loses GPS lock falls back to
+// network/cell-tower positioning, which can self-report a consistent ~300m
+// accuracy (the client's own maxHeartbeatAccuracyM ceiling) while the actual
+// reported lat/lng scatters across a wide area, heartbeat after heartbeat,
+// even though the unit isn't moving at all. The implausible-speed check alone
+// wasn't enough protection against this: it only compares against the last
+// *accepted* fix, so the first scattered point that happens to slip under
+// MAX_GPS_SPEED_MPS gets accepted and becomes the new reference -- poisoning
+// every comparison after it, so bad points end up validating other bad points
+// instead of getting caught. This rejects a degraded fix outright whenever a
+// recent-enough position already exists to display, so one bad reading can't
+// corrupt the reference the speed check relies on. Only lets a degraded fix
+// through once nothing better has arrived in a while, matching the same
+// "don't let the pin freeze" reasoning behind the client's own heartbeat
+// bypass (see GpsTrackerService.java / GpsTrackerPlugin.swift).
+const DEGRADED_ACCURACY_M = 100;
+const DEGRADED_ACCURACY_OVERRIDE_S = 120;
+
 function haversineMeters(lat1, lng1, lat2, lng2) {
   const R = 6371000;
   const toRad = d => d * Math.PI / 180;
@@ -1505,7 +1523,7 @@ function haversineMeters(lat1, lng1, lat2, lng2) {
 // ping is the crew member explicitly opting out themselves (see
 // PATCH /api/crew/gps-sharing) — a dispatcher can't force a unit to be
 // tracked against that.
-function applyGpsUpdate(unit, lat, lng, timestamp) {
+function applyGpsUpdate(unit, lat, lng, timestamp, accuracy) {
   // The crew GPS endpoint never validated coordinate ranges — a garbage/corrupted
   // fix would be accepted as-is and broadcast as the unit's true position with
   // no sanity check.
@@ -1526,6 +1544,14 @@ function applyGpsUpdate(unit, lat, lng, timestamp) {
   if (unit.last_gps_fix_ts && new Date(timestamp).getTime() <= new Date(unit.last_gps_fix_ts).getTime()) {
     console.log(`[gps:in] ${unit.unit_number} — rejected by dedup (ts ${timestamp} <= last ${unit.last_gps_fix_ts})`);
     return false;
+  }
+
+  if (accuracy != null && accuracy > DEGRADED_ACCURACY_M && unit.last_gps_fix_ts) {
+    const sinceLastFixS = (new Date(timestamp).getTime() - new Date(unit.last_gps_fix_ts).getTime()) / 1000;
+    if (sinceLastFixS < DEGRADED_ACCURACY_OVERRIDE_S) {
+      console.log(`[gps] ${unit.unit_number} — rejected, degraded accuracy (${accuracy}m) with a recent-enough fix already on record`);
+      return false;
+    }
   }
 
   // GPS multipath near large structures can produce a fix that self-reports
@@ -1593,13 +1619,14 @@ app.post('/api/crew/gps', verifyToken, (req, res) => {
     io.to('dispatchers').emit('unit:updated', { ...unit, password_hash: undefined });
   }
 
-  // TEMPORARY — diagnosing GPS issues in production: logging every inbound
-  // post, including the fix's self-reported accuracy, so a wildly-off
-  // position (network/cell-tower fallback) is visible instead of guessed at.
+  // Logging every inbound post including self-reported accuracy so a
+  // wildly-off position (network/cell-tower fallback) is visible instead of
+  // guessed at -- accuracy itself now also feeds applyGpsUpdate's degraded-fix
+  // check below, not just this log line.
   const accuracy = req.body.accuracy != null ? parseFloat(req.body.accuracy) : null;
   console.log(`[gps:in] ${unit.unit_number} ${lat.toFixed(5)},${lng.toFixed(5)} acc=${accuracy ?? '?'}m onCall=${!!getUnitActiveCall(unit.id)}`);
 
-  applyGpsUpdate(unit, lat, lng, new Date().toISOString());
+  applyGpsUpdate(unit, lat, lng, new Date().toISOString(), accuracy);
   res.json({ ok: true });
 });
 
