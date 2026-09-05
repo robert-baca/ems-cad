@@ -1305,7 +1305,7 @@ app.post('/api/shift/start', verifyToken, async (req, res) => {
     return res.status(409).json({ error: 'A shift is already active' });
 
   const { shift_label, unit_staffing = [] } = req.body;
-  currentShift = {
+  const newShift = {
     id:          `shift-${Date.now()}`,
     shift_label: shift_label || 'Day Shift',
     date:        new Date().toISOString().split('T')[0],
@@ -1314,6 +1314,14 @@ app.post('/api/shift/start', verifyToken, async (req, res) => {
     started_by:  req.user.username,
     unit_staffing
   };
+
+  try {
+    await saveShift(newShift);
+  } catch (err) {
+    console.error('[shift] failed to persist shift start:', err);
+    return res.status(500).json({ error: 'Failed to start shift — please try again' });
+  }
+  currentShift = newShift;
 
   unit_staffing.forEach(({ unit_id, crew, unit_type, in_service, station }) => {
     const unit = units.find(u => u.id === unit_id);
@@ -1330,8 +1338,6 @@ app.post('/api/shift/start', verifyToken, async (req, res) => {
     saveUnit(unit).catch(console.error);
   });
 
-  await saveShift(currentShift).catch(console.error);
-
   const sanitizedUnits = units.map(u => ({ ...u, password_hash: undefined }));
   io.to('dispatchers').emit('shift:started', { shift: currentShift, units: sanitizedUnits });
   res.json({ shift: currentShift, units: sanitizedUnits });
@@ -1343,7 +1349,13 @@ app.post('/api/shift/end', verifyToken, async (req, res) => {
     return res.status(404).json({ error: 'No active shift' });
 
   currentShift.ended_at = new Date().toISOString();
-  await saveShift(currentShift).catch(console.error);
+  try {
+    await saveShift(currentShift);
+  } catch (err) {
+    currentShift.ended_at = null;
+    console.error('[shift] failed to persist shift end — leaving shift active:', err);
+    return res.status(500).json({ error: 'Failed to end shift — please try again' });
+  }
 
   const shiftStart  = new Date(currentShift.started_at);
   const shiftCalls  = calls.filter(c => new Date(c.received_at) >= shiftStart);
@@ -1403,7 +1415,11 @@ app.post('/api/shift/end', verifyToken, async (req, res) => {
   calls = openCalls;
   units.forEach(u => {
     if (busyUnitIds.has(u.id)) return;
-    u.status = 'out_of_service';
+    u.status  = 'out_of_service';
+    // Crew/station belong to the shift that just ended — leaving them set
+    // pre-fills the next Start Shift screen with yesterday's medic names.
+    u.crew    = null;
+    u.station = null;
     saveUnit(u).catch(console.error);
   });
 
