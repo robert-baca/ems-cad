@@ -27,11 +27,13 @@
         android:layout_marginBottom="6dp" />
 
     <TextView
+        android:id="@+id/lock_subtitle"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="Locked for your protection"
         android:textColor="#9CA3AF"
         android:textSize="14sp"
+        android:gravity="center"
         android:layout_marginBottom="28dp" />
 
     <Button
@@ -45,5 +47,19 @@
         android:textAllCaps="false"
         android:textColor="#FFFFFF"
         android:background="#16A34A" />
+
+    <Button
+        android:id="@+id/lock_open_settings_button"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="14dp"
+        android:minWidth="180dp"
+        android:paddingTop="12dp"
+        android:paddingBottom="12dp"
+        android:text="Open Security Settings"
+        android:textAllCaps="false"
+        android:textColor="#FFFFFF"
+        android:background="#374151"
+        android:visibility="gone" />
 
 </LinearLayout>

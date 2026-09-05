@@ -9,6 +9,11 @@ if (keystorePropertiesFile.exists()) {
 android {
     namespace = "com.sfotems.crew"
     compileSdk = rootProject.ext.compileSdkVersion
+    buildFeatures {
+        // Needed for BuildConfig.DEBUG, used by MainActivity to gate remote
+        // WebView debugging (setWebContentsDebuggingEnabled) to debug builds only.
+        buildConfig true
+    }
     defaultConfig {
         applicationId "com.sfotems.crew"
         minSdkVersion rootProject.ext.minSdkVersion

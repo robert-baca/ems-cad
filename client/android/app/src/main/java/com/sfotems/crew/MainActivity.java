@@ -2,13 +2,16 @@ package com.sfotems.crew;
 
 import android.app.KeyguardManager;
 import android.content.Context;
+import android.content.Intent;
 import android.os.Build;
 import android.os.Bundle;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
+import android.provider.Settings;
 import android.webkit.WebView;
 import android.widget.Button;
+import android.widget.TextView;
 
 import androidx.activity.OnBackPressedCallback;
 import androidx.annotation.NonNull;
@@ -20,6 +23,7 @@ import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.JSExport;
 import com.getcapacitor.PluginHandle;
 import com.getcapacitor.WebViewListener;
+import com.sfotems.crew.BuildConfig;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -43,13 +47,22 @@ public class MainActivity extends BridgeActivity {
     private long pausedAtMs = 0;
 
     private View lockOverlay;
+    private TextView lockSubtitle;
+    private Button unlockButton;
+    private Button openSettingsButton;
     private boolean locked = true;
     private boolean authInProgress = false;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(GpsTrackerPlugin.class);
-        WebView.setWebContentsDebuggingEnabled(true);
+        // Remote WebView debugging (chrome://inspect) exposes localStorage (JWTs) and
+        // live network/GPS traffic to anyone with brief physical/USB access, bypassing
+        // the biometric lock entirely since inspection happens below the UI layer.
+        // Only ever enable it in debug builds.
+        if (BuildConfig.DEBUG) {
+            WebView.setWebContentsDebuggingEnabled(true);
+        }
         super.onCreate(savedInstanceState);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         // Blocks screenshots/screen-recording and blanks the Recents thumbnail --
@@ -192,9 +205,35 @@ public class MainActivity extends BridgeActivity {
         if (lockOverlay != null) return;
         ViewGroup root = findViewById(android.R.id.content);
         lockOverlay = getLayoutInflater().inflate(R.layout.lock_overlay, root, false);
-        Button unlockButton = lockOverlay.findViewById(R.id.lock_unlock_button);
+        lockSubtitle = lockOverlay.findViewById(R.id.lock_subtitle);
+        unlockButton = lockOverlay.findViewById(R.id.lock_unlock_button);
+        openSettingsButton = lockOverlay.findViewById(R.id.lock_open_settings_button);
+        // Doubles as "Try Again" when there's no device lock at all -- re-runs the
+        // canAuthenticate() check in case the user just set one up.
         unlockButton.setOnClickListener(v -> promptUnlock());
+        openSettingsButton.setOnClickListener(v ->
+                startActivity(new Intent(Settings.ACTION_SECURITY_SETTINGS)));
         root.addView(lockOverlay);
+    }
+
+    // Resets the overlay back to its normal "prompting" copy/buttons before each
+    // promptUnlock() attempt, so a previous "no device lock" state doesn't linger
+    // once a real authenticator becomes available.
+    private void resetLockOverlayState() {
+        if (lockSubtitle != null) lockSubtitle.setText("Locked for your protection");
+        if (unlockButton != null) unlockButton.setText("Unlock");
+        if (openSettingsButton != null) openSettingsButton.setVisibility(View.GONE);
+    }
+
+    // No biometric enrolled AND no device PIN/pattern/password set -- there is no
+    // local auth factor at all to challenge. Stay locked and guide the user to set
+    // one up rather than failing open.
+    private void showNoDeviceLockState() {
+        if (lockSubtitle != null) {
+            lockSubtitle.setText("Set a screen lock on this device to continue");
+        }
+        if (unlockButton != null) unlockButton.setText("Try Again");
+        if (openSettingsButton != null) openSettingsButton.setVisibility(View.VISIBLE);
     }
 
     private void hideLockOverlay() {
@@ -213,6 +252,7 @@ public class MainActivity extends BridgeActivity {
         if (lockOverlay != null) {
             lockOverlay.setVisibility(View.VISIBLE);
         }
+        resetLockOverlayState();
 
         BiometricManager biometricManager = BiometricManager.from(this);
         boolean biometricAvailable = biometricManager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_WEAK)
@@ -220,10 +260,14 @@ public class MainActivity extends BridgeActivity {
         boolean deviceCredentialAvailable = canUseDeviceCredentialFallback();
 
         if (!biometricAvailable && !deviceCredentialAvailable) {
-            // No biometrics enrolled and no screen lock set -- this device has no
-            // local auth factor at all. Fail open rather than block crew-critical
-            // CAD access over something outside anyone's control here.
-            hideLockOverlay();
+            // No biometrics enrolled AND no device PIN/pattern/password set -- this
+            // device has no local auth factor at all to challenge. Previously this
+            // failed open (hideLockOverlay()) and granted full access with zero
+            // authentication -- exactly the scenario where the lock matters most
+            // (e.g. a lost phone with no screen lock exposing live crew/call data).
+            // Stay locked and guide the user to set a device lock instead; the
+            // "Try Again"/unlock button re-runs this check.
+            showNoDeviceLockState();
             return;
         }
 
