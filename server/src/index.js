@@ -178,6 +178,11 @@ function rateLimit(windowMs, max, keyFn) {
     }
     if (entry.count >= max) {
       const retryAfterS = Math.ceil((entry.resetAt - now) / 1000);
+      // A 401 from an expired/invalid token and this 429 both used to fail
+      // completely silently — a unit going dark had zero trace in the logs
+      // to tell "device never sent anything" apart from "server rejected
+      // it." Log it so that distinction is visible next time.
+      console.warn(`[ratelimit] ${req.method} ${req.originalUrl} key=${key} — ${entry.count}/${max} in window`);
       res.set('Retry-After', String(retryAfterS));
       return res.status(429).json({ error: 'Too many requests — please slow down.' });
     }
@@ -531,13 +536,25 @@ function isRevoked(decoded) {
 
 function verifyToken(req, res, next) {
   const auth = req.headers.authorization;
-  if (!auth?.startsWith('Bearer ')) return res.status(401).json({ error: 'No token' });
+  // A rejection here used to be completely silent — a unit whose token
+  // expired/got revoked went dark with zero trace in the logs to tell
+  // "device never sent anything" (native tracker down/killed) apart from
+  // "server rejected every request" (bad token). Log enough to tell them
+  // apart, without logging the token itself.
+  if (!auth?.startsWith('Bearer ')) {
+    console.warn(`[auth] ${req.method} ${req.originalUrl} — no token`);
+    return res.status(401).json({ error: 'No token' });
+  }
   try {
     const decoded = jwt.verify(auth.slice(7), JWT_SECRET);
-    if (isRevoked(decoded)) return res.status(401).json({ error: 'Token has been revoked — please sign in again' });
+    if (isRevoked(decoded)) {
+      console.warn(`[auth] ${req.method} ${req.originalUrl} — revoked token, role=${decoded.role} unit=${decoded.unit_id || decoded.unit_number || ''}`);
+      return res.status(401).json({ error: 'Token has been revoked — please sign in again' });
+    }
     req.user = decoded;
     next();
-  } catch {
+  } catch (err) {
+    console.warn(`[auth] ${req.method} ${req.originalUrl} — invalid/expired token: ${err.message}`);
     res.status(401).json({ error: 'Invalid token' });
   }
 }
