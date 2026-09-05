@@ -18,7 +18,7 @@ const GPS_PERMISSION_LABELS = {
 };
 
 const TYPE_ORDER = { ALS: 0, BLS: 1, Cart: 2, Bike: 3 };
-const STATUS_PRIORITY = { dispatched: 0, en_route: 0, on_scene: 0, patient_contact: 0, available: 1, cleared: 2, out_of_service: 3 };
+const STATUS_PRIORITY = { dispatched: 0, en_route: 0, on_scene: 0, patient_contact: 0, transporting: 0, available: 1, cleared: 2, out_of_service: 3 };
 
 function sortUnits(units) {
   return [...units].sort((a, b) => {

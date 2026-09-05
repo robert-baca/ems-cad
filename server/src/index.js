@@ -51,6 +51,54 @@ app.use(express.json());
 
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-in-production';
 
+// ── Persistence failures were previously fire-and-forget (`.catch(console.error)`),
+// which meant a transient Postgres error left the in-memory copy (already broadcast
+// to every socket as ground truth) silently diverged from the DB — invisible to any
+// dispatcher, and quietly reverted on the next server restart's DB reseed. This still
+// doesn't retry or roll back the in-memory change, but it at least surfaces the failure
+// to dispatchers in real time instead of only in server logs.
+function persist(promise, label) {
+  promise.catch(err => {
+    console.error(`[persist] ${label} failed:`, err.message);
+    io.to('dispatchers').emit('server:persist_error', {
+      label,
+      message: `A change to ${label} may not have saved — refresh to confirm.`
+    });
+  });
+}
+
+// ── Call fields the wall-mounted display board should never receive — it's PIN-gated
+// (default PIN, often posted near the board) rather than individually authenticated,
+// so chat/narrative/disposition content shouldn't reach it even though it needs the
+// same live call/unit positions dispatchers see.
+const CALL_FIELDS_HIDDEN_FROM_DISPLAY = ['comments', 'narrative', 'disposition', 'close_notes'];
+function sanitizeCallForDisplay(call) {
+  const c = { ...call };
+  for (const f of CALL_FIELDS_HIDDEN_FROM_DISPLAY) delete c[f];
+  return c;
+}
+function sanitizeForDisplay(event, payload) {
+  if (event === 'call:created' && payload) return sanitizeCallForDisplay(payload);
+  if (event === 'call:updated' && payload?.changes) {
+    const changes = { ...payload.changes };
+    for (const f of CALL_FIELDS_HIDDEN_FROM_DISPLAY) delete changes[f];
+    return { ...payload, changes };
+  }
+  // Carries full call objects (comments/narrative included) for any call still
+  // open at shift end — same leak as call:created/call:updated if left as-is.
+  if (event === 'shift:ended' && Array.isArray(payload?.open_calls)) {
+    return { ...payload, open_calls: payload.open_calls.map(sanitizeCallForDisplay) };
+  }
+  return payload;
+}
+// Every dispatcher-room broadcast also reaches the display board's own room, except
+// chat comments — those stay dispatcher/crew-only regardless of sanitization.
+function emitDispatch(event, payload) {
+  io.to('dispatchers').emit(event, payload);
+  if (event === 'call:comment_added') return;
+  io.to('display').emit(event, sanitizeForDisplay(event, payload));
+}
+
 // ── Startup security checks — loud warnings, not hard failures ─────
 // (avoid taking down a live dispatch system over a missing env var;
 //  these print prominently in Railway logs so they're hard to miss)
@@ -61,6 +109,7 @@ function warnIfWeak(name, value, fallback) {
 }
 warnIfWeak('JWT_SECRET',          process.env.JWT_SECRET,          undefined);
 warnIfWeak('DISPLAY_PIN',         process.env.DISPLAY_PIN,         undefined);
+warnIfWeak('DISPATCHER_DEFAULT_PASSWORD', process.env.DISPATCHER_DEFAULT_PASSWORD, undefined);
 
 // ── Database ──────────────────────────────────────────────────────
 const pool = new Pool({
@@ -70,7 +119,11 @@ const pool = new Pool({
 pool.on('error', (err) => console.error('[db] pool error:', err.message));
 
 // ── In-memory store (seeded from DB on startup) ───────────────────
-const PW = 'ems2024';
+// Was a hardcoded 'ems2024' literal with no way to rotate it short of a code
+// deploy — now Railway-configurable like JWT_SECRET/DISPLAY_PIN, and login
+// attempts are rate-limited below (see loginAttempts) since this is still a
+// single shared password per role, brute-forceable indefinitely without a lockout.
+const PW = process.env.DISPATCHER_DEFAULT_PASSWORD || 'ems2024';
 const dispatchers = [
   { id: 'd1', username: 'dispatch',  full_name: 'Command Dispatch', password_hash: bcrypt.hashSync(PW, 8) },
   { id: 'd2', username: 'dispatch2', full_name: 'Dispatch 2',       password_hash: bcrypt.hashSync(PW, 8) }
@@ -78,6 +131,12 @@ const dispatchers = [
 const overwatches = [
   { id: 'ow1', username: 'overwatch', full_name: 'Overwatch', password_hash: bcrypt.hashSync(PW, 8) }
 ];
+// Dispatcher/overwatch login lockout — mirrors the failed_attempts/locked_until
+// pattern already used for crew personnel PIN login in Supabase, just kept
+// in-memory here since these accounts aren't in a database.
+const LOGIN_MAX_ATTEMPTS = 5;
+const LOGIN_LOCKOUT_MS   = 15 * 60 * 1000;
+const loginAttempts = new Map(); // username (lowercased) → { count, lockedUntil }
 
 let units        = [];
 let calls        = [];
@@ -374,22 +433,59 @@ function verifyToken(req, res, next) {
   }
 }
 
+// Both /api/crew/select-unit and /api/crew/add-unit previously treated this pre-auth
+// token as optional — decoding it "if present" just to carry a name forward — which
+// meant neither route actually required the PIN check in /api/auth/crew-login to have
+// happened at all. Anyone could read a real unit id off the public /api/shift/units
+// list and POST straight to select-unit with no Authorization header to get back a
+// fully-privileged 30-day crew JWT for that unit. Both client flows (Login.jsx,
+// SSOLanding.jsx) always have this token by the time they call either route, so making
+// it mandatory here doesn't change any legitimate flow.
+function verifyPersonnelPreAuth(req, res, next) {
+  const auth = req.headers.authorization;
+  if (!auth?.startsWith('Bearer ')) return res.status(401).json({ error: 'Personnel login required' });
+  let decoded;
+  try {
+    decoded = jwt.verify(auth.slice(7), JWT_SECRET);
+  } catch {
+    return res.status(401).json({ error: 'Invalid or expired login — please sign in again' });
+  }
+  if (!decoded.personnel_id) return res.status(401).json({ error: 'Personnel login required' });
+  req.personnel = { personnel_id: decoded.personnel_id, name: decoded.name, username: decoded.username };
+  next();
+}
+
 // ── Auth ──────────────────────────────────────────────────────────
 app.post('/api/auth/login', async (req, res) => {
   const { username, password, role } = req.body;
   if (!username || !password) return res.status(400).json({ error: 'Missing credentials' });
 
   if (role === 'dispatcher') {
+    const attemptKey = username.toLowerCase();
+    const attempt = loginAttempts.get(attemptKey);
+    if (attempt?.lockedUntil && attempt.lockedUntil > Date.now()) {
+      const mins = Math.ceil((attempt.lockedUntil - Date.now()) / 60000);
+      return res.status(401).json({ error: `Account locked. Try again in ${mins} minute${mins !== 1 ? 's' : ''}.` });
+    }
+
     const d = dispatchers.find(x => x.username === username);
     if (d && bcrypt.compareSync(password, d.password_hash)) {
+      loginAttempts.delete(attemptKey);
       const token = signToken({ dispatcher_id: d.id, username: d.username, role: 'dispatcher' });
       return res.json({ token, user: { role: 'dispatcher', username: d.username, name: d.full_name } });
     }
     const ow = overwatches.find(x => x.username === username);
     if (ow && bcrypt.compareSync(password, ow.password_hash)) {
+      loginAttempts.delete(attemptKey);
       const token = signToken({ id: ow.id, username: ow.username, role: 'overwatch' });
       return res.json({ token, user: { role: 'overwatch', username: ow.username, name: ow.full_name } });
     }
+
+    const count = (attempt?.count || 0) + 1;
+    loginAttempts.set(attemptKey, {
+      count,
+      lockedUntil: count >= LOGIN_MAX_ATTEMPTS ? Date.now() + LOGIN_LOCKOUT_MS : null
+    });
     return res.status(401).json({ error: 'Invalid credentials' });
   }
 
@@ -645,6 +741,11 @@ app.get('/api/units', verifyToken, (req, res) => {
 });
 
 app.patch('/api/units/:id/status', verifyToken, async (req, res) => {
+  // Every other mutating route explicitly blocks 'overwatch' (and, implicitly,
+  // 'display'); this one and PUT /profile below only special-cased 'crew',
+  // leaving overwatch/display able to rewrite any unit's status or profile.
+  if (req.user.role !== 'dispatcher' && req.user.role !== 'crew')
+    return res.status(403).json({ error: 'Forbidden' });
   const unit = units.find(u => u.id === req.params.id);
   if (!unit) return res.status(404).json({ error: 'Not found' });
 
@@ -657,8 +758,8 @@ app.patch('/api/units/:id/status', verifyToken, async (req, res) => {
     return res.status(400).json({ error: 'Invalid status' });
 
   unit.status = req.body.status;
-  saveUnit(unit).catch(console.error);
-  io.to('dispatchers').emit('unit:status_change', { unit_id: unit.id, status: unit.status });
+  persist(saveUnit(unit), 'unit ' + unit.id);
+  emitDispatch('unit:status_change', { unit_id: unit.id, status: unit.status });
   io.to(`crew:${unit.id}`).emit('unit:status_change', { unit_id: unit.id, status: unit.status });
 
   // Record milestone timestamp for additional units on active calls
@@ -673,8 +774,8 @@ app.patch('/api/units/:id/status', verifyToken, async (req, res) => {
       if (!activeCall.additional_unit_timestamps) activeCall.additional_unit_timestamps = {};
       if (!activeCall.additional_unit_timestamps[unit.id]) activeCall.additional_unit_timestamps[unit.id] = {};
       activeCall.additional_unit_timestamps[unit.id][tsField] = new Date().toISOString();
-      saveCall(activeCall).catch(console.error);
-      io.to('dispatchers').emit('call:updated', {
+      persist(saveCall(activeCall), 'call ' + activeCall.id);
+      emitDispatch('call:updated', {
         call_id: activeCall.id,
         changes: { additional_unit_timestamps: activeCall.additional_unit_timestamps }
       });
@@ -685,6 +786,8 @@ app.patch('/api/units/:id/status', verifyToken, async (req, res) => {
 });
 
 app.put('/api/units/:id/profile', verifyToken, async (req, res) => {
+  if (req.user.role !== 'dispatcher' && req.user.role !== 'crew')
+    return res.status(403).json({ error: 'Forbidden' });
   const unit = units.find(u => u.id === req.params.id);
   if (!unit) return res.status(404).json({ error: 'Not found' });
   if (req.user.role === 'crew' &&
@@ -693,8 +796,8 @@ app.put('/api/units/:id/profile', verifyToken, async (req, res) => {
     return res.status(403).json({ error: 'Forbidden' });
 
   unit.profile = { ...req.body };
-  saveUnit(unit).catch(console.error);
-  io.to('dispatchers').emit('unit:profile_update', { unit_id: unit.id, profile: unit.profile });
+  persist(saveUnit(unit), 'unit ' + unit.id);
+  emitDispatch('unit:profile_update', { unit_id: unit.id, profile: unit.profile });
   res.json({ ok: true, profile: unit.profile });
 });
 
@@ -727,7 +830,7 @@ app.post('/api/units', verifyToken, async (req, res) => {
     return res.status(500).json({ error: 'Failed to save unit — please try again' });
   }
   const sanitized = { ...newUnit, password_hash: undefined };
-  io.to('dispatchers').emit('unit:updated', sanitized);
+  emitDispatch('unit:updated', sanitized);
   res.status(201).json(sanitized);
 });
 
@@ -755,7 +858,7 @@ app.put('/api/units/:id', verifyToken, async (req, res) => {
     return res.status(500).json({ error: 'Failed to save unit — please try again' });
   }
   const sanitized = { ...unit, password_hash: undefined };
-  io.to('dispatchers').emit('unit:updated', sanitized);
+  emitDispatch('unit:updated', sanitized);
   res.json(sanitized);
 });
 
@@ -767,7 +870,7 @@ app.patch('/api/units/:id/beacon', verifyToken, (req, res) => {
   if (!unit) return res.status(404).json({ error: 'Not found' });
   unit.beacon_active = !!req.body.active;
   const sanitized = { ...unit, password_hash: undefined };
-  io.to('dispatchers').emit('unit:updated', sanitized);
+  emitDispatch('unit:updated', sanitized);
   io.to('crew_all').emit('unit:updated', sanitized);
   res.json({ ok: true, beacon_active: unit.beacon_active });
 });
@@ -780,11 +883,11 @@ app.delete('/api/units/:id/gps', verifyToken, async (req, res) => {
   unit.last_lng        = null;
   unit.last_gps_at     = null;
   unit.last_gps_fix_ts = null; // reset dedup so next ping always lands
-  saveUnit(unit).catch(console.error);
+  persist(saveUnit(unit), 'unit ' + unit.id);
   const sanitized = { ...unit, password_hash: undefined };
-  io.to('dispatchers').emit('unit:updated', sanitized);
+  emitDispatch('unit:updated', sanitized);
   // Explicit null GPS update so ParkMap on display board removes the dot
-  io.to('dispatchers').emit('unit:gps_update', { unit_id: unit.id, unit_number: unit.unit_number, lat: null, lng: null, timestamp: null });
+  emitDispatch('unit:gps_update', { unit_id: unit.id, unit_number: unit.unit_number, lat: null, lng: null, timestamp: null });
   res.json({ ok: true });
 });
 
@@ -808,7 +911,7 @@ app.delete('/api/units/:id', verifyToken, async (req, res) => {
     console.error('[units] failed to delete unit:', err);
     return res.status(500).json({ error: 'Failed to delete unit — please try again' });
   }
-  io.to('dispatchers').emit('unit:removed', { unit_id: req.params.id });
+  emitDispatch('unit:removed', { unit_id: req.params.id });
   res.json({ ok: true });
 });
 
@@ -878,15 +981,21 @@ app.post('/api/calls', verifyToken, async (req, res) => {
   const additionalIds  = Array.isArray(req.body.additional_unit_ids) ? req.body.additional_unit_ids : [];
 
   if (hasUnit) {
+    // A bad/stale unit id previously passed straight through: the conflict check
+    // finds nothing, the cart check's optional chaining is false for `undefined`
+    // too, and the call ends up permanently "assigned" to a unit that doesn't
+    // exist (assigned_unit_number null, no unit ever notified, no way to reassign).
+    const assignedUnit = units.find(u => u.id === req.body.assigned_unit_id);
+    if (!assignedUnit) return res.status(400).json({ error: 'Unit not found' });
     const conflict = getUnitActiveCall(req.body.assigned_unit_id);
     if (conflict) return res.status(409).json({ error: `Unit already on call #${conflict.call_number}` });
     // A cart is a ride to the scene, never the lead unit on a call.
-    const assignedUnit = units.find(u => u.id === req.body.assigned_unit_id);
-    if (assignedUnit?.unit_type === 'Cart') {
+    if (assignedUnit.unit_type === 'Cart') {
       return res.status(400).json({ error: 'A cart can\'t be the lead unit — assign a medic as primary.' });
     }
   }
   for (const uid of additionalIds) {
+    if (!units.some(u => u.id === uid)) return res.status(400).json({ error: 'Unit not found' });
     const conflict = getUnitActiveCall(uid);
     if (conflict) return res.status(409).json({ error: `Unit already on call #${conflict.call_number}` });
   }
@@ -923,16 +1032,16 @@ app.post('/api/calls', verifyToken, async (req, res) => {
   // request touching the same unit(s) between this await and the unit
   // mutations below could have its change silently clobbered back to
   // 'dispatched' once this handler resumed, with no forward-only guard here.
-  saveCall(call).catch(console.error);
+  persist(saveCall(call), 'call ' + call.id);
 
-  io.to('dispatchers').emit('call:created', call);
+  emitDispatch('call:created', call);
   if (hasUnit) {
     io.to(`crew:${call.assigned_unit_id}`).emit('call:assigned_to_me', call);
     const unit = units.find(u => u.id === call.assigned_unit_id);
     if (unit) {
       unit.status = 'dispatched';
-      saveUnit(unit).catch(console.error);
-      io.to('dispatchers').emit('unit:status_change', { unit_id: unit.id, status: 'dispatched' });
+      persist(saveUnit(unit), 'unit ' + unit.id);
+      emitDispatch('unit:status_change', { unit_id: unit.id, status: 'dispatched' });
       io.to(`crew:${unit.id}`).emit('unit:status_change', { unit_id: unit.id, status: 'dispatched' });
     }
   }
@@ -940,8 +1049,8 @@ app.post('/api/calls', verifyToken, async (req, res) => {
     const u = units.find(u => u.id === uid);
     if (u) {
       u.status = 'dispatched';
-      saveUnit(u).catch(console.error);
-      io.to('dispatchers').emit('unit:status_change', { unit_id: u.id, status: 'dispatched' });
+      persist(saveUnit(u), 'unit ' + u.id);
+      emitDispatch('unit:status_change', { unit_id: u.id, status: 'dispatched' });
       io.to(`crew:${uid}`).emit('unit:status_change', { unit_id: u.id, status: 'dispatched' });
       io.to(`crew:${uid}`).emit('call:assigned_to_me', call);
     }
@@ -955,11 +1064,14 @@ app.patch('/api/calls/:id/assign', verifyToken, async (req, res) => {
   const call = calls.find(c => c.id === req.params.id);
   if (!call) return res.status(404).json({ error: 'Not found' });
 
+  const assignedUnit = units.find(u => u.id === req.body.unit_id);
+  if (!assignedUnit) return res.status(400).json({ error: 'Unit not found' });
+
   const conflict = getUnitActiveCall(req.body.unit_id, req.params.id);
   if (conflict) return res.status(409).json({ error: `Unit already on call #${conflict.call_number}` });
 
   // A cart is a ride to the scene, never the lead unit on a call.
-  if (units.find(u => u.id === req.body.unit_id)?.unit_type === 'Cart') {
+  if (assignedUnit.unit_type === 'Cart') {
     return res.status(400).json({ error: 'A cart can\'t be the lead unit — assign a medic as primary.' });
   }
 
@@ -972,6 +1084,9 @@ app.patch('/api/calls/:id/assign', verifyToken, async (req, res) => {
   const additionalIds = wasPending && Array.isArray(req.body.additional_unit_ids)
     ? [...new Set(req.body.additional_unit_ids.filter(id => id && id !== req.body.unit_id))]
     : [];
+  for (const uid of additionalIds) {
+    if (!units.some(u => u.id === uid)) return res.status(400).json({ error: 'Unit not found' });
+  }
   for (const uid of additionalIds) {
     const c = getUnitActiveCall(uid, req.params.id);
     if (c) return res.status(409).json({ error: `Unit already on call #${c.call_number}` });
@@ -994,8 +1109,8 @@ app.patch('/api/calls/:id/assign', verifyToken, async (req, res) => {
     // 'dispatched' rather than blindly inheriting the call's current status,
     // but let the dispatcher say otherwise instead of guessing either way.
     unit.status = resolveInitialUnitStatus(req.body.initial_status);
-    saveUnit(unit).catch(console.error);
-    io.to('dispatchers').emit('unit:status_change', { unit_id: unit.id, status: unit.status });
+    persist(saveUnit(unit), 'unit ' + unit.id);
+    emitDispatch('unit:status_change', { unit_id: unit.id, status: unit.status });
     io.to(`crew:${unit.id}`).emit('unit:status_change', { unit_id: unit.id, status: unit.status });
   }
 
@@ -1004,8 +1119,8 @@ app.patch('/api/calls/:id/assign', verifyToken, async (req, res) => {
     const previousUnit = units.find(u => u.id === previousUnitId);
     if (previousUnit) {
       previousUnit.status = 'available';
-      saveUnit(previousUnit).catch(console.error);
-      io.to('dispatchers').emit('unit:status_change', { unit_id: previousUnit.id, status: 'available' });
+      persist(saveUnit(previousUnit), 'unit ' + previousUnit.id);
+      emitDispatch('unit:status_change', { unit_id: previousUnit.id, status: 'available' });
       io.to(`crew:${previousUnitId}`).emit('unit:status_change', { unit_id: previousUnitId, status: 'available' });
       io.to(`crew:${previousUnitId}`).emit('call:updated', { call_id: call.id, changes: { assigned_unit_id: call.assigned_unit_id } });
     }
@@ -1022,21 +1137,21 @@ app.patch('/api/calls/:id/assign', verifyToken, async (req, res) => {
       const u = units.find(u => u.id === uid);
       if (u) {
         u.status = 'dispatched';
-        saveUnit(u).catch(console.error);
-        io.to('dispatchers').emit('unit:status_change', { unit_id: u.id, status: 'dispatched' });
+        persist(saveUnit(u), 'unit ' + u.id);
+        emitDispatch('unit:status_change', { unit_id: u.id, status: 'dispatched' });
         io.to(`crew:${uid}`).emit('unit:status_change', { unit_id: u.id, status: 'dispatched' });
         io.to(`crew:${uid}`).emit('call:assigned_to_me', call);
       }
     });
 
-    io.to('dispatchers').emit('call:updated', {
+    emitDispatch('call:updated', {
       call_id: call.id,
       changes: { additional_unit_ids: call.additional_unit_ids, additional_units_added_at: call.additional_units_added_at }
     });
   }
 
-  saveCall(call).catch(console.error);
-  io.to('dispatchers').emit('call:assigned', { call_id: call.id, unit_id: req.body.unit_id });
+  persist(saveCall(call), 'call ' + call.id);
+  emitDispatch('call:assigned', { call_id: call.id, unit_id: req.body.unit_id });
   io.to(`crew:${req.body.unit_id}`).emit('call:assigned_to_me', call);
   res.json(call);
 });
@@ -1062,13 +1177,13 @@ app.post('/api/calls/:id/add-unit', verifyToken, async (req, res) => {
   const unit = units.find(u => u.id === unit_id);
   if (unit) {
     unit.status = joinStatus;
-    saveUnit(unit).catch(console.error);
-    io.to('dispatchers').emit('unit:status_change', { unit_id: unit.id, status: joinStatus });
+    persist(saveUnit(unit), 'unit ' + unit.id);
+    emitDispatch('unit:status_change', { unit_id: unit.id, status: joinStatus });
     io.to(`crew:${unit_id}`).emit('unit:status_change', { unit_id: unit.id, status: joinStatus });
     io.to(`crew:${unit_id}`).emit('call:assigned_to_me', call);
   }
-  saveCall(call).catch(console.error);
-  io.to('dispatchers').emit('call:updated', {
+  persist(saveCall(call), 'call ' + call.id);
+  emitDispatch('call:updated', {
     call_id: call.id,
     changes: { additional_unit_ids: call.additional_unit_ids, additional_units_added_at: call.additional_units_added_at }
   });
@@ -1089,12 +1204,12 @@ app.delete('/api/calls/:id/units/:unit_id', verifyToken, async (req, res) => {
   const unit = units.find(u => u.id === req.params.unit_id);
   if (unit) {
     unit.status = 'available';
-    saveUnit(unit).catch(console.error);
-    io.to('dispatchers').emit('unit:status_change', { unit_id: unit.id, status: 'available' });
+    persist(saveUnit(unit), 'unit ' + unit.id);
+    emitDispatch('unit:status_change', { unit_id: unit.id, status: 'available' });
     io.to(`crew:${unit.id}`).emit('unit:status_change', { unit_id: unit.id, status: 'available' });
   }
-  saveCall(call).catch(console.error);
-  io.to('dispatchers').emit('call:updated', {
+  persist(saveCall(call), 'call ' + call.id);
+  emitDispatch('call:updated', {
     call_id: call.id,
     changes: {
       additional_unit_ids: call.additional_unit_ids,
@@ -1155,11 +1270,11 @@ app.patch('/api/calls/:id/status', verifyToken, async (req, res) => {
   }
   if (req.body.status === 'closed') call.closed_at = new Date().toISOString();
 
-  saveCall(call).catch(console.error);
+  persist(saveCall(call), 'call ' + call.id);
 
   const tsField = TS_MAP[req.body.status];
   const payload = { call_id: call.id, status: call.status, ...(tsField && call[tsField] ? { [tsField]: call[tsField] } : {}) };
-  io.to('dispatchers').emit('call:status_change', payload);
+  emitDispatch('call:status_change', payload);
   io.to(`crew:${call.assigned_unit_id}`).emit('call:updated', { call_id: call.id, changes: { status: call.status } });
 
   const isClose = req.body.status === 'closed';
@@ -1179,8 +1294,8 @@ app.patch('/api/calls/:id/status', verifyToken, async (req, res) => {
     const unit = units.find(u => u.id === uid);
     if (unit && isForwardStatusChange(unit.status, newUnitStatus)) {
       unit.status = newUnitStatus;
-      saveUnit(unit).catch(console.error);
-      io.to('dispatchers').emit('unit:status_change', { unit_id: unit.id, status: unit.status });
+      persist(saveUnit(unit), 'unit ' + unit.id);
+      emitDispatch('unit:status_change', { unit_id: unit.id, status: unit.status });
       io.to(`crew:${uid}`).emit('unit:status_change', { unit_id: uid, status: newUnitStatus });
     }
   });
@@ -1211,8 +1326,8 @@ app.post('/api/calls/:id/comments', verifyToken, async (req, res) => {
     created_at: new Date().toISOString()
   };
   call.comments.push(comment);
-  saveCall(call).catch(console.error);
-  io.to('dispatchers').emit('call:comment_added', { call_id: call.id, comment });
+  persist(saveCall(call), 'call ' + call.id);
+  emitDispatch('call:comment_added', { call_id: call.id, comment });
   // Every unit on the call gets the message, not just the primary — otherwise
   // backup/additional units' chat pane never sees dispatch's replies, the
   // primary unit's messages, or even their own sent message (the client has
@@ -1226,23 +1341,12 @@ app.post('/api/calls/:id/comments', verifyToken, async (req, res) => {
 
 // ── Crew login ────────────────────────────────────────────────────
 // Step 1: pick an existing shift unit → get JWT
-app.post('/api/crew/select-unit', (req, res) => {
+app.post('/api/crew/select-unit', verifyPersonnelPreAuth, (req, res) => {
   const { unit_id } = req.body;
   const unit = units.find(u => u.id === unit_id);
   if (!unit) return res.status(404).json({ error: 'Unit not found' });
 
-  // Carry personnel identity forward from the pre-auth crew-login token (if present)
-  let personnel = {};
-  const auth = req.headers.authorization;
-  if (auth?.startsWith('Bearer ')) {
-    try {
-      const decoded = jwt.verify(auth.slice(7), JWT_SECRET);
-      if (decoded.personnel_id) {
-        personnel = { personnel_id: decoded.personnel_id, name: decoded.name, username: decoded.username };
-      }
-    } catch { /* no personnel info */ }
-  }
-
+  const personnel = req.personnel;
   const token = signToken({ ...personnel, unit_id: unit.id, unit_number: unit.unit_number, role: 'crew' });
   res.json({ token, user: { role: 'crew', ...personnel, unit_id: unit.id, unit_number: unit.unit_number, profile: unit.profile } });
 });
@@ -1259,7 +1363,7 @@ app.get('/api/shift/units', (req, res) => {
 });
 
 // Step 2: add a unit not in the shift roster → create it + get JWT
-app.post('/api/crew/add-unit', async (req, res) => {
+app.post('/api/crew/add-unit', verifyPersonnelPreAuth, async (req, res) => {
   const { unit_number, unit_type = 'ALS' } = req.body;
   if (!unit_number?.trim()) return res.status(400).json({ error: 'unit_number required' });
 
@@ -1275,22 +1379,11 @@ app.post('/api/crew/add-unit', async (req, res) => {
       profile: null, crew: null, station: null
     };
     units.push(unit);
-    saveUnit(unit).catch(console.error);
-    io.to('dispatchers').emit('unit:updated', { ...unit, password_hash: undefined });
+    persist(saveUnit(unit), 'unit ' + unit.id);
+    emitDispatch('unit:updated', { ...unit, password_hash: undefined });
   }
 
-  // Carry personnel identity forward from the pre-auth crew-login token (if present)
-  let personnel = {};
-  const auth = req.headers.authorization;
-  if (auth?.startsWith('Bearer ')) {
-    try {
-      const decoded = jwt.verify(auth.slice(7), JWT_SECRET);
-      if (decoded.personnel_id) {
-        personnel = { personnel_id: decoded.personnel_id, name: decoded.name, username: decoded.username };
-      }
-    } catch { /* no personnel info */ }
-  }
-
+  const personnel = req.personnel;
   const token = signToken({ ...personnel, unit_id: unit.id, unit_number: unit.unit_number, role: 'crew' });
   res.json({ token, user: { role: 'crew', ...personnel, unit_id: unit.id, unit_number: unit.unit_number, profile: unit.profile } });
 });
@@ -1335,11 +1428,11 @@ app.post('/api/shift/start', verifyToken, async (req, res) => {
     if (!getUnitActiveCall(unit.id)) {
       unit.status = in_service ? 'available' : 'out_of_service';
     }
-    saveUnit(unit).catch(console.error);
+    persist(saveUnit(unit), 'unit ' + unit.id);
   });
 
   const sanitizedUnits = units.map(u => ({ ...u, password_hash: undefined }));
-  io.to('dispatchers').emit('shift:started', { shift: currentShift, units: sanitizedUnits });
+  emitDispatch('shift:started', { shift: currentShift, units: sanitizedUnits });
   res.json({ shift: currentShift, units: sanitizedUnits });
 });
 
@@ -1420,12 +1513,12 @@ app.post('/api/shift/end', verifyToken, async (req, res) => {
     // pre-fills the next Start Shift screen with yesterday's medic names.
     u.crew    = null;
     u.station = null;
-    saveUnit(u).catch(console.error);
+    persist(saveUnit(u), 'unit ' + u.id);
   });
 
   currentShift = null;
   const sanitizedUnits = units.map(u => ({ ...u, password_hash: undefined }));
-  io.to('dispatchers').emit('shift:ended', { ...summary, units: sanitizedUnits, open_calls: openCalls });
+  emitDispatch('shift:ended', { ...summary, units: sanitizedUnits, open_calls: openCalls });
   units.forEach(u => io.to(`crew:${u.id}`).emit('shift:ended', { units: sanitizedUnits }));
   res.json({ ...summary, open_calls: openCalls });
 });
@@ -1449,9 +1542,9 @@ app.patch('/api/shift/units/:unit_id', verifyToken, async (req, res) => {
     if (s) { Object.assign(s, { crew, unit_type, in_service, station }); }
     saveShift(currentShift).catch(console.error);
   }
-  saveUnit(unit).catch(console.error);
+  persist(saveUnit(unit), 'unit ' + unit.id);
   const sanitized = { ...unit, password_hash: undefined };
-  io.to('dispatchers').emit('unit:updated', sanitized);
+  emitDispatch('unit:updated', sanitized);
   res.json(sanitized);
 });
 
@@ -1577,7 +1670,7 @@ function applyGpsUpdate(unit, lat, lng, timestamp, accuracy) {
   unit.last_lng        = lng;
   unit.last_gps_at     = timestamp;
   unit.last_gps_fix_ts = timestamp;
-  saveUnit(unit).catch(console.error);
+  persist(saveUnit(unit), 'unit ' + unit.id);
 
   const activeCall = getUnitActiveCall(unit.id);
   if (activeCall) {
@@ -1587,7 +1680,7 @@ function applyGpsUpdate(unit, lat, lng, timestamp, accuracy) {
     ).catch(console.error);
   }
   const payload = { unit_id: unit.id, unit_number: unit.unit_number, lat, lng, timestamp };
-  io.to('dispatchers').emit('unit:gps_update', payload);
+  emitDispatch('unit:gps_update', payload);
   // Crew app needs this too — the browser GPS fallback hook checks last_gps_at to
   // know whether another source (e.g. the native tracker) is still posting.
   // Without this emit, the hook sees a stale timestamp after 3 minutes and starts
@@ -1616,7 +1709,7 @@ app.post('/api/crew/gps', verifyToken, (req, res) => {
   const { gpsPermission } = req.body;
   if (gpsPermission && gpsPermission !== unit.gps_permission_status) {
     unit.gps_permission_status = gpsPermission;
-    io.to('dispatchers').emit('unit:updated', { ...unit, password_hash: undefined });
+    emitDispatch('unit:updated', { ...unit, password_hash: undefined });
   }
 
   // Logging every inbound post including self-reported accuracy so a
@@ -1639,7 +1732,7 @@ app.patch('/api/crew/gps-sharing', verifyToken, (req, res) => {
   if (!unit) return res.status(404).json({ error: 'Not found' });
 
   unit.gps_sharing_disabled = !req.body.enabled;
-  io.to('dispatchers').emit('unit:updated', { ...unit, password_hash: undefined });
+  emitDispatch('unit:updated', { ...unit, password_hash: undefined });
   res.json({ ok: true, gps_sharing_disabled: unit.gps_sharing_disabled });
 });
 
@@ -1774,8 +1867,8 @@ app.patch('/api/calls/:id/location', verifyToken, async (req, res) => {
   if (park_zone     !== undefined) { call.park_zone     = park_zone;     changes.park_zone     = park_zone;     }
   if (location_lat  !== undefined) { call.location_lat  = location_lat;  changes.location_lat  = location_lat;  }
   if (location_lng  !== undefined) { call.location_lng  = location_lng;  changes.location_lng  = location_lng;  }
-  saveCall(call).catch(console.error);
-  io.to('dispatchers').emit('call:updated', { call_id: call.id, changes });
+  persist(saveCall(call), 'call ' + call.id);
+  emitDispatch('call:updated', { call_id: call.id, changes });
   notifyCallCrew(call, changes);
   res.json({ ok: true });
 });
@@ -1789,8 +1882,8 @@ app.patch('/api/calls/:id/details', verifyToken, async (req, res) => {
   if (call_type       !== undefined) { call.call_type       = call_type;       changes.call_type       = call_type; }
   if (chief_complaint !== undefined) { call.chief_complaint = chief_complaint;  changes.chief_complaint = chief_complaint; }
   if (notes           !== undefined) { call.notes           = notes;            changes.notes           = notes; }
-  saveCall(call).catch(console.error);
-  io.to('dispatchers').emit('call:updated', { call_id: call.id, changes });
+  persist(saveCall(call), 'call ' + call.id);
+  emitDispatch('call:updated', { call_id: call.id, changes });
   notifyCallCrew(call, changes);
   res.json({ ok: true });
 });
@@ -1802,8 +1895,8 @@ app.patch('/api/calls/:id/priority', verifyToken, async (req, res) => {
   const priority = Number(req.body.priority);
   if (![1, 2, 3].includes(priority)) return res.status(400).json({ error: 'Priority must be 1, 2, or 3' });
   call.priority = priority;
-  saveCall(call).catch(console.error);
-  io.to('dispatchers').emit('call:updated', { call_id: call.id, changes: { priority } });
+  persist(saveCall(call), 'call ' + call.id);
+  emitDispatch('call:updated', { call_id: call.id, changes: { priority } });
   notifyCallCrew(call, { priority });
   res.json({ ok: true });
 });
@@ -1824,8 +1917,8 @@ app.post('/api/calls/:id/mutual-aid', verifyToken, async (req, res) => {
   const entry = { id: `ma-${Date.now()}`, name: trimmedName, unit_id: trimmedUnitId || null, role: trimmedRole || null, arrived_at: new Date().toISOString() };
   if (!call.mutual_aid_agencies) call.mutual_aid_agencies = [];
   call.mutual_aid_agencies.push(entry);
-  saveCall(call).catch(console.error);
-  io.to('dispatchers').emit('call:updated', { call_id: call.id, changes: { mutual_aid_agencies: call.mutual_aid_agencies } });
+  persist(saveCall(call), 'call ' + call.id);
+  emitDispatch('call:updated', { call_id: call.id, changes: { mutual_aid_agencies: call.mutual_aid_agencies } });
   notifyCallCrew(call, { mutual_aid_agencies: call.mutual_aid_agencies });
   res.json(entry);
 });
@@ -1835,8 +1928,8 @@ app.delete('/api/calls/:id/mutual-aid/:entryId', verifyToken, async (req, res) =
   const call = calls.find(c => c.id === req.params.id);
   if (!call) return res.status(404).json({ error: 'Not found' });
   call.mutual_aid_agencies = (call.mutual_aid_agencies || []).filter(e => e.id !== req.params.entryId);
-  saveCall(call).catch(console.error);
-  io.to('dispatchers').emit('call:updated', { call_id: call.id, changes: { mutual_aid_agencies: call.mutual_aid_agencies } });
+  persist(saveCall(call), 'call ' + call.id);
+  emitDispatch('call:updated', { call_id: call.id, changes: { mutual_aid_agencies: call.mutual_aid_agencies } });
   notifyCallCrew(call, { mutual_aid_agencies: call.mutual_aid_agencies });
   res.json({ ok: true });
 });
@@ -1904,17 +1997,17 @@ app.patch('/api/calls/:id/timestamps', verifyToken, async (req, res) => {
         const isPrimary = uid === call.assigned_unit_id;
         if (isPrimary || isForwardStatusChange(unit.status, newUnitStatus)) {
           unit.status = newUnitStatus;
-          saveUnit(unit).catch(console.error);
-          io.to('dispatchers').emit('unit:status_change', { unit_id: unit.id, status: newUnitStatus });
+          persist(saveUnit(unit), 'unit ' + unit.id);
+          emitDispatch('unit:status_change', { unit_id: unit.id, status: newUnitStatus });
           io.to(`crew:${uid}`).emit('unit:status_change', { unit_id: uid, status: newUnitStatus });
         }
       });
     }
   }
 
-  saveCall(call).catch(console.error);
+  persist(saveCall(call), 'call ' + call.id);
   if (Object.keys(changes).length) {
-    io.to('dispatchers').emit('call:updated', { call_id: call.id, changes });
+    emitDispatch('call:updated', { call_id: call.id, changes });
     notifyCallCrew(call, changes);
   }
   res.json({ ok: true });
@@ -1931,7 +2024,12 @@ app.patch('/api/calls/:id/narrative', verifyToken, async (req, res) => {
       return res.status(403).json({ error: 'Forbidden' });
   }
   call.narrative = req.body.narrative ?? null;
-  saveCall(call).catch(console.error);
+  persist(saveCall(call), 'call ' + call.id);
+  // Unlike every sibling endpoint (location/details/priority/mutual-aid), this
+  // was missing the dispatcher-room broadcast — a narrative edit only reached
+  // units already on the call, leaving the dashboard showing stale narrative
+  // until a manual refresh.
+  emitDispatch('call:updated', { call_id: call.id, changes: { narrative: call.narrative } });
   notifyCallCrew(call, { narrative: call.narrative });
   res.json({ ok: true });
 });
@@ -1973,9 +2071,23 @@ io.on('connection', (socket) => {
       socket.emit('error:auth', { message: 'Unauthorized' });
       return;
     }
+    const sanitizedUnits = units.map(u => ({ ...u, password_hash: undefined }));
+    // Display board gets its own room and a sanitized call feed (no chat/narrative/
+    // disposition/close-notes) — it's PIN-gated, not per-user authenticated, and was
+    // previously lumped into the 'dispatchers' room getting the identical PHI-adjacent
+    // stream a real dispatcher sees.
+    if (role === 'display') {
+      socket.join('display');
+      socket.emit('init:state', {
+        units: sanitizedUnits,
+        calls: calls.map(sanitizeCallForDisplay),
+        locations
+      });
+      return;
+    }
     socket.join('dispatchers');
     socket.emit('init:state', {
-      units: units.map(u => ({ ...u, password_hash: undefined })),
+      units: sanitizedUnits,
       calls,
       locations
     });

@@ -92,6 +92,7 @@ export default function DispatcherDashboard() {
   const [leftOpen,          setLeftOpen]             = useState(true);
   const [rightOpen,         setRightOpen]            = useState(true);
   const [sosAlerts,         setSosAlerts]            = useState([]);
+  const [persistErrors,     setPersistErrors]        = useState([]);
 
   // Load current shift on mount
   useEffect(() => {
@@ -135,6 +136,8 @@ export default function DispatcherDashboard() {
       }
       if (e.key === 'Escape') {
         setShowNewCallModal(false);
+        setNewCallPin(null);
+        setSplitParentId(null);
         setContextMenu(null);
       }
     };
@@ -169,7 +172,10 @@ export default function DispatcherDashboard() {
       }
     },
     'shift:started':       ({ shift, units: u }) => { setCurrentShift(shift); if (setUnits) setUnits(u); },
-    'shift:ended':         ({ units: u, open_calls, ...summary }) => { setShiftSummary(summary); setCurrentShift(null); setCalls(open_calls || []); setSelectedCallId(null); if (u) setUnits(u); }
+    'shift:ended':         ({ units: u, open_calls, ...summary }) => { setShiftSummary(summary); setCurrentShift(null); setCalls(open_calls || []); setSelectedCallId(null); if (u) setUnits(u); clearShiftLocations(); },
+    'server:persist_error': ({ label, message }) => {
+      setPersistErrors(prev => [...prev, { id: `${Date.now()}-${Math.random()}`, label, message }]);
+    }
   });
 
   const handleShiftStarted = (shift, updatedUnits) => {
@@ -193,7 +199,8 @@ export default function DispatcherDashboard() {
       if (!res.ok) throw new Error(data.error);
       setShiftSummary(data);
       setCurrentShift(null);
-      clearShiftLocations();
+      // Shift-only locations are cleared by the 'shift:ended' socket handler,
+      // which every connected client (including this one) receives.
     } catch (err) {
       alert('Failed to end shift: ' + err.message);
     } finally {
@@ -304,6 +311,26 @@ export default function DispatcherDashboard() {
         );
       })}
 
+      {/* ── Server persist-error banners ──────────────────────── */}
+      {persistErrors.map(pe => (
+        <div key={pe.id}
+          className="flex items-center gap-3 px-4 py-2.5 bg-amber-900/70 border-b border-amber-700 flex-shrink-0"
+        >
+          <span className="text-lg flex-shrink-0">⚠️</span>
+          <div className="flex-1 min-w-0">
+            <div className="text-amber-200 font-semibold text-xs">{pe.label || 'A change may not have saved'}</div>
+            {pe.message && <div className="text-amber-300/80 text-xs">{pe.message}</div>}
+          </div>
+          <button
+            onClick={() => setPersistErrors(prev => prev.filter(a => a.id !== pe.id))}
+            className="flex-shrink-0 text-amber-300 hover:text-white text-lg font-bold leading-none px-1"
+            title="Dismiss"
+          >
+            ×
+          </button>
+        </div>
+      ))}
+
       {/* ── Header ────────────────────────────────────────────── */}
       <header className="flex items-center justify-between px-4 py-2.5 bg-gray-800 border-b border-gray-700 flex-shrink-0">
         <div className="flex items-center gap-3">
@@ -353,20 +380,13 @@ export default function DispatcherDashboard() {
               >
                 ⚙ Options
               </button>
-              {currentShift ? (
+              {currentShift && (
                 <button
                   onClick={handleEndShift}
                   disabled={endingShift}
                   className="text-xs px-3 py-1.5 rounded-lg font-medium bg-red-800 hover:bg-red-700 text-red-200 transition-colors disabled:opacity-50"
                 >
                   {endingShift ? 'Ending…' : '⏹ End Shift'}
-                </button>
-              ) : (
-                <button
-                  onClick={() => setCurrentShift(null)}
-                  className="text-xs px-3 py-1.5 rounded-lg font-medium bg-green-800 hover:bg-green-700 text-green-200 transition-colors"
-                >
-                  ▶ Start Shift
                 </button>
               )}
             </>

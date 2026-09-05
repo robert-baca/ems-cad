@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import CallTimeline from './CallTimeline';
 import CallComments from './CallComments';
 import CloseCallModal from './CloseCallModal';
@@ -66,6 +66,13 @@ export default function CallDetail({
   const [addUnitError,      setAddUnitError]      = useState('');
   const [showCloseModal, setShowCloseModal] = useState(false);
   const [narrative, setNarrative]         = useState(call.narrative || '');
+  // Tracks the last narrative value *this component* wrote (initial load or
+  // its own blur-save) so the resync effect below can tell "the call's
+  // narrative changed because someone else edited it" apart from "the call's
+  // narrative is what I last set it to" — without this, either we'd never
+  // pick up another dispatcher's edit, or we'd clobber this dispatcher's own
+  // in-progress typing on every unrelated call update.
+  const lastPushedNarrativeRef = useRef(call.narrative || '');
   const [addingAid,       setAddingAid]       = useState(false);
   const [aidName,         setAidName]         = useState('');
   const [aidUnit,         setAidUnit]         = useState('');
@@ -95,6 +102,7 @@ export default function CallDetail({
     setAddUnitError('');
     setShowCloseModal(false);
     setNarrative(call.narrative || '');
+    lastPushedNarrativeRef.current = call.narrative || '';
     setAddingAid(false);
     setAidName(''); setAidUnit(''); setAidRole('');
     setEditingLocation(false);
@@ -104,8 +112,22 @@ export default function CallDetail({
   }, [call.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleNarrativeBlur = useCallback(() => {
+    lastPushedNarrativeRef.current = narrative;
     updateCallNarrative(call.id, narrative).catch(() => {});
   }, [call.id, narrative]);
+
+  // Resync local narrative when call.narrative changes from an external
+  // source (e.g. another dispatcher's edit arriving via a call:updated
+  // socket event on this same call) — but only when it differs from what
+  // this component last pushed, so we don't clobber this dispatcher's own
+  // unsaved, in-progress typing just because of an unrelated re-render.
+  useEffect(() => {
+    const incoming = call.narrative || '';
+    if (incoming !== lastPushedNarrativeRef.current) {
+      lastPushedNarrativeRef.current = incoming;
+      setNarrative(incoming);
+    }
+  }, [call.narrative]);
 
   if (!call) return null;
 
@@ -114,6 +136,11 @@ export default function CallDetail({
   const nextTsField = TS_SEQUENCE.slice(currentTsIdx + 1).find(f => !call[f]);
   const nextTsLabel = nextTsField ? TS_LABELS[nextTsField] : null;
   const commentCount = call.comments?.length || 0;
+  // NOTE: CallCard.jsx defines "pending" as `call.status === 'pending'`
+  // instead of checking assigned_unit_id. The two are meant to be equivalent
+  // (a call only reaches assigned_unit_id === null before its first
+  // assignment, at which point status is still 'pending') — if either
+  // definition changes, update the other to match.
   const isPending = !call.assigned_unit_id;
 
   const TYPE_ICONS = { ALS: '🚑', BLS: '🚐', Cart: '🛺' };

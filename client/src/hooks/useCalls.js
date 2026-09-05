@@ -91,7 +91,20 @@ export function useCalls(setUnits) {
   const dispatchCall = useCallback(async (data) => {
     try {
       const res = await createCall(data);
-      return res.data; // socket will add it via handleCallCreated
+      const created = res.data;
+      // Normally the server's 'call:created' broadcast (handleCallCreated)
+      // adds this to state. But that socket event can be missed entirely —
+      // e.g. if the socket was mid-reconnect (see useSocket.js's
+      // visibility-triggered forced reconnect) right as this call was
+      // created — leaving a real, server-persisted call silently absent
+      // from this dispatcher's board. Fall back to inserting it directly if
+      // it still hasn't shown up shortly after the API call succeeded.
+      if (created?.id) {
+        setTimeout(() => {
+          setCalls(prev => prev.some(c => c.id === created.id) ? prev : [created, ...prev]);
+        }, 2000);
+      }
+      return created;
     } catch (err) {
       // Surface the server's actual reason (e.g. 403 Forbidden, 409 unit
       // already on a call) instead of a generic message that only fits
@@ -108,11 +121,15 @@ export function useCalls(setUnits) {
   // dispatch (see PATCH /api/calls/:id/assign) — ignored on a mid-call swap.
   const assignUnit = useCallback(async (callId, unitId, initialStatus, additionalUnitIds = []) => {
     let snapshot = null;
+    let touchedFields = null;
     setCalls(prev => {
       snapshot = prev.find(c => c.id === callId) || null;
       return prev.map(c => {
         if (c.id !== callId) return c;
         const wasPending = c.status === 'pending';
+        touchedFields = wasPending && additionalUnitIds.length
+          ? ['assigned_unit_id', 'status', 'dispatched_at', 'additional_unit_ids', 'co_unit_ids']
+          : ['assigned_unit_id', 'status', 'dispatched_at'];
         return {
           ...c,
           assigned_unit_id: unitId,
@@ -131,7 +148,15 @@ export function useCalls(setUnits) {
       await assignCall(callId, unitId, initialStatus, additionalUnitIds);
       return null;
     } catch (err) {
-      if (snapshot) setCalls(prev => prev.map(c => c.id === callId ? snapshot : c));
+      // Only roll back the fields this call actually touched — replacing the
+      // whole record with the pre-update snapshot would also erase any
+      // unrelated change (a comment, a narrative edit, etc.) that arrived via
+      // socket while this request was in flight.
+      if (snapshot && touchedFields) {
+        setCalls(prev => prev.map(c => c.id === callId
+          ? { ...c, ...Object.fromEntries(touchedFields.map(f => [f, snapshot[f]])) }
+          : c));
+      }
       return err?.response?.data?.error || 'Failed to assign unit';
     }
   }, []);
@@ -153,7 +178,14 @@ export function useCalls(setUnits) {
       await updateCallStatus(callId, status);
       return null;
     } catch (err) {
-      if (snapshot) setCalls(prev => prev.map(c => c.id === callId ? snapshot : c));
+      // Field-scoped rollback — see assignUnit's catch for why we don't
+      // restore the whole snapshot object.
+      if (snapshot) {
+        const fields = tsField ? ['status', tsField] : ['status'];
+        setCalls(prev => prev.map(c => c.id === callId
+          ? { ...c, ...Object.fromEntries(fields.map(f => [f, snapshot[f]])) }
+          : c));
+      }
       return err?.response?.data?.error || 'Status update failed';
     }
   }, [syncUnitsForward]);
@@ -198,11 +230,20 @@ export function useCalls(setUnits) {
         updateCallTimestamps(callId, { [nextField]: now }),
         newStatus ? updateCallStatus(callId, newStatus) : Promise.resolve()
       ]).catch(() => {
-        setCalls(prev => prev.map(c => c.id === callId ? callSnapshot : c));
+        // Field-scoped rollback (see assignUnit) — restore only what this
+        // click changed, not the whole record, so an intervening socket
+        // update (e.g. a comment) isn't discarded along with it.
+        const fields = newStatus ? [nextField, 'status'] : [nextField];
+        setCalls(prev => prev.map(c => c.id === callId
+          ? { ...c, ...Object.fromEntries(fields.map(f => [f, callSnapshot[f]])) }
+          : c));
         revertUnits(unitsSnapshot);
-      });
+      }).finally(() => loggingRef.current.delete(callId));
+    } else {
+      // Nothing to log — no network round-trip was started, so release the
+      // lock immediately instead of waiting out a fixed timer.
+      loggingRef.current.delete(callId);
     }
-    setTimeout(() => loggingRef.current.delete(callId), 1000);
   }, [syncUnitsForward, revertUnits]);
 
   const closeCall = useCallback(async (callId, disposition, close_notes) => {
@@ -219,7 +260,13 @@ export function useCalls(setUnits) {
       await apiCloseCall(callId, disposition, close_notes);
       return null;
     } catch (err) {
-      if (snapshot) setCalls(prev => prev.map(c => c.id === callId ? snapshot : c));
+      // Field-scoped rollback (see assignUnit's catch).
+      if (snapshot) {
+        const fields = ['status', 'disposition', 'close_notes', 'closed_at'];
+        setCalls(prev => prev.map(c => c.id === callId
+          ? { ...c, ...Object.fromEntries(fields.map(f => [f, snapshot[f]])) }
+          : c));
+      }
       return err?.response?.data?.error || 'Failed to close call';
     }
   }, []);
@@ -238,7 +285,12 @@ export function useCalls(setUnits) {
       await apiAddUnitToCall(callId, unitId, initialStatus);
       return null;
     } catch (err) {
-      if (snapshot) setCalls(prev => prev.map(c => c.id === callId ? snapshot : c));
+      // Field-scoped rollback (see assignUnit's catch).
+      if (snapshot) {
+        setCalls(prev => prev.map(c => c.id === callId
+          ? { ...c, additional_unit_ids: snapshot.additional_unit_ids }
+          : c));
+      }
       return err?.response?.data?.error || 'Failed to add unit';
     }
   }, []);

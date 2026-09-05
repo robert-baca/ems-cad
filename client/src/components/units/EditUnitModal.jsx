@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 
 const UNIT_TYPES = ['ALS', 'BLS', 'Cart'];
 
@@ -10,6 +10,17 @@ export default function EditUnitModal({ unit, onSave, onDelete, onClose }) {
   const [saving,        setSaving]       = useState(false);
   const [confirming,    setConfirming]   = useState(false);
   const [error,         setError]        = useState('');
+
+  // Resync form state if this instance is ever reused for a different unit
+  // (e.g. reparented without unmounting) instead of remounted fresh per-unit.
+  useEffect(() => {
+    setUnitNumber(unit.unit_number);
+    setUnitName(unit.unit_name);
+    setUnitType(unit.unit_type);
+    setConfirming(false);
+    setError('');
+  }, [unit.id]);
+
   const handleSave = async () => {
     if (!unitNumber.trim()) { setError('Unit number is required.'); return; }
     if (!unitName.trim())   { setError('Unit name is required.');   return; }

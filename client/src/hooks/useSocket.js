@@ -5,6 +5,7 @@ import { sockUrl } from '../lib/native';
 export function useSocket(handlers = {}) {
   const socketRef = useRef(null);
   const handlersRef = useRef(handlers);
+  const registeredEventsRef = useRef(new Set());
   const [isConnected, setIsConnected] = useState(false);
   handlersRef.current = handlers;
 
@@ -34,10 +35,6 @@ export function useSocket(handlers = {}) {
 
     socket.on('disconnect', () => setIsConnected(false));
 
-    Object.keys(handlersRef.current).forEach(event => {
-      socket.on(event, (...args) => handlersRef.current[event]?.(...args));
-    });
-
     // A socket can go silently dead (laptop sleep, a backgrounded tab, a
     // proxy that drops idle connections) without ever firing 'disconnect' —
     // ping/pong detection doesn't always catch it promptly, so isConnected
@@ -58,6 +55,25 @@ export function useSocket(handlers = {}) {
       socket.disconnect();
     };
   }, []);
+
+  // Registers a listener for every handler key seen so far, including ones
+  // that only appear in a later render (e.g. a conditionally-built handlers
+  // map) — the previous version only looped over handlersRef.current once,
+  // at mount, so any event name absent from that first render's handlers
+  // object would never get registered even if added afterward. Each
+  // registration dispatches through handlersRef.current, which is always
+  // current, so re-running this on every render is safe and idempotent
+  // (registeredEventsRef guards against calling socket.on twice for the
+  // same event).
+  useEffect(() => {
+    const socket = socketRef.current;
+    if (!socket) return;
+    Object.keys(handlers).forEach(event => {
+      if (registeredEventsRef.current.has(event)) return;
+      registeredEventsRef.current.add(event);
+      socket.on(event, (...args) => handlersRef.current[event]?.(...args));
+    });
+  }, [handlers]);
 
   return { socketRef, isConnected };
 }

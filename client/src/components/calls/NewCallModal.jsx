@@ -274,7 +274,7 @@ export default function NewCallModal({ pin, units, onDispatch, onClose, parentCa
           {error && <p className="text-red-400 text-sm text-center">{error}</p>}
 
           {/* Submit */}
-          <button type="submit" disabled={loading || !form.call_type || (form.response_mode === 'cart' && selectedCartId && selectedUnitIds.length === 0)}
+          <button type="submit" disabled={loading || !form.call_type || (form.response_mode === 'cart' && (!selectedCartId || selectedUnitIds.length === 0))}
             className="w-full py-3 bg-red-600 hover:bg-red-500 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-bold rounded-xl text-sm transition-colors">
             {loading ? 'Dispatching…' : '🚨 DISPATCH'}
           </button>

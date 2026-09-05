@@ -19,6 +19,9 @@ function CallCard({ call, unit, isSelected, onClick }) {
 
   const elapsed     = elapsedMin(call.received_at);
   const statusColor = STATUS_COLORS[call.status] || '#9ca3af';
+  // NOTE: CallDetail.jsx defines "pending" as `!call.assigned_unit_id`
+  // instead of checking status. The two are meant to be equivalent — if
+  // either definition changes, update the other to match.
   const isPending   = call.status === 'pending';
   const isStale     = isPending && elapsed !== null && elapsed >= 5;
   const extraUnits  = (call.additional_unit_ids || []).length;

@@ -130,7 +130,7 @@ function TimeRow({ step, ts, isLast, prevTs, nextTs, onUpdate, onClear, baseDate
               >
                 ✏️
               </button>
-              {done && (
+              {done && step.tsField !== 'received_at' && (
                 <button
                   onClick={() => onClear?.(step.tsField)}
                   className="text-gray-700 hover:text-red-400 text-xs transition-colors leading-none"
@@ -139,6 +139,10 @@ function TimeRow({ step, ts, isLast, prevTs, nextTs, onUpdate, onClear, baseDate
                   ×
                 </button>
               )}
+              {/* received_at has no clear button: it anchors baseDate for
+                  every other row's manual HH:MM entry below, and Call
+                  History's date filters/sort key off it directly — nulling
+                  it would silently drop the call from date-filtered views. */}
             </div>
           )}
         </div>

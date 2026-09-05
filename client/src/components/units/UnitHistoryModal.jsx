@@ -18,7 +18,7 @@ const PRI_COLORS = { 1: 'text-red-400', 2: 'text-orange-400', 3: 'text-blue-400'
 export default function UnitHistoryModal({ unit, calls, onClose }) {
   const unitCalls = useMemo(() =>
     [...calls]
-      .filter(c => c.assigned_unit_id === unit.id)
+      .filter(c => c.assigned_unit_id === unit.id || (c.additional_unit_ids || []).includes(unit.id))
       .sort((a, b) => new Date(b.received_at) - new Date(a.received_at)),
     [calls, unit.id]
   );

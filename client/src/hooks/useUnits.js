@@ -13,7 +13,9 @@ export function useUnits() {
   const handleGpsUpdate = useCallback(({ unit_id, lat, lng, timestamp }) => {
     setUnits(prev =>
       prev.map(u => u.id === unit_id
-        ? { ...u, last_lat: lat ?? null, last_lng: lng ?? null, last_gps_at: (lat && timestamp) ? timestamp : (lat ? new Date().toISOString() : null) }
+        // Nullish checks, not truthiness — `lat && ...` would treat a valid
+        // lat of exactly 0 as absent and null out last_gps_at.
+        ? { ...u, last_lat: lat ?? null, last_lng: lng ?? null, last_gps_at: (lat != null && timestamp != null) ? timestamp : (lat != null ? new Date().toISOString() : null) }
         : u)
     );
   }, []);
@@ -58,7 +60,10 @@ export function useUnits() {
       // every dispatcher's board, never actually received, with nothing to
       // ever correct it. Roll back and report the failure like every other
       // mutating action in this app already does.
-      if (snapshot) setUnits(prev => prev.map(u => u.id === unitId ? snapshot : u));
+      // Only the status field is rolled back — restoring the whole snapshot
+      // would also clobber e.g. a GPS ping or profile edit that arrived via
+      // socket while this request was in flight.
+      if (snapshot) setUnits(prev => prev.map(u => u.id === unitId ? { ...u, status: snapshot.status } : u));
       return err?.response?.data?.error || 'Failed to update status';
     }
   }, []);
@@ -79,7 +84,14 @@ export function useUnits() {
     try {
       await apiEditUnit(unitId, data);
     } catch (err) {
-      if (snapshot) setUnits(prev => prev.map(u => u.id === unitId ? snapshot : u));
+      // Field-scoped rollback — only revert the keys this edit actually
+      // touched, not the whole record (see changeStatus's catch above).
+      if (snapshot) {
+        const fields = Object.keys(data);
+        setUnits(prev => prev.map(u => u.id === unitId
+          ? { ...u, ...Object.fromEntries(fields.map(f => [f, snapshot[f]])) }
+          : u));
+      }
       throw err;
     }
   }, []);
