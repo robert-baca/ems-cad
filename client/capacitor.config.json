@@ -14,7 +14,7 @@
     "loggingBehavior": "production"
   },
   "ios": {
-    "contentInset": "automatic"
+    "contentInset": "always"
   },
   "plugins": {
     "Geolocation": {
