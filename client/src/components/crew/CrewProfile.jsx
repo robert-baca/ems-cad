@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { apiBase } from '../../lib/native';
+import { updateUnitProfile } from '../../services/api';
 
 const CERT_LEVELS = ['First Responder', 'EMT-B', 'AEMT', 'Paramedic'];
 const EXTRA_CERTS = ['ACLS', 'BLS', 'PALS', 'ITLS', 'PHTLS', 'CPR-I'];
@@ -28,18 +28,10 @@ export default function CrewProfile({ unit, currentProfile, token, onSave, onClo
         certifications: certs,
         employee_id: employeeId.trim()
       };
-      const res = await fetch(`${apiBase()}/units/${unit.unit_id}/profile`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify(profile)
-      });
-      if (!res.ok) throw new Error('Failed to save profile');
+      await updateUnitProfile(unit.unit_id, profile);
       onSave(profile);
     } catch (err) {
-      setError(err.message);
+      setError(err.response?.data?.error || 'Failed to save profile');
     } finally {
       setSaving(false);
     }
@@ -56,7 +48,7 @@ export default function CrewProfile({ unit, currentProfile, token, onSave, onClo
           </div>
           {onClose && (
             <button onClick={onClose}
-              className="text-gray-400 hover:text-white w-8 h-8 flex items-center justify-center rounded hover:bg-gray-700 text-xl">
+              className="text-gray-400 hover:text-white w-11 h-11 flex items-center justify-center rounded hover:bg-gray-700 text-xl">
               ×
             </button>
           )}

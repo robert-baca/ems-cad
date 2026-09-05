@@ -161,7 +161,15 @@ export function useCalls(setUnits) {
     }
   }, []);
 
-  const advanceStatus = useCallback(async (callId, status) => {
+  // `onNetworkError` (optional, used only by CrewMobile.jsx) fires when the
+  // failure is a genuine connectivity drop (`!err.response`) so the caller
+  // can hand the action to offlineActionQueue.js for retry. In that case the
+  // optimistic status/timestamp/unit-sync above is left as-is and this
+  // returns null (treated as success-for-now) instead of rolling back — see
+  // the matching comment on useUnits.js's changeStatus for the reasoning.
+  // Callers that don't pass it (dispatcher dashboard) are unaffected: any
+  // failure still rolls back and reports, exactly as before.
+  const advanceStatus = useCallback(async (callId, status, { onNetworkError } = {}) => {
     const tsField = STATUS_TS_MAP[status];
     let snapshot = null;
     let callForSync = null;
@@ -178,6 +186,10 @@ export function useCalls(setUnits) {
       await updateCallStatus(callId, status);
       return null;
     } catch (err) {
+      if (!err?.response && onNetworkError) {
+        onNetworkError(err);
+        return null;
+      }
       // Field-scoped rollback — see assignUnit's catch for why we don't
       // restore the whole snapshot object.
       if (snapshot) {
@@ -246,7 +258,10 @@ export function useCalls(setUnits) {
     }
   }, [syncUnitsForward, revertUnits]);
 
-  const closeCall = useCallback(async (callId, disposition, close_notes) => {
+  // See advanceStatus's comment above for `onNetworkError` — same deal here:
+  // a genuine connectivity failure hands off to the offline queue and keeps
+  // the optimistic "closed" state instead of rolling it back.
+  const closeCall = useCallback(async (callId, disposition, close_notes, { onNetworkError } = {}) => {
     let snapshot = null;
     setCalls(prev => {
       snapshot = prev.find(c => c.id === callId) || null;
@@ -260,6 +275,10 @@ export function useCalls(setUnits) {
       await apiCloseCall(callId, disposition, close_notes);
       return null;
     } catch (err) {
+      if (!err?.response && onNetworkError) {
+        onNetworkError(err);
+        return null;
+      }
       // Field-scoped rollback (see assignUnit's catch).
       if (snapshot) {
         const fields = ['status', 'disposition', 'close_notes', 'closed_at'];
@@ -338,12 +357,22 @@ export function useCalls(setUnits) {
     ));
   }, []);
 
-  const addComment = useCallback(async (callId, text, author = 'Dispatcher') => {
+  // See advanceStatus's comment above for `onNetworkError`. There's no
+  // optimistic comment here to roll back either way (the comment only
+  // appears once the server echoes 'call:comment_added') — a network
+  // failure just hands off to the offline queue and returns null instead of
+  // an error string, so the caller (e.g. CrewChat) treats it like a send
+  // that's in flight rather than one that failed outright.
+  const addComment = useCallback(async (callId, text, author = 'Dispatcher', { onNetworkError } = {}) => {
     try {
       await apiAddComment(callId, text, author);
       // server emits 'call:comment_added' which handleCommentAdded will pick up
       return null;
     } catch (err) {
+      if (!err?.response && onNetworkError) {
+        onNetworkError(err);
+        return null;
+      }
       return err?.response?.data?.error || 'Failed to send';
     }
   }, []);

@@ -15,6 +15,8 @@ import CallSummaryModal from '../components/calls/CallSummaryModal';
 import NativeSetupModal from '../components/crew/NativeSetupModal';
 import BeaconMode from '../components/crew/BeaconMode';
 import { toggleUnitBeacon, setCrewGpsSharing } from '../services/api';
+import { isNative as isNativePlatform } from '../lib/native';
+import { enqueueOfflineAction, subscribeOfflineQueue } from '../lib/offlineActionQueue';
 import { STATUS_COLORS, STATUS_LABELS } from '../data/mockData';
 
 const NON_TRANSPORT_DISPOSITIONS = [
@@ -45,7 +47,7 @@ function CrewDisposition({ call, onClose, onConfirm }) {
       >
         <div className="flex items-center justify-between mb-1">
           <div className="text-white font-bold text-base">Non-Transport Disposition</div>
-          <button onClick={onClose} className="text-gray-400 hover:text-white text-2xl w-8 h-8 flex items-center justify-center leading-none">×</button>
+          <button onClick={onClose} className="text-gray-400 hover:text-white text-2xl w-11 h-11 flex items-center justify-center leading-none">×</button>
         </div>
 
         <div className="space-y-2">
@@ -192,7 +194,7 @@ export default function CrewMobile() {
   const [showCaseSummary,  setShowCaseSummary]  = useState(false);
   const [showCaseHistory,  setShowCaseHistory]  = useState(false);
   const [showBeacon,       setShowBeacon]       = useState(false);
-  const isNative = !!(window.Capacitor?.isNativePlatform?.());
+  const isNative = isNativePlatform();
   const { scheduleNotif } = useCrewNotifications();
   const [showNativeSetup,  setShowNativeSetup]  = useState(
     isNative && !localStorage.getItem('native_setup_done')
@@ -334,6 +336,17 @@ export default function CrewMobile() {
     };
   }, []);
 
+  // Actions that failed with a genuine network error (not a rejected
+  // request) land in offlineActionQueue.js instead of just showing an
+  // inline error — see the call sites below (handleStatusTap,
+  // handleUndoStatus, handleRequestBackup, CrewChat's onSend, and the
+  // disposition modal's onConfirm) and the module itself for how/why. This
+  // just mirrors the queue's own length into state so the banner below can
+  // show it; the queue module owns retrying (on the 'online' event and a
+  // 15s interval) independent of this component's lifecycle.
+  const [queuedActionCount, setQueuedActionCount] = useState(0);
+  useEffect(() => subscribeOfflineQueue(q => setQueuedActionCount(q.length)), []);
+
   useSocket({
     'unit:gps_update':     handleGpsUpdate,
     'unit:status_change':  handleStatusChange,
@@ -357,7 +370,9 @@ export default function CrewMobile() {
     setStatusLoading(true);
     setStatusError(null);
     try {
-      const err = await changeStatus(myUnit.id, status);
+      const err = await changeStatus(myUnit.id, status, {
+        onNetworkError: () => enqueueOfflineAction('unit_status', { unitId: myUnit.id, status })
+      });
       if (err) { setStatusError(err); return; }
       // Any unit tied to the call (primary or additional) can push the call's
       // own status/timeline forward — the server already allows this and
@@ -369,7 +384,9 @@ export default function CrewMobile() {
       if (myActiveCall) {
         const isPrimary = myActiveCall.assigned_unit_id === myUnit.id;
         if (isPrimary || !['cleared', 'available'].includes(status)) {
-          const callErr = await advanceStatus(myActiveCall.id, status);
+          const callErr = await advanceStatus(myActiveCall.id, status, {
+            onNetworkError: () => enqueueOfflineAction('call_status', { callId: myActiveCall.id, status })
+          });
           if (callErr) setStatusError(callErr);
         }
       }
@@ -389,7 +406,9 @@ export default function CrewMobile() {
     setStatusLoading(true);
     setStatusError(null);
     try {
-      const err = await changeStatus(myUnit.id, prevStatus);
+      const err = await changeStatus(myUnit.id, prevStatus, {
+        onNetworkError: () => enqueueOfflineAction('unit_status', { unitId: myUnit.id, status: prevStatus })
+      });
       if (err) setStatusError(err);
     } catch {
       setStatusError('Status update failed — try again');
@@ -410,7 +429,9 @@ export default function CrewMobile() {
       : `✅ Backup no longer needed — ${myUnit.unit_number}`;
     setBackupSubmitting(true);
     setBackupError('');
-    const err = await addComment(myActiveCall.id, text, myUnit.unit_number);
+    const err = await addComment(myActiveCall.id, text, myUnit.unit_number, {
+      onNetworkError: () => enqueueOfflineAction('comment', { callId: myActiveCall.id, text, author: myUnit.unit_number })
+    });
     setBackupSubmitting(false);
     if (err) {
       setBackupError(next ? 'Backup request failed to send — tap to try again' : 'Failed to cancel — tap to try again');
@@ -490,11 +511,20 @@ export default function CrewMobile() {
   return (
     <div className="min-h-screen bg-gray-900 text-white flex flex-col max-w-md mx-auto">
 
-      {/* Offline banner — status taps/chat will fail until this clears */}
-      {isOffline && (
+      {/* Offline banner — status taps/chat will fail until this clears.
+          Also shown (with different text) whenever the retry queue is
+          non-empty even if navigator.onLine says we're connected — a real
+          dead zone can drop requests without ever flipping that flag. */}
+      {(isOffline || queuedActionCount > 0) && (
         <div className="bg-gray-950 border-b border-gray-700 px-4 py-2 flex items-center gap-2">
           <span className="text-gray-400 text-sm flex-shrink-0">📡</span>
-          <span className="text-gray-400 text-xs">No connection — status updates and messages won't send until reconnected</span>
+          <span className="text-gray-400 text-xs">
+            {isOffline
+              ? "No connection — status updates and messages won't send until reconnected"
+              : 'Reconnecting…'}
+            {queuedActionCount > 0 &&
+              ` · ${queuedActionCount} action${queuedActionCount === 1 ? '' : 's'} pending — will retry automatically`}
+          </span>
         </div>
       )}
 
@@ -597,18 +627,20 @@ export default function CrewMobile() {
           <div className="px-3 py-2 rounded-xl bg-red-900/60 border border-red-700 text-red-200 text-sm flex items-center gap-2">
             <span>⚠️</span>
             <span className="flex-1">{statusError}</span>
-            <button onClick={() => setStatusError(null)} className="text-red-400 hover:text-white text-lg leading-none">×</button>
+            <button onClick={() => setStatusError(null)} className="text-red-400 hover:text-white text-lg w-11 h-11 flex items-center justify-center leading-none flex-shrink-0">×</button>
           </div>
         )}
 
-        <ActiveCall
-          call={myCall}
-          myUnit={myUnit}
-          units={units}
-          isCompleted={callIsCompleted}
-          onDismiss={() => setDismissedCallId(myCall?.id)}
-          locations={landmarkLocations}
-        />
+        <ErrorBoundary>
+          <ActiveCall
+            call={myCall}
+            myUnit={myUnit}
+            units={units}
+            isCompleted={callIsCompleted}
+            onDismiss={() => setDismissedCallId(myCall?.id)}
+            locations={landmarkLocations}
+          />
+        </ErrorBoundary>
 
         {callIsCompleted && myCall && (
           <button
@@ -620,21 +652,27 @@ export default function CrewMobile() {
         )}
 
         {myCall && (
-          <CrewChat
-            call={myCall}
-            myUnit={myUnit}
-            onSend={(text) => addComment(myCall.id, text, myUnit.unit_number)}
-          />
+          <ErrorBoundary>
+            <CrewChat
+              call={myCall}
+              myUnit={myUnit}
+              onSend={(text) => addComment(myCall.id, text, myUnit.unit_number, {
+                onNetworkError: () => enqueueOfflineAction('comment', { callId: myCall.id, text, author: myUnit.unit_number })
+              })}
+            />
+          </ErrorBoundary>
         )}
 
         {myUnit && (
-          <StatusButtons
-            currentStatus={myUnit.status}
-            onStatusChange={handleStatusTap}
-            onUndo={handleUndoStatus}
-            loading={statusLoading}
-            hasCall={!!myActiveCall}
-          />
+          <ErrorBoundary>
+            <StatusButtons
+              currentStatus={myUnit.status}
+              onStatusChange={handleStatusTap}
+              onUndo={handleUndoStatus}
+              loading={statusLoading}
+              hasCall={!!myActiveCall}
+            />
+          </ErrorBoundary>
         )}
 
         {myActiveCall && (
@@ -702,25 +740,31 @@ export default function CrewMobile() {
       )}
 
       {showBeacon && (
-        <BeaconMode
-          myUnit={myUnit}
-          units={units}
-          beaconActive={beaconActive}
-          onToggleBeacon={handleToggleBeacon}
-          onClose={() => setShowBeacon(false)}
-        />
+        <ErrorBoundary onClose={() => setShowBeacon(false)}>
+          <BeaconMode
+            myUnit={myUnit}
+            units={units}
+            beaconActive={beaconActive}
+            onToggleBeacon={handleToggleBeacon}
+            onClose={() => setShowBeacon(false)}
+          />
+        </ErrorBoundary>
       )}
 
       {showDisposition && myActiveCall && (
-        <CrewDisposition
-          call={myActiveCall}
-          onClose={() => setShowDisposition(false)}
-          onConfirm={async (callId, disposition, notes) => {
-            const err = await closeCall(callId, disposition, notes);
-            if (err) { setStatusError(err); return; }
-            setShowDisposition(false);
-          }}
-        />
+        <ErrorBoundary onClose={() => setShowDisposition(false)}>
+          <CrewDisposition
+            call={myActiveCall}
+            onClose={() => setShowDisposition(false)}
+            onConfirm={async (callId, disposition, notes) => {
+              const err = await closeCall(callId, disposition, notes, {
+                onNetworkError: () => enqueueOfflineAction('close_call', { callId, disposition, close_notes: notes })
+              });
+              if (err) { setStatusError(err); return; }
+              setShowDisposition(false);
+            }}
+          />
+        </ErrorBoundary>
       )}
 
       {/* SOS button — fixed to bottom, only when on an active (non-closed) call */}

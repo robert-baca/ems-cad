@@ -1,10 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { registerPlugin } from '@capacitor/core';
-import { apiBase, PROD_URL, nativeCall } from '../lib/native';
+import { apiBase, PROD_URL, nativeCall, isNative, getBackgroundGeolocation } from '../lib/native';
+import { fetchWithTimeout } from '../lib/fetchWithTimeout';
 
 const STALE_MS = 3 * 60 * 1000;
-
-const isNative = () => !!(window.Capacitor?.isNativePlatform?.());
 
 // Custom native plugin, one implementation per platform (Android:
 // client/android/.../GpsTrackerPlugin.java + GpsTrackerService.java; iOS:
@@ -29,14 +27,6 @@ const isNative = () => !!(window.Capacitor?.isNativePlatform?.());
 // anyway, just without the broken PluginHeaders lookup gating it.
 function callGpsTracker(method, options = {}) {
   return window.Capacitor.nativePromise('GpsTracker', method, options);
-}
-
-// Used only for the "open location settings" deep link (openGpsSettings below) —
-// unrelated to which plugin actually tracks location on either platform.
-let _bgGeo = null;
-function getBackgroundGeolocation() {
-  if (!_bgGeo) _bgGeo = registerPlugin('BackgroundGeolocation');
-  return _bgGeo;
 }
 
 // Stops the native tracker. Deliberately NOT called from this hook's effect
@@ -90,7 +80,7 @@ export function useCrewGps({ token, unit, enabled = true }) {
           try {
             gpsPermission = (await withTimeout(callGpsTracker('getStatus'), 3000)).status;
           } catch {}
-          await fetch(`${apiBase()}/crew/gps`, {
+          await fetchWithTimeout(`${apiBase()}/crew/gps`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
             body: JSON.stringify({ lat, lng, accuracy, gpsPermission })

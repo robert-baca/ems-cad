@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { apiBase } from '../lib/native';
+import { fetchWithTimeout } from '../lib/fetchWithTimeout';
 
 const ROLES = [
   { key: 'dispatcher', label: 'Dispatcher',    icon: '🎛️', description: 'Command & dispatch' },
@@ -33,7 +34,7 @@ function CrewLogin({ onBack, onSuccess }) {
   const [loading,      setLoading]     = useState(false);
 
   const loadShiftUnits = () => {
-    fetch(`${apiBase()}/shift/units`).then(r => r.json()).then(units => {
+    fetchWithTimeout(`${apiBase()}/shift/units`).then(r => r.json()).then(units => {
       setShiftUnits(Array.isArray(units) ? units : []);
     }).catch(() => setShiftUnits([]));
   };
@@ -43,7 +44,7 @@ function CrewLogin({ onBack, onSuccess }) {
     if (!crewUsername.trim() || !crewPin.trim()) { setError('Enter your username and PIN.'); return; }
     setLoading(true); setError('');
     try {
-      const res  = await fetch(`${apiBase()}/auth/crew-login`, {
+      const res  = await fetchWithTimeout(`${apiBase()}/auth/crew-login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: crewUsername.trim(), pin: crewPin.trim() })
@@ -67,7 +68,7 @@ function CrewLogin({ onBack, onSuccess }) {
   const confirmUnit = async () => {
     setLoading(true); setError('');
     try {
-      const res  = await fetch(`${apiBase()}/crew/select-unit`, {
+      const res  = await fetchWithTimeout(`${apiBase()}/crew/select-unit`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -87,7 +88,7 @@ function CrewLogin({ onBack, onSuccess }) {
     if (!newNumber.trim()) { setError('Enter a unit number.'); return; }
     setLoading(true); setError('');
     try {
-      const res  = await fetch(`${apiBase()}/crew/add-unit`, {
+      const res  = await fetchWithTimeout(`${apiBase()}/crew/add-unit`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -339,7 +340,7 @@ export default function Login() {
     if (!username || !password) { setError('Enter your username and password.'); return; }
     setLoading(true); setError('');
     try {
-      const res  = await fetch(`${apiBase()}/auth/login`, {
+      const res  = await fetchWithTimeout(`${apiBase()}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password, role: 'dispatcher' })
@@ -357,7 +358,7 @@ export default function Login() {
     if (!pin) { setError('Enter PIN.'); return; }
     setLoading(true); setError('');
     try {
-      const res  = await fetch(`${apiBase()}/display/auth`, {
+      const res  = await fetchWithTimeout(`${apiBase()}/display/auth`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ pin })

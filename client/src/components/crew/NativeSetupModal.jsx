@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { Capacitor, registerPlugin } from '@capacitor/core';
-import { nativeCall } from '../../lib/native';
+import { Capacitor } from '@capacitor/core';
+import { nativeCall, getBackgroundGeolocation } from '../../lib/native';
 
 const ALL_STEPS = [
   {
@@ -30,12 +30,6 @@ const ALL_STEPS = [
 // There's no "Unrestricted Battery" setting on iOS — showing that step there
 // would just be confusing.
 const STEPS = ALL_STEPS.filter(s => !s.androidOnly || Capacitor.getPlatform() === 'android');
-
-let _bgGeo = null;
-function getBackgroundGeolocation() {
-  if (!_bgGeo) _bgGeo = registerPlugin('BackgroundGeolocation');
-  return _bgGeo;
-}
 
 export default function NativeSetupModal({ onDone }) {
   const [step, setStep]       = useState(0);

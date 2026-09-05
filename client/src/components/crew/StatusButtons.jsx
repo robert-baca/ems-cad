@@ -59,7 +59,7 @@ export default function StatusButtons({ currentStatus, onStatusChange, onUndo, l
         <button
           onClick={() => onUndo?.(prevStatus)}
           disabled={loading}
-          className="w-full py-1.5 text-gray-500 hover:text-gray-300 text-xs font-medium transition-colors"
+          className="w-full py-2.5 px-3 rounded-lg text-gray-500 hover:text-gray-300 active:bg-gray-700/50 text-xs font-medium transition-colors"
         >
           ↩ Wrong button? Back to {STATUS_LABELS[prevStatus]}
         </button>

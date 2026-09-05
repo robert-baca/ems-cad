@@ -44,7 +44,18 @@ export function useUnits() {
     setUnits(prev => prev.filter(u => u.id !== unit_id));
   }, []);
 
-  const changeStatus = useCallback(async (unitId, status) => {
+  // `onNetworkError` is optional and only used by CrewMobile.jsx, which
+  // passes it to enqueue the action in offlineActionQueue.js when the
+  // failure is a genuine connectivity drop (`!err.response` — the request
+  // never reached the server), as opposed to a real 4xx/5xx. When it's
+  // provided AND the failure is a network error, the optimistic status
+  // above is deliberately left in place (not rolled back) and this returns
+  // null as if it succeeded — the caller has taken over retrying it, and
+  // rolling back now would just show a stale status until the retry's
+  // eventual success (or socket echo) corrected it right back. Callers that
+  // don't pass `onNetworkError` (e.g. the dispatcher dashboard) keep the
+  // exact old behavior: any failure, network or not, rolls back and reports.
+  const changeStatus = useCallback(async (unitId, status, { onNetworkError } = {}) => {
     let snapshot = null;
     setUnits(prev => {
       snapshot = prev.find(u => u.id === unitId) || null;
@@ -54,6 +65,10 @@ export function useUnits() {
       await updateUnitStatus(unitId, status);
       return null;
     } catch (err) {
+      if (!err?.response && onNetworkError) {
+        onNetworkError(err);
+        return null;
+      }
       // This is the crew's own status button (CrewMobile.jsx) as well as the
       // dispatcher's per-unit override — silently swallowing a failed write
       // here left a crew member's phone showing a status the server, and
