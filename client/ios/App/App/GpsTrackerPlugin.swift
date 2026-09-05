@@ -134,9 +134,17 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
         GpsTrackerPlugin.log("stopTracking() called")
         UserDefaults.standard.set(false, forKey: GpsTrackerPlugin.defaultsActiveKey)
         isTracking = false
-        watchdogTimer?.invalidate()
-        watchdogTimer = nil
+        // watchdogTimer is only ever created inside startWatchdog()'s
+        // DispatchQueue.main.async block (Timer.scheduledTimer schedules it on
+        // the main run loop) -- Apple requires invalidate() be called from that
+        // same thread/run loop. This plugin method runs on Capacitor's private
+        // background "bridge" queue (CapacitorBridge.dispatchQueue), so
+        // invalidating directly here was a cross-thread call on a non-thread-safe
+        // Timer: undefined behavior that could silently leave the watchdog
+        // running after tracking was supposed to have stopped.
         DispatchQueue.main.async {
+            self.watchdogTimer?.invalidate()
+            self.watchdogTimer = nil
             self.locationManager.stopUpdatingLocation()
             self.locationManager.stopMonitoringSignificantLocationChanges()
         }
