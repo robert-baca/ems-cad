@@ -246,15 +246,36 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
         }
         if !accurateEnough && !heartbeatDue { return }
 
+        // Mirrors GpsTrackerService.java's onLocation(): a heartbeat firing on
+        // a unit that hasn't actually moved used to still post the new fix's
+        // raw GPS noise as the "official" position every 5s regardless --
+        // for a genuinely stationary unit near the park's large steel
+        // structures/rides (where this jitter is worst), that made the pin
+        // visibly bounce around a small area on dispatch's map despite never
+        // moving. Re-post the existing stable fix instead when within noise
+        // range -- last_gps_at still refreshes (pin doesn't look frozen), it
+        // just doesn't let raw noise move the pin.
+        var postLoc = loc
+        var withinNoiseRadius = false
         if accurateEnough, let last = lastLocation {
-            if loc.distance(from: last) < minDistanceM && !heartbeatDue { return }
+            if loc.distance(from: last) < minDistanceM {
+                if !heartbeatDue { return }
+                withinNoiseRadius = true
+                postLoc = last
+            }
         }
         lastHeartbeat = now
         lastPost = now
-        lastLocation = loc
+        // Deliberately NOT updated when re-posting the stable fix above --
+        // comparisons on the next callback should stay anchored to that same
+        // stable point, not drift from accumulating small jitter one noisy
+        // reading at a time.
+        if !withinNoiseRadius {
+            lastLocation = loc
+        }
 
-        let lat = loc.coordinate.latitude
-        let lng = loc.coordinate.longitude
+        let lat = postLoc.coordinate.latitude
+        let lng = postLoc.coordinate.longitude
         Task {
             await sendOrEnqueue(lat: lat, lng: lng, accuracy: accuracy)
         }

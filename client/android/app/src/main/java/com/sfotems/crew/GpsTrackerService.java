@@ -286,22 +286,44 @@ public class GpsTrackerService extends Service {
         // Movement-distance dedup only makes sense with a trustworthy fix — skip it
         // for degraded ones so a heartbeat-forced post isn't blocked by a bogus
         // "hasn't moved" reading computed from an inaccurate position.
+        double  postLat           = loc.getLatitude();
+        double  postLng           = loc.getLongitude();
+        boolean withinNoiseRadius = false;
         if (accurateEnough && !Double.isNaN(lastLat)) {
             float[] result = new float[1];
             Location.distanceBetween(lastLat, lastLng, loc.getLatitude(), loc.getLongitude(), result);
-            if (result[0] < MIN_DISTANCE_M && !heartbeatDue) return;
+            if (result[0] < MIN_DISTANCE_M) {
+                if (!heartbeatDue) return;
+                // Heartbeat firing on a unit that hasn't actually moved — GPS
+                // noise this small (under MIN_DISTANCE_M) used to still get
+                // posted as the new "official" position every 5s regardless,
+                // which for a genuinely stationary unit near the park's large
+                // steel structures/rides (where this jitter is worst) made
+                // the pin visibly bounce around a small area on dispatch's
+                // map despite never moving. Re-post the existing stable fix
+                // instead — this still refreshes last_gps_at (pin doesn't
+                // look frozen), it just doesn't let raw noise move the pin.
+                withinNoiseRadius = true;
+                postLat = lastLat;
+                postLng = lastLng;
+            }
         }
         // Reset on every post, not just heartbeat-triggered ones — otherwise
         // a burst of movement posts never refreshes this, and the heartbeat
         // fires again moments later even though a point was just sent.
         lastHeartbeatMs = now;
-
         lastPostMs = now;
-        lastLat    = loc.getLatitude();
-        lastLng    = loc.getLongitude();
+        // Deliberately NOT updated when re-posting the stable fix above —
+        // comparisons on the next callback should stay anchored to that same
+        // stable point, not drift from accumulating small jitter one noisy
+        // reading at a time.
+        if (!withinNoiseRadius) {
+            lastLat = postLat;
+            lastLng = postLng;
+        }
 
-        final double lat = lastLat;
-        final double lng = lastLng;
+        final double lat = postLat;
+        final double lng = postLng;
         final float  acc = accuracy;
         new Thread(() -> {
             boolean ok = sendPoint(lat, lng, acc);
