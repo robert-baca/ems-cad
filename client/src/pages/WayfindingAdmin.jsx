@@ -9,7 +9,7 @@ import {
 } from '../services/api';
 import { cleanTrace, suggestPathFromTraces } from '../lib/pathSuggest';
 import { snapPointToBasemap, snapSuggestedPath } from '../lib/snapToPath';
-import { generateLandmarkPairs, filterAlreadyConnected } from '../lib/candidateGen';
+import { generateLandmarkPairs, generateTraceHubPairs, filterAlreadyConnected, TOP_N_CANDIDATES } from '../lib/candidateGen';
 
 mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN;
 
@@ -316,8 +316,19 @@ export default function WayfindingAdmin() {
   };
 
   const startBatchSuggest = () => {
-    const pairs = generateLandmarkPairs(locations);
-    const pending = filterAlreadyConnected(pairs, paths);
+    // Trace-derived hubs (real crew movement — no curation required) come
+    // first, so the highest-signal, most-traveled candidates get reviewed
+    // before the landmark-derived ones.
+    const hubPairs = generateTraceHubPairs(cleanedByCall, locations);
+    const landmarkPairs = generateLandmarkPairs(locations);
+    const combined = [...hubPairs, ...landmarkPairs].slice(0, TOP_N_CANDIDATES);
+    const pending = filterAlreadyConnected(combined, paths);
+
+    if (pending.length === 0) {
+      setSuggestError('No new candidates found — the network may already cover everything the current GPS history and landmarks support.');
+      return;
+    }
+    setSuggestError('');
     setBatchTotal(pending.length);
     setBatchStats({ approved: 0, rejected: 0, skippedNoData: 0 });
     advanceBatch(pending);
@@ -444,19 +455,14 @@ export default function WayfindingAdmin() {
                 </p>
                 <button
                   onClick={startBatchSuggest}
-                  disabled={!traces || traces.length === 0 || locations.length < 2}
+                  disabled={!traces || traces.length === 0}
                   className="w-full py-2.5 bg-indigo-800 hover:bg-indigo-700 disabled:opacity-40 text-white text-sm font-bold rounded-lg transition-colors"
                 >
                   📋 Batch Suggest
                 </button>
                 <p className="text-gray-600 text-xs">
-                  Runs the same suggestion above across every nearby pair of landmarks not already connected — you still review and approve each one before it's published.
+                  Clusters everywhere crews' GPS traces actually started or ended into hubs, then suggests the routes most-traveled between them first — plus any landmark pins not already connected. You still review and approve each one before it's published.
                 </p>
-                {traces && traces.length > 0 && locations.length < 2 && (
-                  <p className="text-amber-400 text-xs">
-                    Needs at least 2 permanent landmark pins to pair up — there {locations.length === 1 ? 'is' : 'are'} currently {locations.length}. Add them as dispatcher location pins saved as "permanent" (not shift-only).
-                  </p>
-                )}
                 {(!traces || traces.length === 0) && (
                   <p className="text-amber-400 text-xs">
                     {traces === null ? 'Loading GPS trace history…' : 'No historical GPS trace data yet — Batch Suggest needs past calls with GPS tracking to work from.'}

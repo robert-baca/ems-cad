@@ -34,7 +34,9 @@ function isRoutablePath(p) {
   return !!p && Array.isArray(p.coordinates) && p.coordinates.length >= 2;
 }
 
-class UnionFind {
+// Exported for reuse by candidateGen.js, which clusters raw trace endpoints
+// the same way this clusters path vertices.
+export class UnionFind {
   constructor(n) { this.parent = Array.from({ length: n }, (_, i) => i); }
   find(x) {
     while (this.parent[x] !== x) {
