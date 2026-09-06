@@ -249,8 +249,11 @@ with its own custom native GPS plugin mirroring the Android one.
 - `Info.plist` has all the required usage-description keys and `UIBackgroundModes: location`.
 - `webkitCompassHeading` and `DeviceOrientationEvent.requestPermission()` are handled in
   `BeaconMode.jsx`, same as documented above.
-- No Face ID/Touch ID lock screen exists on iOS yet — Android's `MainActivity.java` has one,
-  iOS doesn't. Open gap, not yet scheduled.
+- A Face ID/Touch ID lock screen exists on iOS (`LockOverlayView.swift` + `LAContext`/
+  `evaluatePolicy` in `SceneDelegate.swift`), mirroring Android's `MainActivity.java` lock
+  screen — same colors/copy, same no-device-lock fallback state instead of failing open. This
+  line previously said no iOS lock screen existed; that was stale — it shipped and just never
+  got reflected here.
 - `SceneDelegate.swift` had a bug where it rooted the app in a plain `CAPBridgeViewController`
   instead of `MainViewController` (the subclass that registers `GpsTrackerPlugin` with the
   bridge in `capacitorDidLoad()`), which meant the plugin likely never registered and iOS GPS
