@@ -113,7 +113,14 @@ function Compass({ target, onBack, units }) {
   // Own GPS via browser Geolocation
   useEffect(() => {
     if (!navigator.geolocation) { setNoGps(true); return; }
-    const onPos = (pos) => setMyPos({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+    const onPos = (pos) => {
+      setMyPos({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+      // A fix succeeding means GPS is working again -- without this, one
+      // transient onErr (e.g. a few seconds of signal loss indoors) latches
+      // the "GPS unavailable" message for the rest of the view even after
+      // real fixes resume.
+      setNoGps(false);
+    };
     const onErr = () => setNoGps(true);
     watchRef.current = navigator.geolocation.watchPosition(onPos, onErr, {
       enableHighAccuracy: true, maximumAge: 2000, timeout: 10000
@@ -143,6 +150,11 @@ function Compass({ target, onBack, units }) {
       headingRef.current = smoothAngle(headingRef.current, raw);
       gotReading = true;
       setHeading(headingRef.current);
+      // A reading arriving at all means the sensor did come online -- without
+      // this, a sensor that's merely slow to start (just past the 3s
+      // no-reading timeout below) leaves noCompass latched true forever,
+      // permanently disabling the arrow even once real headings are flowing.
+      setNoCompass(false);
     };
 
     const absHandler = (e) => {

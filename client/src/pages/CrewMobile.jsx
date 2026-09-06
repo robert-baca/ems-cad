@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { useUnits } from '../hooks/useUnits';
@@ -217,8 +217,19 @@ export default function CrewMobile() {
     if (myActiveCall) setLastActiveCallId(myActiveCall.id);
   }, [myActiveCall?.id]);
 
-  // Reset when unit changes (new shift)
+  // Reset when unit changes (new shift) -- but not on the initial resolution
+  // from undefined/null to a real id (units still loading in on mount). That
+  // transition used to unconditionally reset in the same commit as the
+  // effect above, so if myActiveCall also resolved for the first time in
+  // that same render (a call already assigned before the app was reopened),
+  // this ran second and wiped what the other effect had just set, losing the
+  // "view completed call" screen once dispatch closed it. Only a change
+  // between two already-real ids is a genuine unit switch worth resetting for.
+  const prevUnitIdRef = useRef(undefined);
   useEffect(() => {
+    const prevId = prevUnitIdRef.current;
+    prevUnitIdRef.current = myUnit?.id;
+    if (prevId === undefined || prevId === myUnit?.id) return;
     setLastActiveCallId(null);
     setDismissedCallId(null);
   }, [myUnit?.id]);
@@ -234,14 +245,18 @@ export default function CrewMobile() {
   // flag reset to false on every app restart even if a request was already
   // sent and dispatch already saw it, making it look like nothing had been
   // sent (and inviting a duplicate request) after any app kill/reopen.
-  const backupRequested = !!(() => {
+  // Memoized on the comments array itself -- without it, this re-filtered
+  // and re-sorted the full comment history on every render (the 10s nowTick
+  // interval, typing in chat, GPS status polling, etc.), not just when the
+  // comments actually changed.
+  const backupRequested = useMemo(() => {
     if (!myActiveCall || !myUnit) return false;
     const mine = (myActiveCall.comments || [])
       .filter(c => c.author === myUnit.unit_number &&
         (c.text?.startsWith('🆘 BACKUP REQUESTED') || c.text?.startsWith('✅ Backup no longer needed')))
       .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-    return mine[mine.length - 1]?.text.startsWith('🆘 BACKUP REQUESTED');
-  })();
+    return !!mine[mine.length - 1]?.text.startsWith('🆘 BACKUP REQUESTED');
+  }, [myActiveCall?.comments, myUnit]);
 
   // Stale token: unit found by unit_number but ID doesn't match. Force re-login.
   useEffect(() => {
@@ -265,6 +280,20 @@ export default function CrewMobile() {
   // crew socket, so this device wouldn't see its own change reflected otherwise.
   const [gpsSharingEnabled, setGpsSharingEnabled] = useState(true);
   const [gpsSharingBusy,    setGpsSharingBusy]    = useState(false);
+  const gpsSharingSeededRef = useRef(false);
+
+  // Seed the initial toggle from the server's value the first time myUnit
+  // loads in, instead of always assuming "on". Without this, a medic who
+  // explicitly opted out mid-shift got silently opted back in (and the
+  // native tracker restarted) on any app kill/relaunch, since this state
+  // always started at its `true` default with nothing to correct it. Only
+  // seeds once -- after that, local state stays the source of truth per the
+  // comment above.
+  useEffect(() => {
+    if (gpsSharingSeededRef.current || !myUnit) return;
+    gpsSharingSeededRef.current = true;
+    setGpsSharingEnabled(!myUnit.gps_sharing_disabled);
+  }, [myUnit]);
 
   const handleToggleGpsSharing = async () => {
     const next = !gpsSharingEnabled;
@@ -440,26 +469,42 @@ export default function CrewMobile() {
 
   const beaconActive   = !!myUnit?.beacon_active;
   const othersBeaconing = units.some(u => u.beacon_active && u.id !== myUnit?.id);
+  const [beaconBusy, setBeaconBusy] = useState(false);
 
+  // Guarded the same way handleToggleGpsSharing/handleRequestBackup are --
+  // without it, a fast double-tap fires two overlapping calls, and if the
+  // first one's request rejects after the second has already applied its own
+  // optimistic update, the first call's catch below reverts to the
+  // beaconActive value it captured when *it* started, stomping whatever the
+  // second toggle just set.
   const handleToggleBeacon = async () => {
-    if (!myUnit) return;
+    if (!myUnit || beaconBusy) return;
     const next = !beaconActive;
+    setBeaconBusy(true);
     setUnits(prev => prev.map(u => u.id === myUnit.id ? { ...u, beacon_active: next } : u));
     try { await toggleUnitBeacon(myUnit.id, next); }
     catch { setUnits(prev => prev.map(u => u.id === myUnit.id ? { ...u, beacon_active: beaconActive } : u)); }
+    setBeaconBusy(false);
   };
+
+  const [protocolsError, setProtocolsError] = useState('');
 
   // window.open() inside a Capacitor native WebView is unreliable — it can
   // silently no-op instead of opening a real browser tab. @capacitor/browser
   // is the supported way to hand an external link off to the system browser.
+  // If it fails on native, falling back to window.open() would just trade
+  // one silent no-op for another — surface a visible error instead so the
+  // medic knows the tap didn't work, rather than nothing happening at all.
   const openProtocols = async () => {
     const url = 'https://sfotems.com/protocols';
+    setProtocolsError('');
     if (isNative) {
       try {
-        const { Browser } = await import('@capacitor/browser');
-        await Browser.open({ url });
-        return;
-      } catch {}
+        await (await import('@capacitor/browser')).Browser.open({ url });
+      } catch {
+        setProtocolsError('Could not open Protocols — try again');
+      }
+      return;
     }
     window.open(url, '_blank');
   };
@@ -695,7 +740,8 @@ export default function CrewMobile() {
         <div className="flex gap-2">
           <button
             onClick={handleToggleBeacon}
-            className={`flex-1 py-3 rounded-2xl border text-sm font-semibold transition-all flex items-center justify-center gap-2
+            disabled={beaconBusy}
+            className={`flex-1 py-3 rounded-2xl border text-sm font-semibold transition-all flex items-center justify-center gap-2 disabled:opacity-50
               ${beaconActive
                 ? 'bg-green-900/60 border-green-600 text-green-300 shadow-[0_0_12px_rgba(34,197,94,0.3)]'
                 : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-500 hover:text-white'}`}
@@ -712,6 +758,9 @@ export default function CrewMobile() {
           )}
         </div>
 
+        {protocolsError && (
+          <div className="text-red-400 text-xs text-center font-medium">{protocolsError}</div>
+        )}
         <button
           onClick={openProtocols}
           className="w-full py-3 rounded-2xl bg-gray-800 border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 text-sm font-medium transition-colors flex items-center justify-center gap-2"
