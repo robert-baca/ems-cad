@@ -23,6 +23,14 @@ function fmtDate(iso) {
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+// Batch candidates can be scattered anywhere in the park — pan/zoom to each
+// new one as it comes up instead of leaving the admin to hunt for it.
+function fitMapToPoints(map, points) {
+  if (!map || !Array.isArray(points) || points.length === 0) return;
+  const bounds = points.reduce((b, p) => b.extend(p), new mapboxgl.LngLatBounds(points[0], points[0]));
+  map.fitBounds(bounds, { padding: 100, maxZoom: 19, duration: 600 });
+}
+
 export default function WayfindingAdmin() {
   const { user, logout } = useAuth();
   const { locations } = useLocations();
@@ -310,6 +318,7 @@ export default function WayfindingAdmin() {
       setBatchQueue(rest);
       if (skipped > 0) setBatchStats(s => ({ ...s, skippedNoData: s.skippedNoData + skipped }));
 
+      fitMapToPoints(mapRef.current, points);
       setDrawing(true);
       setPathName(label);
       setSaveError('');
