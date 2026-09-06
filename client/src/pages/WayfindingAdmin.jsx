@@ -452,6 +452,16 @@ export default function WayfindingAdmin() {
                 <p className="text-gray-600 text-xs">
                   Runs the same suggestion above across every nearby pair of landmarks not already connected — you still review and approve each one before it's published.
                 </p>
+                {traces && traces.length > 0 && locations.length < 2 && (
+                  <p className="text-amber-400 text-xs">
+                    Needs at least 2 permanent landmark pins to pair up — there {locations.length === 1 ? 'is' : 'are'} currently {locations.length}. Add them as dispatcher location pins saved as "permanent" (not shift-only).
+                  </p>
+                )}
+                {(!traces || traces.length === 0) && (
+                  <p className="text-amber-400 text-xs">
+                    {traces === null ? 'Loading GPS trace history…' : 'No historical GPS trace data yet — Batch Suggest needs past calls with GPS tracking to work from.'}
+                  </p>
+                )}
               </div>
             )}
             {!drawing && suggestMode !== 'idle' && (
