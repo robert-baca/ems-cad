@@ -69,10 +69,12 @@ public class GpsTrackerService extends Service {
     // (killed by an app update install, a crash, a dead zone, permission
     // revoked) and nothing resets it, it fires on its own and tells the crew
     // member directly on their phone, rather than relying on a dispatcher
-    // noticing the "GPS stale" badge on the dashboard. Picked just past the
-    // dashboard's own 10-minute stale threshold, so the phone buzzes at
-    // roughly the same time dispatch would already be seeing it flagged.
-    private static final long STALE_WARNING_DELAY_MS = 12 * 60 * 1000L;
+    // noticing the "GPS stale" badge on the dashboard. 15 minutes, a bit past
+    // the dashboard's own 10-minute stale threshold. am.set() below is a
+    // one-shot alarm and the receiver doesn't reschedule itself, so this
+    // fires exactly once per stale episode -- not a repeating nag -- unless
+    // a later successful post reschedules it again.
+    private static final long STALE_WARNING_DELAY_MS = 15 * 60 * 1000L;
 
     private FusedLocationProviderClient fusedClient;
     private LocationCallback            locationCallback;

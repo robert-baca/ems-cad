@@ -74,10 +74,12 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
     // killing the process, a crash, permission revoked, a long dead zone)
     // and nothing resets it -- alerting the crew member directly on their
     // own phone instead of relying on a dispatcher noticing the "GPS stale"
-    // badge on the dashboard. Same 12-minute delay as Android, just past the
-    // dashboard's own 10-minute stale threshold.
+    // badge on the dashboard. Same 15-minute delay as Android, a bit past the
+    // dashboard's own 10-minute stale threshold. The trigger below has
+    // repeats: false and nothing reschedules it once posts truly stop, so
+    // this fires exactly once per stale episode, not a repeating nag.
     private static let staleWarningId = "gps-stale-warning"
-    private let staleWarningDelayS: TimeInterval = 12 * 60
+    private let staleWarningDelayS: TimeInterval = 15 * 60
 
     // Plain NSLog rather than Capacitor's own Logger/CAPLog -- those are
     // gated by config.isLoggingEnabled(), which defaults to off in release
