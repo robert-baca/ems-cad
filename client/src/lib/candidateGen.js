@@ -120,6 +120,27 @@ export function generateLandmarkPairs(locations, { maxDistFt = MAX_CANDIDATE_DIS
   return pairs.slice(0, limit);
 }
 
+// How much of a candidate's own line can already sit on the published
+// network before it's not worth reviewing again.
+const OVERLAP_SNAP_DIST_FT = 30;
+const OVERLAP_COVERAGE_SKIP = 0.7;
+
+// Drops any {points}-shaped candidate (from corridor discovery or basemap
+// import) that's mostly already covered by the published network. This is
+// a different question from filterAlreadyConnected below (which checks
+// endpoint-to-endpoint connectivity for {a,b} OD-pair candidates) — this
+// checks what fraction of a whole line already overlaps existing paths.
+export function filterCoveredCorridors(candidates, paths, { snapDistFt = OVERLAP_SNAP_DIST_FT, coverageSkip = OVERLAP_COVERAGE_SKIP } = {}) {
+  if (!Array.isArray(paths) || paths.length === 0) return candidates;
+  const graph = buildRouteGraph(paths);
+
+  return candidates.filter(c => {
+    if (!Array.isArray(c.points) || c.points.length === 0) return true;
+    const covered = c.points.filter(pt => !!snapPointToGraph(graph, pt, snapDistFt)).length;
+    return covered / c.points.length < coverageSkip;
+  });
+}
+
 // Drops any candidate a route already connects through the published
 // network (via any chain of paths, not just a single direct one) — the
 // batch queue should only ever surface genuine gaps.

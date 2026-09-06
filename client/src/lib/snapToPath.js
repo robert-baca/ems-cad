@@ -42,7 +42,9 @@ export function nearestOnSegmentFromOrigin(ax, ay, bx, by) {
   return { x, y, distSq: x * x + y * y, t };
 }
 
-function lineStringsOf(feature) {
+// Exported for reuse by basemapPaths.js, which imports whole basemap lines
+// as candidate paths rather than just snapping onto them.
+export function lineStringsOf(feature) {
   const g = feature.geometry;
   if (!g) return [];
   if (g.type === 'LineString') return [g.coordinates];
@@ -50,7 +52,7 @@ function lineStringsOf(feature) {
   return [];
 }
 
-function isPathLike(feature) {
+export function isPathLike(feature) {
   const props = feature.properties || {};
   return PATHLIKE_RE.test(`${props.class ?? ''} ${props.type ?? ''}`);
 }

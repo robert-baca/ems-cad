@@ -9,7 +9,9 @@ import {
 } from '../services/api';
 import { cleanTrace, suggestPathFromTraces } from '../lib/pathSuggest';
 import { snapPointToBasemap, snapSuggestedPath } from '../lib/snapToPath';
-import { generateLandmarkPairs, generateTraceHubPairs, filterAlreadyConnected, TOP_N_CANDIDATES } from '../lib/candidateGen';
+import { generateLandmarkPairs, generateTraceHubPairs, filterAlreadyConnected, filterCoveredCorridors, TOP_N_CANDIDATES } from '../lib/candidateGen';
+import { discoverCorridors } from '../lib/corridorDiscovery';
+import { extractBasemapPaths } from '../lib/basemapPaths';
 
 mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN;
 
@@ -274,34 +276,47 @@ export default function WayfindingAdmin() {
   };
 
   // Pops candidates off the front of the queue, silently skipping (just
-  // counting) any with no real GPS evidence, and stops on the first one
-  // that produces a real suggestion — populating it into the exact same
-  // drawing/review state the manual "Suggest From Data" flow uses.
+  // counting) any 'od-pair' candidate with no real GPS evidence, and stops
+  // on the first one that produces a real suggestion — populating it into
+  // the exact same drawing/review state the manual "Suggest From Data" flow
+  // uses. 'corridor' and 'basemap' candidates already carry a finished
+  // `points` line (no origin/destination pair to test evidence against), so
+  // they skip straight to snapping.
   const advanceBatch = async (queue) => {
     let remaining = queue;
     let skipped = 0;
     while (remaining.length > 0) {
       const [candidate, ...rest] = remaining;
-      const start = [Number(candidate.a.lng), Number(candidate.a.lat)];
-      const end   = [Number(candidate.b.lng), Number(candidate.b.lat)];
-      const result = suggestPathFromTraces(start, end, allCleanedPoints);
+      let points, label;
 
-      if (!result.points) {
-        skipped++;
-        remaining = rest;
-        continue;
+      if (candidate.kind === 'od-pair') {
+        const start = [Number(candidate.a.lng), Number(candidate.a.lat)];
+        const end   = [Number(candidate.b.lng), Number(candidate.b.lat)];
+        const result = suggestPathFromTraces(start, end, allCleanedPoints);
+        if (!result.points) {
+          skipped++;
+          remaining = rest;
+          continue;
+        }
+        points = result.points;
+        label = `${candidate.a.name} ↔ ${candidate.b.name}`;
+      } else {
+        points = candidate.points;
+        label = candidate.kind === 'basemap'
+          ? (candidate.name || 'Existing basemap path')
+          : `Corridor (${candidate.distinctCalls} calls)`;
       }
 
       setBatchQueue(rest);
       if (skipped > 0) setBatchStats(s => ({ ...s, skippedNoData: s.skippedNoData + skipped }));
 
       setDrawing(true);
-      setPathName(`${candidate.a.name} ↔ ${candidate.b.name}`);
+      setPathName(label);
       setSaveError('');
       setSuggestSource(null);
       setSuggesting(true);
       try {
-        const snapped = await snapSuggestedPath(mapRef.current, result.points, mapboxgl.accessToken);
+        const snapped = await snapSuggestedPath(mapRef.current, points, mapboxgl.accessToken);
         setDrawPoints(snapped.points);
         setDrawPointsSnapped(snapped.flags);
         setSuggestSource(snapped.source);
@@ -315,23 +330,42 @@ export default function WayfindingAdmin() {
     setBatchQueue(null); // queue exhausted — nothing left to review
   };
 
-  const startBatchSuggest = () => {
-    // Trace-derived hubs (real crew movement — no curation required) come
-    // first, so the highest-signal, most-traveled candidates get reviewed
-    // before the landmark-derived ones.
-    const hubPairs = generateTraceHubPairs(cleanedByCall, locations);
-    const landmarkPairs = generateLandmarkPairs(locations);
-    const combined = [...hubPairs, ...landmarkPairs].slice(0, TOP_N_CANDIDATES);
-    const pending = filterAlreadyConnected(combined, paths);
-
+  const startQueue = (pending, emptyMessage) => {
     if (pending.length === 0) {
-      setSuggestError('No new candidates found — the network may already cover everything the current GPS history and landmarks support.');
+      setSuggestError(emptyMessage);
       return;
     }
     setSuggestError('');
     setBatchTotal(pending.length);
     setBatchStats({ approved: 0, rejected: 0, skippedNoData: 0 });
     advanceBatch(pending);
+  };
+
+  const startBatchSuggest = () => {
+    // Trace-derived hubs (real crew movement — no curation required) come
+    // first, so the highest-signal, most-traveled candidates get reviewed
+    // before the landmark-derived ones. This is the secondary/gap-filling
+    // tool now — "Discover Corridors" below is the primary way to build out
+    // the network from GPS history.
+    const hubPairs = generateTraceHubPairs(cleanedByCall, locations);
+    const landmarkPairs = generateLandmarkPairs(locations);
+    const combined = [...hubPairs, ...landmarkPairs].map(c => ({ kind: 'od-pair', ...c })).slice(0, TOP_N_CANDIDATES);
+    const pending = filterAlreadyConnected(combined, paths);
+    startQueue(pending, 'No new candidates found — the network may already cover everything the current GPS history and landmarks support.');
+  };
+
+  const startCorridorDiscovery = () => {
+    const corridors = discoverCorridors(cleanedByCall);
+    const covered = filterCoveredCorridors(corridors, paths).slice(0, TOP_N_CANDIDATES);
+    const pending = covered.map(c => ({ kind: 'corridor', ...c }));
+    startQueue(pending, 'No new corridors found — try collecting more GPS history, or the network may already cover what’s there.');
+  };
+
+  const startBasemapImport = () => {
+    const basemapLines = extractBasemapPaths(mapRef.current);
+    const covered = filterCoveredCorridors(basemapLines, paths).slice(0, TOP_N_CANDIDATES);
+    const pending = covered.map(c => ({ kind: 'basemap', ...c }));
+    startQueue(pending, 'No new basemap paths found nearby — try panning/zooming the map to load more of the area first.');
   };
 
   const approveBatchCandidate = async () => {
@@ -453,6 +487,29 @@ export default function WayfindingAdmin() {
                 <p className="text-gray-600 text-xs">
                   Pick a start and end point — if there's enough real GPS evidence nearby, a candidate line is drawn for you to review and adjust before saving.
                 </p>
+
+                <div className="pt-1 border-t border-gray-700" />
+
+                <button
+                  onClick={startCorridorDiscovery}
+                  disabled={!traces || traces.length === 0}
+                  className="w-full py-2.5 bg-teal-800 hover:bg-teal-700 disabled:opacity-40 text-white text-sm font-bold rounded-lg transition-colors"
+                >
+                  🗺️ Discover Corridors
+                </button>
+                <p className="text-gray-600 text-xs">
+                  Clusters the density of every crew's GPS trace directly into real corridors — each trail crews have actually walked shows up once, most-traveled first, for you to review and approve.
+                </p>
+                <button
+                  onClick={startBasemapImport}
+                  disabled={!traces || traces.length === 0}
+                  className="w-full py-2.5 bg-cyan-800 hover:bg-cyan-700 disabled:opacity-40 text-white text-sm font-bold rounded-lg transition-colors"
+                >
+                  🛣️ Import From Basemap
+                </button>
+                <p className="text-gray-600 text-xs">
+                  Pulls in walkways the map already has drawn in this area, so they're part of the routable network too — still reviewed one at a time before publishing.
+                </p>
                 <button
                   onClick={startBatchSuggest}
                   disabled={!traces || traces.length === 0}
@@ -461,11 +518,11 @@ export default function WayfindingAdmin() {
                   📋 Batch Suggest
                 </button>
                 <p className="text-gray-600 text-xs">
-                  Clusters everywhere crews' GPS traces actually started or ended into hubs, then suggests the routes most-traveled between them first — plus any landmark pins not already connected. You still review and approve each one before it's published.
+                  Suggests routes between hubs and landmarks not yet covered by a discovered corridor — useful for filling small connector gaps once the main corridors are down.
                 </p>
                 {(!traces || traces.length === 0) && (
                   <p className="text-amber-400 text-xs">
-                    {traces === null ? 'Loading GPS trace history…' : 'No historical GPS trace data yet — Batch Suggest needs past calls with GPS tracking to work from.'}
+                    {traces === null ? 'Loading GPS trace history…' : 'No historical GPS trace data yet — these tools need past calls with GPS tracking to work from.'}
                   </p>
                 )}
               </div>
