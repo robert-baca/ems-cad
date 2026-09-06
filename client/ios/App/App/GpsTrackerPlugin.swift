@@ -80,6 +80,11 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
     // this fires exactly once per stale episode, not a repeating nag.
     private static let staleWarningId = "gps-stale-warning"
     private let staleWarningDelayS: TimeInterval = 15 * 60
+    // See scheduleStaleWarning()'s "already fired this session" gate --
+    // mirrors GpsTrackerService.java's SharedPreferences keys of the same
+    // purpose.
+    private static let staleWarningFiredKey = "GpsStaleWarningFired"
+    private static let staleWarningNextFireAtKey = "GpsStaleWarningNextFireAt"
 
     // Plain NSLog rather than Capacitor's own Logger/CAPLog -- those are
     // gated by config.isLoggingEnabled(), which defaults to off in release
@@ -198,6 +203,11 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
             return
         }
         isTracking = true
+        // A genuinely fresh tracking session gets a clean stale-warning budget --
+        // see scheduleStaleWarning()'s "already fired this session" gate.
+        let defaults = UserDefaults.standard
+        defaults.set(false, forKey: GpsTrackerPlugin.staleWarningFiredKey)
+        defaults.removeObject(forKey: GpsTrackerPlugin.staleWarningNextFireAtKey)
         GpsTrackerPlugin.log("beginTrackingIfNeeded(): starting location subscription, authStatus=\(GpsTrackerPlugin.authStatusString(locationManager.authorizationStatus))")
         DispatchQueue.main.async {
             self.locationManager.startUpdatingLocation()
@@ -329,7 +339,31 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
     // rather than stacking a second one -- this is what makes "call this on
     // every successful post" behave as a reschedule instead of queuing up a
     // pile of duplicate future notifications.
+    // Only ever arms one nudge per tracking session, not one per stale gap --
+    // medics in patchy-signal areas of the park were getting hit with a fresh
+    // warning every time connectivity dropped for 15+ minutes and recovered,
+    // which read as spam rather than a one-time "hey, check your app" nudge.
+    // There's no reliable fire callback to hook here (UNUserNotificationCenter's
+    // delegate only sees deliveries while the app happens to be foregrounded,
+    // and this fires mostly while backgrounded/killed), so this infers a
+    // firing from timestamps instead, mirroring GpsTrackerService.java: it
+    // stores the wall-clock time the currently-armed notification is set to
+    // go off, and if a later reschedule attempt arrives at or after that
+    // time, the notification must have already fired -- so this stops arming
+    // any more for the rest of the session. Cleared back to a fresh budget
+    // only when a genuinely new tracking session starts (see
+    // beginTrackingIfNeeded() below).
     private func scheduleStaleWarning() {
+        let defaults = UserDefaults.standard
+        if defaults.bool(forKey: GpsTrackerPlugin.staleWarningFiredKey) { return }
+
+        let now = Date().timeIntervalSince1970
+        let nextFireAt = defaults.double(forKey: GpsTrackerPlugin.staleWarningNextFireAtKey)
+        if nextFireAt != 0 && now >= nextFireAt {
+            defaults.set(true, forKey: GpsTrackerPlugin.staleWarningFiredKey)
+            return
+        }
+
         let content = UNMutableNotificationContent()
         content.title = "GPS Tracking Stopped"
         content.body = "Your location hasn't updated in a while. Please reopen the EMS Crew app."
@@ -342,6 +376,7 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
                 GpsTrackerPlugin.log("scheduleStaleWarning: failed to schedule: \(error.localizedDescription)")
             }
         }
+        defaults.set(now + staleWarningDelayS, forKey: GpsTrackerPlugin.staleWarningNextFireAtKey)
     }
 
     private func cancelStaleWarning() {

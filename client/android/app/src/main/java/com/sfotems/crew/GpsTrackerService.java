@@ -132,6 +132,13 @@ public class GpsTrackerService extends Service {
         // still updated either way, this just skips re-subscribing when one is
         // already running, avoiding duplicate callbacks and duplicate posts.
         if (fusedClient == null || locationCallback == null) {
+            // A genuinely fresh tracking session (not a JWT-refresh no-op) gets a
+            // clean stale-warning budget -- see scheduleStaleWarning()'s "already
+            // fired this session" gate below, which this resets.
+            getSharedPreferences("GpsTracker", MODE_PRIVATE).edit()
+                    .putBoolean("staleWarningFired", false)
+                    .remove("staleWarningNextFireAt")
+                    .apply();
             acquireWakeLock();
             startGps();
             startWatchdog();
@@ -205,10 +212,35 @@ public class GpsTrackerService extends Service {
     // Called on every successful post. Plain set() rather than an exact alarm --
     // a reminder notification arriving a few minutes late is fine, and it avoids
     // needing Android 12+'s SCHEDULE_EXACT_ALARM permission entirely.
+    //
+    // Only ever arms one nudge per tracking session, not one per stale gap --
+    // medics in patchy-signal areas of the park were getting hit with a fresh
+    // warning every time connectivity dropped for 15+ minutes and recovered,
+    // which read as spam rather than a one-time "hey, check your app" nudge.
+    // There's no fire callback to hook (AlarmManager fires independent of
+    // whether this process is alive to observe it), so this infers a firing
+    // from timestamps instead: it stores the wall-clock time the currently-
+    // armed alarm is set to go off, and if a later reschedule attempt arrives
+    // at or after that time, the alarm must have already fired -- so this
+    // stops arming any more for the rest of the session instead of arming a
+    // fresh one for the next gap. Cleared back to a fresh budget only when a
+    // genuinely new tracking session starts (see onStartCommand above).
     private void scheduleStaleWarning() {
+        android.content.SharedPreferences prefs = getSharedPreferences("GpsTracker", MODE_PRIVATE);
+        if (prefs.getBoolean("staleWarningFired", false)) return;
+
+        long now = System.currentTimeMillis();
+        long nextFireAt = prefs.getLong("staleWarningNextFireAt", 0);
+        if (nextFireAt != 0 && now >= nextFireAt) {
+            prefs.edit().putBoolean("staleWarningFired", true).apply();
+            return;
+        }
+
         AlarmManager am = (AlarmManager) getSystemService(ALARM_SERVICE);
         if (am == null) return;
-        am.set(AlarmManager.RTC_WAKEUP, System.currentTimeMillis() + STALE_WARNING_DELAY_MS, staleWarningIntent());
+        long fireAt = now + STALE_WARNING_DELAY_MS;
+        am.set(AlarmManager.RTC_WAKEUP, fireAt, staleWarningIntent());
+        prefs.edit().putLong("staleWarningNextFireAt", fireAt).apply();
     }
 
     // Called on a deliberate stop (onDestroy running normally, e.g. logout or
