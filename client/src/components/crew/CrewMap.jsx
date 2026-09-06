@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
 import { getBearing, getDistanceFt, getCardinal } from '../../lib/geo';
 import { getParkPaths, getWayfindingSettings } from '../../services/api';
+import { useRoute } from '../../hooks/useRoute';
 
 mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN;
 
@@ -39,6 +40,18 @@ function makeCrewEl() {
 
 const EMPTY_LINE = { type: 'Feature', geometry: { type: 'LineString', coordinates: [] } };
 
+// Bearing toward the first route waypoint at least ~15ft ahead of the crew's
+// position — a cheap "which way to head next" signal without building a
+// full turn-by-turn instruction stack.
+function nextWaypointBearing(points, fromLat, fromLng) {
+  if (!points || points.length < 2) return null;
+  for (const [lng, lat] of points) {
+    if (getDistanceFt(fromLat, fromLng, lat, lng) >= 15) return getBearing(fromLat, fromLng, lat, lng);
+  }
+  const [lng, lat] = points[points.length - 1];
+  return getBearing(fromLat, fromLng, lat, lng);
+}
+
 export default function CrewMap({ call, myUnit, locations = [] }) {
   const containerRef       = useRef(null);
   const mapRef              = useRef(null);
@@ -51,6 +64,7 @@ export default function CrewMap({ call, myUnit, locations = [] }) {
   const [expanded,  setExpanded]  = useState(false);
 
   const hasCall = !!(call?.location_lat && call?.location_lng);
+  const hasCrewPos = !!(myUnit?.last_lat && myUnit?.last_lng);
   const [mapFailed, setMapFailed] = useState(false);
 
   const [paths, setPaths] = useState([]);
@@ -65,6 +79,15 @@ export default function CrewMap({ call, myUnit, locations = [] }) {
       })
       .catch(() => {}); // fail quiet — same pattern as the locations effect below
   }, []);
+
+  // Route the crew's live position to the call through the published trail
+  // network — null when routing isn't possible, so the effect below falls
+  // back to a straight line exactly as it did before this existed.
+  const route = useRoute(
+    paths, pathsEnabled,
+    hasCrewPos ? [myUnit.last_lng, myUnit.last_lat] : null,
+    hasCall ? [call.location_lng, call.location_lat] : null
+  );
 
   // Init map once
   useEffect(() => {
@@ -194,11 +217,15 @@ export default function CrewMap({ call, myUnit, locations = [] }) {
 
     const lineSource = mapRef.current?.getSource('crew-line');
     if (lineSource) {
-      lineSource.setData(hasCall
-        ? { type: 'Feature', geometry: { type: 'LineString', coordinates: [lngLat, [call.location_lng, call.location_lat]] } }
-        : EMPTY_LINE);
+      if (!hasCall) {
+        lineSource.setData(EMPTY_LINE);
+      } else if (route?.points?.length >= 2) {
+        lineSource.setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: route.points } });
+      } else {
+        lineSource.setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: [lngLat, [call.location_lng, call.location_lat]] } });
+      }
     }
-  }, [myUnit?.last_lat, myUnit?.last_lng, hasCall, call?.location_lng, call?.location_lat]);
+  }, [myUnit?.last_lat, myUnit?.last_lng, hasCall, call?.location_lng, call?.location_lat, route]);
 
   // A dispatcher can reposition a call's pin mid-call (see CallDetail's
   // "reposition pin" action) — keep the marker in sync instead of only
@@ -262,13 +289,12 @@ export default function CrewMap({ call, myUnit, locations = [] }) {
     map.getSource('park-paths')?.setData({ type: 'FeatureCollection', features });
   }, [paths, pathsEnabled, mapLoaded]);
 
-  const hasCrewPos = !!(myUnit?.last_lat && myUnit?.last_lng);
-  const distFt = hasCall && hasCrewPos
-    ? getDistanceFt(myUnit.last_lat, myUnit.last_lng, call.location_lat, call.location_lng)
-    : null;
-  const bearing = hasCall && hasCrewPos
-    ? getBearing(myUnit.last_lat, myUnit.last_lng, call.location_lat, call.location_lng)
-    : null;
+  const distFt = route
+    ? route.distFt
+    : (hasCall && hasCrewPos ? getDistanceFt(myUnit.last_lat, myUnit.last_lng, call.location_lat, call.location_lng) : null);
+  const bearing = route
+    ? (hasCrewPos ? nextWaypointBearing(route.points, myUnit.last_lat, myUnit.last_lng) : null)
+    : (hasCall && hasCrewPos ? getBearing(myUnit.last_lat, myUnit.last_lng, call.location_lat, call.location_lng) : null);
 
   return (
     <div
@@ -287,7 +313,7 @@ export default function CrewMap({ call, myUnit, locations = [] }) {
 
       {distFt != null && (
         <div className="absolute bottom-2 left-2 bg-black/70 backdrop-blur-sm text-white text-xs font-semibold px-2.5 py-1 rounded-full pointer-events-none select-none">
-          🚩 {distFt < 1000 ? `${distFt} ft` : `${(distFt / 5280).toFixed(2)} mi`} · {getCardinal(bearing)}
+          {route ? '🥾' : '🚩'} {distFt < 1000 ? `${distFt} ft` : `${(distFt / 5280).toFixed(2)} mi`} · {getCardinal(bearing)}
         </div>
       )}
 

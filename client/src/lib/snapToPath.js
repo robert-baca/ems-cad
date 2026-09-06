@@ -19,7 +19,9 @@ function ftFromMeters(m) { return m * 3.28084; }
 // Local flat-earth projection centered on the point being snapped — same
 // equirectangular approach as pathSuggest.js's toXY, just re-centered per
 // call since candidate lines are only ever a few meters away.
-function makeProjector(originLat, originLng) {
+// Exported for reuse by routeGraph.js, which needs the same nearest-point-
+// on-segment math to snap a crew/call position onto the trail graph.
+export function makeProjector(originLat, originLng) {
   const mPerDegLat = 111320;
   const mPerDegLng = 111320 * Math.cos(toRad(originLat));
   return {
@@ -29,13 +31,15 @@ function makeProjector(originLat, originLng) {
 }
 
 // Nearest point on segment [a,b] to the origin (0,0), in local XY meters.
-function nearestOnSegmentFromOrigin(ax, ay, bx, by) {
+// `t` (fraction from a to b, 0-1) is also returned — routeGraph.js needs it
+// to split a graph edge at the exact snap point.
+export function nearestOnSegmentFromOrigin(ax, ay, bx, by) {
   const abx = bx - ax, aby = by - ay;
   const lenSq = abx * abx + aby * aby;
   let t = lenSq > 0 ? -(ax * abx + ay * aby) / lenSq : 0;
   t = Math.max(0, Math.min(1, t));
   const x = ax + t * abx, y = ay + t * aby;
-  return { x, y, distSq: x * x + y * y };
+  return { x, y, distSq: x * x + y * y, t };
 }
 
 function lineStringsOf(feature) {

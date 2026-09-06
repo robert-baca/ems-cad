@@ -2,12 +2,14 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import mapboxgl from 'mapbox-gl';
 import { useAuth } from '../context/AuthContext';
+import { useLocations } from '../hooks/useLocations';
 import {
   getWayfindingTraces, getParkPaths, createParkPath, deleteParkPath,
   getWayfindingSettings, setWayfindingEnabled
 } from '../services/api';
 import { cleanTrace, suggestPathFromTraces } from '../lib/pathSuggest';
 import { snapPointToBasemap, snapSuggestedPath } from '../lib/snapToPath';
+import { generateLandmarkPairs, filterAlreadyConnected } from '../lib/candidateGen';
 
 mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN;
 
@@ -21,6 +23,7 @@ function fmtDate(iso) {
 
 export default function WayfindingAdmin() {
   const { user, logout } = useAuth();
+  const { locations } = useLocations();
   const navigate = useNavigate();
 
   const containerRef  = useRef(null);
@@ -53,6 +56,15 @@ export default function WayfindingAdmin() {
   const [suggestMode,  setSuggestMode]  = useState('idle');
   const [suggestStart, setSuggestStart] = useState(null);
   const [suggestError, setSuggestError] = useState('');
+
+  // Batch Suggest: runs the same suggestPathFromTraces/snapSuggestedPath
+  // pipeline as manual "Suggest From Data" across every candidate landmark
+  // pair automatically, but still hands each result through the normal
+  // drawing/review/save flow below — nothing gets published unreviewed.
+  // null = not in batch mode; an array (possibly empty) = remaining queue.
+  const [batchQueue, setBatchQueue] = useState(null);
+  const [batchTotal, setBatchTotal] = useState(0);
+  const [batchStats, setBatchStats] = useState({ approved: 0, rejected: 0, skippedNoData: 0 });
 
   // Only an SSO'd admin (role: wayfinding_admin, minted only when access_role
   // === 'admin' on sfotems.com) can be here — everyone else gets bounced.
@@ -226,16 +238,21 @@ export default function WayfindingAdmin() {
   const undoLastPoint = () => { setDrawPoints(prev => prev.slice(0, -1)); setDrawPointsSnapped(prev => prev.slice(0, -1)); };
   const cancelDrawing = () => { setDrawing(false); setDrawPoints([]); setDrawPointsSnapped([]); setPathName(''); setSaveError(''); setSuggestSource(null); };
 
+  // Returns whether the save succeeded — the manual "Save Path" button
+  // ignores this, but Batch Suggest needs it to know whether to advance to
+  // the next candidate or leave the error in place for a retry.
   const savePath = async () => {
-    if (drawPoints.length < 2) { setSaveError('Click at least 2 points on the map first.'); return; }
+    if (drawPoints.length < 2) { setSaveError('Click at least 2 points on the map first.'); return false; }
     setSaving(true);
     setSaveError('');
     try {
       const res = await createParkPath(pathName.trim() || null, drawPoints);
       setPaths(prev => [...prev, res.data]);
       cancelDrawing();
+      return true;
     } catch (err) {
       setSaveError(err?.response?.data?.error || 'Failed to save path');
+      return false;
     } finally {
       setSaving(false);
     }
@@ -254,6 +271,74 @@ export default function WayfindingAdmin() {
   const cancelSuggesting = () => {
     setSuggestMode('idle');
     setSuggestStart(null);
+  };
+
+  // Pops candidates off the front of the queue, silently skipping (just
+  // counting) any with no real GPS evidence, and stops on the first one
+  // that produces a real suggestion — populating it into the exact same
+  // drawing/review state the manual "Suggest From Data" flow uses.
+  const advanceBatch = async (queue) => {
+    let remaining = queue;
+    let skipped = 0;
+    while (remaining.length > 0) {
+      const [candidate, ...rest] = remaining;
+      const start = [Number(candidate.a.lng), Number(candidate.a.lat)];
+      const end   = [Number(candidate.b.lng), Number(candidate.b.lat)];
+      const result = suggestPathFromTraces(start, end, allCleanedPoints);
+
+      if (!result.points) {
+        skipped++;
+        remaining = rest;
+        continue;
+      }
+
+      setBatchQueue(rest);
+      if (skipped > 0) setBatchStats(s => ({ ...s, skippedNoData: s.skippedNoData + skipped }));
+
+      setDrawing(true);
+      setPathName(`${candidate.a.name} ↔ ${candidate.b.name}`);
+      setSaveError('');
+      setSuggestSource(null);
+      setSuggesting(true);
+      try {
+        const snapped = await snapSuggestedPath(mapRef.current, result.points, mapboxgl.accessToken);
+        setDrawPoints(snapped.points);
+        setDrawPointsSnapped(snapped.flags);
+        setSuggestSource(snapped.source);
+      } finally {
+        setSuggesting(false);
+      }
+      return;
+    }
+
+    if (skipped > 0) setBatchStats(s => ({ ...s, skippedNoData: s.skippedNoData + skipped }));
+    setBatchQueue(null); // queue exhausted — nothing left to review
+  };
+
+  const startBatchSuggest = () => {
+    const pairs = generateLandmarkPairs(locations);
+    const pending = filterAlreadyConnected(pairs, paths);
+    setBatchTotal(pending.length);
+    setBatchStats({ approved: 0, rejected: 0, skippedNoData: 0 });
+    advanceBatch(pending);
+  };
+
+  const approveBatchCandidate = async () => {
+    const ok = await savePath();
+    if (!ok) return; // leave the error in place so the admin can retry or quit
+    setBatchStats(s => ({ ...s, approved: s.approved + 1 }));
+    advanceBatch(batchQueue || []);
+  };
+
+  const rejectBatchCandidate = () => {
+    cancelDrawing();
+    setBatchStats(s => ({ ...s, rejected: s.rejected + 1 }));
+    advanceBatch(batchQueue || []);
+  };
+
+  const quitBatch = () => {
+    setBatchQueue(null);
+    cancelDrawing();
   };
 
   const toggleEnabled = async () => {
@@ -357,6 +442,16 @@ export default function WayfindingAdmin() {
                 <p className="text-gray-600 text-xs">
                   Pick a start and end point — if there's enough real GPS evidence nearby, a candidate line is drawn for you to review and adjust before saving.
                 </p>
+                <button
+                  onClick={startBatchSuggest}
+                  disabled={!traces || traces.length === 0 || locations.length < 2}
+                  className="w-full py-2.5 bg-indigo-800 hover:bg-indigo-700 disabled:opacity-40 text-white text-sm font-bold rounded-lg transition-colors"
+                >
+                  📋 Batch Suggest
+                </button>
+                <p className="text-gray-600 text-xs">
+                  Runs the same suggestion above across every nearby pair of landmarks not already connected — you still review and approve each one before it's published.
+                </p>
               </div>
             )}
             {!drawing && suggestMode !== 'idle' && (
@@ -369,6 +464,12 @@ export default function WayfindingAdmin() {
             )}
             {drawing && (
               <div className="space-y-2">
+                {batchQueue !== null && (
+                  <div className="bg-indigo-950/60 border border-indigo-700 rounded-lg px-3 py-2 text-xs text-indigo-200">
+                    Candidate {batchTotal - batchQueue.length} of {batchTotal} · {batchStats.approved} approved · {batchStats.rejected} rejected
+                    {batchStats.skippedNoData > 0 && <> · {batchStats.skippedNoData} no data yet</>}
+                  </div>
+                )}
                 <input
                   type="text"
                   value={pathName}
@@ -393,20 +494,28 @@ export default function WayfindingAdmin() {
                     ↩ Undo Point
                   </button>
                   <button
-                    onClick={cancelDrawing}
+                    onClick={batchQueue !== null ? rejectBatchCandidate : cancelDrawing}
                     className="flex-1 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs font-semibold rounded-lg transition-colors"
                   >
-                    ✕ Cancel
+                    {batchQueue !== null ? '⏭ Reject & Skip' : '✕ Cancel'}
                   </button>
                 </div>
                 {saveError && <p className="text-red-400 text-xs">{saveError}</p>}
                 <button
-                  onClick={savePath}
+                  onClick={batchQueue !== null ? approveBatchCandidate : savePath}
                   disabled={saving || suggesting || drawPoints.length < 2}
                   className="w-full py-2 bg-green-700 hover:bg-green-600 disabled:bg-gray-600 text-white text-sm font-bold rounded-lg transition-colors"
                 >
-                  {saving ? 'Saving…' : '✓ Save Path'}
+                  {saving ? 'Saving…' : (batchQueue !== null ? '✓ Approve & Save' : '✓ Save Path')}
                 </button>
+                {batchQueue !== null && (
+                  <button
+                    onClick={quitBatch}
+                    className="w-full py-1.5 text-gray-500 hover:text-gray-300 text-xs transition-colors"
+                  >
+                    Quit Batch
+                  </button>
+                )}
               </div>
             )}
           </div>
