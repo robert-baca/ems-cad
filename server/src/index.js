@@ -1841,6 +1841,14 @@ function applyGpsUpdate(unit, lat, lng, timestamp, accuracy) {
   // Without this emit, the hook sees a stale timestamp after 3 minutes and starts
   // sending redundant browser GPS alongside it.
   io.to(`crew:${unit.id}`).emit('unit:gps_update', payload);
+  // Also broadcast to every other crew phone — Find a Medic lets any crew
+  // member pull up any unit's compass with no opt-in (see BeaconMode.jsx),
+  // so their local units list needs the same live position stream dispatch
+  // already gets. Without this, another crew member's staleness readout only
+  // caught up whenever some unrelated event (e.g. a status change) happened
+  // to also carry a full snapshot of that unit, lagging real GPS activity by
+  // minutes despite the dispatcher map showing it as current.
+  io.to('crew_all').emit('unit:gps_update', payload);
   return true;
 }
 
