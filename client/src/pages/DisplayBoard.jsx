@@ -21,6 +21,7 @@ export default function DisplayBoard() {
   const navigate = useNavigate();
   const [units, setUnits] = useState([]);
   const [calls, setCalls] = useState([]);
+  const [locations, setLocations] = useState([]);
 
   const kickToLogin = useCallback(() => {
     sessionStorage.removeItem('display_token');
@@ -38,9 +39,19 @@ export default function DisplayBoard() {
   // park's public display frozen on stale data while still claiming "LIVE".
   const { isConnected } = useSocket({
     'error:auth': kickToLogin,
-    'init:state': ({ units: u, calls: c }) => {
+    'init:state': ({ units: u, calls: c, locations: l }) => {
       setUnits(u);
       setCalls(c.filter(c => c.status !== 'closed'));
+      if (l) setLocations(l);
+    },
+    // Only permanent locations ever reach this event (see POST /api/locations
+    // on the server) — shift-only pins stay local to the dispatcher who
+    // placed them and never broadcast.
+    'location:added': (loc) => {
+      setLocations(prev => prev.some(l => l.id === loc.id) ? prev : [...prev, loc]);
+    },
+    'location:removed': ({ id }) => {
+      setLocations(prev => prev.filter(l => l.id !== id));
     },
     'unit:gps_update': ({ unit_id, lat, lng, timestamp }) => {
       setUnits(prev => prev.map(u =>
@@ -127,7 +138,7 @@ export default function DisplayBoard() {
           <ParkMap
             units={units}
             calls={activeCalls}
-            locations={[]}
+            locations={locations}
           />
         </div>
 

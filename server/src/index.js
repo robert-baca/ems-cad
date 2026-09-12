@@ -2000,6 +2000,12 @@ app.post('/api/locations', verifyToken, async (req, res) => {
   const loc = { id: `loc-${Date.now()}`, name: name.trim(), lat, lng, color, location_type };
   locations.push(loc);
   if (location_type === 'permanent') persist(saveLocation(loc), 'location ' + loc.id);
+  // Only permanent locations are ever POSTed here today (the client keeps
+  // shift-only pins local to the dispatcher who placed them) — broadcasting
+  // unconditionally is still correct since it just mirrors whatever this
+  // endpoint actually stored, and is what puts a newly-pinned location on
+  // the display board and any other open dispatcher session live.
+  emitDispatch('location:added', loc);
   res.status(201).json(loc);
 });
 
@@ -2009,6 +2015,7 @@ app.delete('/api/locations/:id', verifyToken, async (req, res) => {
   if (idx === -1) return res.status(404).json({ error: 'Not found' });
   locations.splice(idx, 1);
   persist(deleteLocationFromDb(req.params.id), 'location ' + req.params.id);
+  emitDispatch('location:removed', { id: req.params.id });
   res.json({ ok: true });
 });
 

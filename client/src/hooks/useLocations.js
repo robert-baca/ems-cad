@@ -57,5 +57,19 @@ export function useLocations() {
     if (Array.isArray(locs)) setPermanent(locs);
   }, []);
 
-  return { locations, addLocation, removeLocation, clearShiftLocations, setPermLocations };
+  // Called on the 'location:added' socket event — covers a permanent location
+  // added from another dispatcher session (or the display board picking one
+  // up live). Deduped by id since the dispatcher who actually created it
+  // already appended it locally in addLocation() above, right after its own
+  // POST resolved — without the check, that session would see it twice.
+  const addRemoteLocation = useCallback((loc) => {
+    setPermanent(prev => prev.some(l => l.id === loc.id) ? prev : [...prev, loc]);
+  }, []);
+
+  // Called on the 'location:removed' socket event
+  const removeRemoteLocation = useCallback((id) => {
+    setPermanent(prev => prev.filter(l => l.id !== id));
+  }, []);
+
+  return { locations, addLocation, removeLocation, clearShiftLocations, setPermLocations, addRemoteLocation, removeRemoteLocation };
 }

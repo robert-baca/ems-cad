@@ -70,7 +70,7 @@ export default function DispatcherDashboard() {
     dispatchCall, assignUnit, closeCall, updateTimestamp, logTimeNow, addComment,
     addUnitToCall, removeUnitFromCall, updatePriority, updateCallLocationPin, addMutualAid, removeMutualAid
   } = useCalls(setUnits);
-  const { locations, addLocation, removeLocation, clearShiftLocations, setPermLocations } = useLocations();
+  const { locations, addLocation, removeLocation, clearShiftLocations, setPermLocations, addRemoteLocation, removeRemoteLocation } = useLocations();
 
   const [currentShift,      setCurrentShift]      = useState(undefined); // undefined = loading
   const [shiftSummary,      setShiftSummary]       = useState(null);
@@ -156,6 +156,8 @@ export default function DispatcherDashboard() {
     'unit:profile_update': handleProfileUpdate,
     'unit:updated':        handleUnitUpdated,
     'unit:removed':        handleUnitRemoved,
+    'location:added':      addRemoteLocation,
+    'location:removed':    ({ id }) => removeRemoteLocation(id),
     'call:created':        handleCallCreated,
     'call:updated':        handleCallUpdated,
     'call:status_change':  handleCallStatusChange,
