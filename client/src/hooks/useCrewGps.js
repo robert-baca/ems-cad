@@ -41,6 +41,7 @@ export function useCrewGps({ token, unit, enabled = true }) {
   const unitRef     = useRef(unit);
   const wakeLockRef = useRef(null);
   const watchIdRef  = useRef(null);
+  const lastPostAttemptRef = useRef(0);
   const [bgPermNeeded, setBgPermNeeded] = useState(false);
   const [gpsStatus,    setGpsStatus]    = useState('idle');
 
@@ -183,9 +184,15 @@ export function useCrewGps({ token, unit, enabled = true }) {
       }
 
       const postIfStale = (lat, lng) => {
-        const u = unitRef.current;
-        const lastGps = u?.last_gps_at ? new Date(u.last_gps_at).getTime() : 0;
-        if (Date.now() - lastGps < STALE_MS) return;
+        // Gated on our own last attempt, not the server-echoed unit.last_gps_at --
+        // that value only updates once the socket round-trip lands back in this
+        // component's props, and watchPosition can fire faster than that lands.
+        // Trusting the echoed value let a slow/missed round-trip make every
+        // callback look "stale" forever, turning this 3-min fallback into a
+        // continuous post loop (confirmed on 555 2/Medic 2's rollout-day logs).
+        const now = Date.now();
+        if (now - lastPostAttemptRef.current < STALE_MS) return;
+        lastPostAttemptRef.current = now;
         fetch('/api/crew/gps', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
