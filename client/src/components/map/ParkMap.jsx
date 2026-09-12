@@ -270,7 +270,13 @@ export default function ParkMap({
     if (newCallPin) {
       const el = document.createElement('div');
       el.className = 'new-call-pin-marker';
-      newPinRef.current = new mapboxgl.Marker({ element: el, anchor: 'bottom' })
+      // 'center', matching the eventual pending-call dot's anchor — this used
+      // to be a bottom-anchored triangle (tip at the click point), which was
+      // mathematically exact but read as "the pin settled slightly below
+      // where I clicked" once it swapped to the centered dot on save, since
+      // the triangle has zero visual mass below its own anchor point and the
+      // dot has some. Same shape now, no swap, nothing to visually shift.
+      newPinRef.current = new mapboxgl.Marker({ element: el, anchor: 'center' })
         .setLngLat([newCallPin.lng, newCallPin.lat])
         .addTo(map);
     }

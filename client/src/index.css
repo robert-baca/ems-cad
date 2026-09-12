@@ -63,14 +63,15 @@ body {
   100% { opacity: 0; transform: scale(3.5); }
 }
 
-/* New call drop pin */
+/* New call drop pin — same size/shape as .call-pin-dot (just amber, to read
+   as "not saved yet" vs. an actual call's red dot), centered on the clicked
+   coordinate so nothing visually shifts once it becomes a real call pin. */
 .new-call-pin-marker {
-  width: 0;
-  height: 0;
-  border-left: 10px solid transparent;
-  border-right: 10px solid transparent;
-  border-top: 20px solid #f59e0b;
-  position: relative;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #f59e0b;
+  border: 2px solid #ffffff;
   cursor: pointer;
   filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5));
 }
