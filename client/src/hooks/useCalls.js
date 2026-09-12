@@ -190,6 +190,19 @@ export function useCalls(setUnits) {
         onNetworkError(err);
         return null;
       }
+      // A 409 here means the call already reached (or passed) the requested
+      // status by the time this request landed on the server — almost
+      // always another unit on the same multi-unit call advancing it first,
+      // with this unit's own tap landing a moment later. That optimistic
+      // status/unit-sync this call already applied above is either already
+      // correct or about to be corrected by that other unit's own
+      // call:status_change broadcast — rolling back to the *stale*
+      // pre-request snapshot here instead left this unit's phone showing an
+      // older status than reality (and out of sync with its own unit
+      // status, which was never rolled back) until a manual refresh.
+      if (err?.response?.status === 409) {
+        return null;
+      }
       // Field-scoped rollback — see assignUnit's catch for why we don't
       // restore the whole snapshot object.
       if (snapshot) {
@@ -241,7 +254,15 @@ export function useCalls(setUnits) {
       Promise.all([
         updateCallTimestamps(callId, { [nextField]: now }),
         newStatus ? updateCallStatus(callId, newStatus) : Promise.resolve()
-      ]).catch(() => {
+      ]).catch((err) => {
+        // A 409 here means a unit on this multi-unit call already advanced
+        // its status past newStatus by the time this landed on the server —
+        // see advanceStatus's matching comment. The optimistic value applied
+        // above is either already correct or about to be corrected by that
+        // unit's own call:status_change broadcast, so rolling back to the
+        // stale pre-click snapshot would leave this dispatcher's view
+        // showing an older status than reality until a manual refresh.
+        if (err?.response?.status === 409) return;
         // Field-scoped rollback (see assignUnit) — restore only what this
         // click changed, not the whole record, so an intervening socket
         // update (e.g. a comment) isn't discarded along with it.
