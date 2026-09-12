@@ -14,7 +14,7 @@ import ErrorBoundary from '../components/ErrorBoundary';
 import CallSummaryModal from '../components/calls/CallSummaryModal';
 import NativeSetupModal from '../components/crew/NativeSetupModal';
 import BeaconMode from '../components/crew/BeaconMode';
-import { toggleUnitBeacon, setCrewGpsSharing } from '../services/api';
+import { setCrewGpsSharing } from '../services/api';
 import { isNative as isNativePlatform } from '../lib/native';
 import { enqueueOfflineAction, subscribeOfflineQueue } from '../lib/offlineActionQueue';
 import { STATUS_COLORS, STATUS_LABELS } from '../data/mockData';
@@ -467,25 +467,6 @@ export default function CrewMobile() {
     }
   }, [backupRequested, backupSubmitting, myActiveCall, myUnit, addComment]);
 
-  const beaconActive   = !!myUnit?.beacon_active;
-  const othersBeaconing = units.some(u => u.beacon_active && u.id !== myUnit?.id);
-  const [beaconBusy, setBeaconBusy] = useState(false);
-
-  // Guarded the same way handleToggleGpsSharing/handleRequestBackup are --
-  // without it, a fast double-tap fires two overlapping calls, and if the
-  // first one's request rejects after the second has already applied its own
-  // optimistic update, the first call's catch below reverts to the
-  // beaconActive value it captured when *it* started, stomping whatever the
-  // second toggle just set.
-  const handleToggleBeacon = async () => {
-    if (!myUnit || beaconBusy) return;
-    const next = !beaconActive;
-    setBeaconBusy(true);
-    setUnits(prev => prev.map(u => u.id === myUnit.id ? { ...u, beacon_active: next } : u));
-    try { await toggleUnitBeacon(myUnit.id, next); }
-    catch { setUnits(prev => prev.map(u => u.id === myUnit.id ? { ...u, beacon_active: beaconActive } : u)); }
-    setBeaconBusy(false);
-  };
 
   const [protocolsError, setProtocolsError] = useState('');
 
@@ -736,27 +717,12 @@ export default function CrewMobile() {
           📁 My Cases
         </button>
 
-        {/* Beacon row */}
-        <div className="flex gap-2">
-          <button
-            onClick={handleToggleBeacon}
-            disabled={beaconBusy}
-            className={`flex-1 py-3 rounded-2xl border text-sm font-semibold transition-all flex items-center justify-center gap-2 disabled:opacity-50
-              ${beaconActive
-                ? 'bg-green-900/60 border-green-600 text-green-300 shadow-[0_0_12px_rgba(34,197,94,0.3)]'
-                : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-500 hover:text-white'}`}
-          >
-            🔦 {beaconActive ? 'Beacon ON' : 'Beacon'}
-          </button>
-          {othersBeaconing && (
-            <button
-              onClick={() => setShowBeacon(true)}
-              className="flex-1 py-3 rounded-2xl bg-blue-900/50 border border-blue-700 text-blue-300 hover:bg-blue-800/60 text-sm font-semibold transition-all flex items-center justify-center gap-2"
-            >
-              🧭 Find Medic
-            </button>
-          )}
-        </div>
+        <button
+          onClick={() => setShowBeacon(true)}
+          className="w-full py-3 rounded-2xl bg-blue-900/50 border border-blue-700 text-blue-300 hover:bg-blue-800/60 text-sm font-semibold transition-all flex items-center justify-center gap-2"
+        >
+          🧭 Find Medic
+        </button>
 
         {protocolsError && (
           <div className="text-red-400 text-xs text-center font-medium">{protocolsError}</div>
@@ -793,8 +759,6 @@ export default function CrewMobile() {
           <BeaconMode
             myUnit={myUnit}
             units={units}
-            beaconActive={beaconActive}
-            onToggleBeacon={handleToggleBeacon}
             onClose={() => setShowBeacon(false)}
           />
         </ErrorBoundary>

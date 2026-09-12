@@ -880,22 +880,11 @@ const UNIT_STATUS_TO_TS_FIELD = {
 
 // ── Units ─────────────────────────────────────────────────────────
 app.get('/api/units', verifyToken, (req, res) => {
-  // Crew phones fetch the full unit list for pickers (add/reassign) —
-  // but that meant every crew member could already read every other
-  // unit's live GPS position directly from this response, regardless of
-  // whether that unit had opted into beacon sharing (beacon_active). The
-  // client's BeaconMode UI only *displayed* beaconing units, but the raw
-  // coordinates were sent either way, making the opt-in decorative.
-  // Dispatcher/overwatch/display still need full positions for the map.
-  const sanitized = units.map(u => {
-    const base = { ...u, password_hash: undefined };
-    if (req.user.role === 'crew' && req.user.unit_id !== u.id && !u.beacon_active) {
-      base.last_lat = null;
-      base.last_lng = null;
-      base.last_gps_at = null;
-    }
-    return base;
-  });
+  // Crew can locate any other unit via the Find a Medic compass (see
+  // BeaconMode.jsx) with no opt-in from the target, matching the always-on
+  // GPS visibility dispatch already has — so unlike other crew-facing
+  // endpoints, positions here are never masked between crew members.
+  const sanitized = units.map(u => ({ ...u, password_hash: undefined }));
   res.json(sanitized);
 });
 
@@ -999,10 +988,10 @@ app.put('/api/units/:id', verifyToken, async (req, res) => {
   if (!unit) return res.status(404).json({ error: 'Not found' });
 
   // Snapshot only the fields this handler touches, not the whole object —
-  // a full-object snapshot/restore here would clobber an unrelated GPS ping,
-  // status change, or beacon toggle that lands on this same shared in-memory
-  // unit while this request's DB write is in flight, then silently revert it
-  // on failure without re-persisting it either.
+  // a full-object snapshot/restore here would clobber an unrelated GPS ping
+  // or status change that lands on this same shared in-memory unit while
+  // this request's DB write is in flight, then silently revert it on
+  // failure without re-persisting it either.
   const touched = ['unit_number', 'unit_name', 'unit_type'];
   const previous = {};
   for (const f of touched) previous[f] = unit[f];
@@ -1028,27 +1017,6 @@ app.put('/api/units/:id', verifyToken, async (req, res) => {
   const sanitized = { ...unit, password_hash: undefined };
   emitDispatch('unit:updated', sanitized);
   res.json(sanitized);
-});
-
-// ── Beacon (crew ↔ crew finder) ───────────────────────────────────
-app.patch('/api/units/:id/beacon', verifyToken, (req, res) => {
-  if (req.user.role !== 'crew') return res.status(403).json({ error: 'Forbidden' });
-  if (req.user.unit_id !== req.params.id) return res.status(403).json({ error: 'Can only toggle your own beacon' });
-  const unit = units.find(u => u.id === req.params.id);
-  if (!unit) return res.status(404).json({ error: 'Not found' });
-  unit.beacon_active = !!req.body.active;
-  const sanitized = { ...unit, password_hash: undefined };
-  emitDispatch('unit:updated', sanitized);
-  // GET /api/units already hides last_lat/last_lng from other crew for a unit
-  // that isn't beaconing (see the `!u.beacon_active` mask below) — this push
-  // to crew_all was sending the real coordinates unmasked, including on the
-  // request that just turned the beacon *off*, so a caching client held a
-  // non-consenting unit's live position until its next full refetch.
-  const crewAllPayload = unit.beacon_active
-    ? sanitized
-    : { ...sanitized, last_lat: null, last_lng: null };
-  io.to('crew_all').emit('unit:updated', crewAllPayload);
-  res.json({ ok: true, beacon_active: unit.beacon_active });
 });
 
 app.delete('/api/units/:id/gps', verifyToken, async (req, res) => {
@@ -1890,9 +1858,9 @@ app.post('/api/crew/gps', verifyToken, gpsRateLimit, (req, res) => {
 
   // iOS only — lets dispatch see which phones are still stuck at "While Using"
   // (GPS drops the moment the screen locks) instead of "Always," without
-  // walking around checking every phone. In-memory only, like
-  // beacon_active — live device state, not meaningful to keep after a restart.
-  // Only broadcast when it actually changes; this arrives on every GPS post.
+  // walking around checking every phone. In-memory only — live device state,
+  // not meaningful to keep after a restart. Only broadcast when it actually
+  // changes; this arrives on every GPS post.
   const { gpsPermission } = req.body;
   if (gpsPermission && gpsPermission !== unit.gps_permission_status) {
     unit.gps_permission_status = gpsPermission;
@@ -1912,7 +1880,7 @@ app.post('/api/crew/gps', verifyToken, gpsRateLimit, (req, res) => {
 
 // Crew-only self-service opt-out — GPS is on by default for the whole shift,
 // this is the one thing that can turn it back off. In-memory only, like
-// beacon_active/gps_permission_status; resets each shift.
+// gps_permission_status; resets each shift.
 app.patch('/api/crew/gps-sharing', verifyToken, (req, res) => {
   if (req.user.role !== 'crew') return res.status(403).json({ error: 'Forbidden' });
   const unit = units.find(u => u.id === req.user.unit_id);

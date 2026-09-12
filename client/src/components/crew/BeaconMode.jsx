@@ -228,7 +228,7 @@ function Compass({ target, onBack, units }) {
         <button onClick={onBack} className="text-gray-400 hover:text-white p-2 -ml-2 text-lg">← Back</button>
         <div className="text-center">
           <div className="text-white font-bold text-lg">{target.unit_number}</div>
-          <div className="text-gray-500 text-xs">{target.crew || 'Beacon active'}</div>
+          <div className="text-gray-500 text-xs">{target.crew || 'Locating…'}</div>
         </div>
         <div className="w-16" />
       </div>
@@ -339,13 +339,13 @@ function Compass({ target, onBack, units }) {
 }
 
 // ── Finder (unit picker) ──────────────────────────────────────────────
-// `units` is already the app's live, socket-updated unit list (a beacon
-// toggle broadcasts to every crew phone in real time) — this used to
-// re-fetch its own one-time snapshot on mount and never refresh it again,
-// so a medic turning their beacon on after this screen opened just never
-// showed up until you backed out and reopened it.
+// `units` is already the app's live, socket-updated unit list, so a unit
+// coming on shift or getting its first GPS fix after this screen opened
+// shows up immediately with no re-fetch needed. Every other unit is
+// selectable here with no opt-in from them — see GET /api/units on the
+// server, which no longer masks crew-to-crew positions.
 function Finder({ myUnit, units, onSelect, onClose }) {
-  const beaconing = units.filter(u => u.beacon_active && u.id !== myUnit?.id);
+  const others = units.filter(u => u.id !== myUnit?.id);
 
   return (
     <div className="fixed inset-0 z-50 bg-gray-950 flex flex-col">
@@ -356,14 +356,13 @@ function Finder({ myUnit, units, onSelect, onClose }) {
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
-        {beaconing.length === 0 ? (
+        {others.length === 0 ? (
           <div className="text-center py-16 text-gray-500 text-sm">
             <div className="text-4xl mb-3">📡</div>
-            No units are beaconing right now.<br />
-            Ask the other medic to turn on their beacon first.
+            No other units on shift right now.
           </div>
         ) : (
-          beaconing.map(u => (
+          others.map(u => (
             <button key={u.id} onClick={() => onSelect(u)}
               className="w-full flex items-center gap-4 bg-gray-800 border border-green-800/60 hover:border-green-600 rounded-2xl px-4 py-4 text-left transition-all group">
               <div className="w-10 h-10 rounded-full bg-green-900/60 border border-green-700 flex items-center justify-center">
@@ -388,7 +387,7 @@ function Finder({ myUnit, units, onSelect, onClose }) {
 }
 
 // ── Main export ───────────────────────────────────────────────────────
-export default function BeaconMode({ myUnit, units, beaconActive, onToggleBeacon, onClose }) {
+export default function BeaconMode({ myUnit, units, onClose }) {
   const [view,   setView]   = useState('finder');
   const [target, setTarget] = useState(null);
 

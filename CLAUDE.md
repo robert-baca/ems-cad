@@ -148,9 +148,8 @@ Key events:
 ---
 
 ## Beacon Feature
-Crew can toggle a beacon on their unit. Other crew open "Find a Medic", see units with `beacon_active: true`, select one, and get a compass pointing toward them.
+Crew open "Find a Medic" and see every other unit on shift — no opt-in from the target required. Selecting one opens a compass pointing toward them. Used to require the target to toggle a beacon on first; that opt-in step and `unit.beacon_active` were removed, along with the crew-to-crew position masking it gated in `GET /api/units` — crew now see each other's live positions the same way dispatch always has.
 
-- `PATCH /api/units/:id/beacon` — toggles `unit.beacon_active`, emits `unit:updated` to `crew_all`
 - `BeaconMode.jsx` — manages finder/compass views
 - Compass uses `navigator.geolocation.watchPosition()` for own position (NOT `myUnit.last_lat` — that comes from async native GPS service and can be stale)
 - Device heading: `webkitCompassHeading` on iOS, `(360 - alpha) % 360` on Android
