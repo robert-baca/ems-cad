@@ -18,7 +18,7 @@ function sortUnits(units) {
 }
 
 // ── Roster list ──────────────────────────────────────────────────────
-function RosterList({ myUnit, units, onSelect, onClose }) {
+function RosterList({ myUnit, units, unreadUnitIds, onSelect, onClose }) {
   const others = sortUnits(units.filter(u => u.id !== myUnit?.id));
 
   return (
@@ -51,6 +51,9 @@ function RosterList({ myUnit, units, onSelect, onClose }) {
                 </div>
                 <div className="text-gray-400 text-xs mt-0.5 truncate">{u.crew || 'No crew name on file'}</div>
               </div>
+              {unreadUnitIds?.has(u.id) && (
+                <span className="w-2.5 h-2.5 rounded-full bg-red-500 flex-shrink-0" />
+              )}
               <span className="text-gray-600 group-hover:text-blue-400 text-xl flex-shrink-0">💬</span>
             </button>
           ))
@@ -124,7 +127,12 @@ function DmThread({ myUnit, target, messages, onLoad, onSend, onBack }) {
           onChange={e => setText(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && submit()}
           placeholder={`Message ${target.unit_number}…`}
-          className="flex-1 bg-gray-800 border border-gray-700 text-white rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500"
+          // text-base (16px), not text-sm — iOS Safari/WKWebView auto-zooms
+          // the page on focusing any input under 16px, and inside this
+          // fixed-position full-screen view it doesn't reliably zoom back
+          // out afterward, leaving the whole screen stuck zoomed in until
+          // the user manually pinches back out.
+          className="flex-1 bg-gray-800 border border-gray-700 text-white rounded-xl px-3 py-2.5 text-base outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500"
         />
         <button
           onClick={submit}
@@ -139,7 +147,7 @@ function DmThread({ myUnit, target, messages, onLoad, onSend, onBack }) {
 }
 
 // ── Main export ───────────────────────────────────────────────────────
-export default function CrewRoster({ myUnit, units, messagesByUnit, onLoadThread, onSendMessage, onClose }) {
+export default function CrewRoster({ myUnit, units, messagesByUnit, unreadUnitIds, onLoadThread, onSendMessage, onClose }) {
   const [target, setTarget] = useState(null);
 
   if (target) {
@@ -159,6 +167,7 @@ export default function CrewRoster({ myUnit, units, messagesByUnit, onLoadThread
     <RosterList
       myUnit={myUnit}
       units={units}
+      unreadUnitIds={unreadUnitIds}
       onSelect={setTarget}
       onClose={onClose}
     />

@@ -227,12 +227,25 @@ export default function CrewMobile() {
     });
   }, []);
 
+  // { [otherUnitId]: ISOString } — when that thread was last opened. Only
+  // covers messages received during this session (there's no server-side
+  // read tracking), so a message sent while the app was closed won't show
+  // as unread until something else during this session touches that thread —
+  // matches "notify me while I'm using the app," not a full missed-message
+  // history.
+  const [lastReadByUnit, setLastReadByUnit] = useState({});
+
+  const markThreadRead = useCallback((otherId) => {
+    setLastReadByUnit(prev => ({ ...prev, [otherId]: new Date().toISOString() }));
+  }, []);
+
   const loadMessageThread = useCallback(async (otherId) => {
+    markThreadRead(otherId);
     try {
       const res = await getCrewMessages(otherId);
       if (Array.isArray(res.data)) mergeMessages(otherId, res.data);
     } catch {}
-  }, [mergeMessages]);
+  }, [mergeMessages, markThreadRead]);
 
   const sendMessage = useCallback(async (otherId, text) => {
     try {
@@ -252,6 +265,19 @@ export default function CrewMobile() {
     const otherId = msg.from_unit_id === myUnit?.id ? msg.to_unit_id : msg.from_unit_id;
     mergeMessages(otherId, [msg]);
   }, [myUnit?.id, mergeMessages]);
+
+  // A thread is unread if the other unit's most recent message postdates the
+  // last time we opened that thread (or we've never opened it at all).
+  const unreadUnitIds = useMemo(() => {
+    const unread = new Set();
+    for (const [otherId, msgs] of Object.entries(messagesByUnit)) {
+      const lastFromThem = [...msgs].reverse().find(m => m.from_unit_id === otherId);
+      if (!lastFromThem) continue;
+      const lastRead = lastReadByUnit[otherId];
+      if (!lastRead || new Date(lastFromThem.created_at) > new Date(lastRead)) unread.add(otherId);
+    }
+    return unread;
+  }, [messagesByUnit, lastReadByUnit]);
 
   // Non-closed call — drives status buttons and SOS
   const myActiveCall = calls.find(c => {
@@ -780,6 +806,9 @@ export default function CrewMobile() {
           className="w-full py-3 rounded-2xl bg-gray-800 border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 text-sm font-medium transition-colors flex items-center justify-center gap-2"
         >
           🧑‍🤝‍🧑 Today's Crew
+          {unreadUnitIds.size > 0 && (
+            <span className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" />
+          )}
         </button>
 
         {protocolsError && (
@@ -828,6 +857,7 @@ export default function CrewMobile() {
             myUnit={myUnit}
             units={units}
             messagesByUnit={messagesByUnit}
+            unreadUnitIds={unreadUnitIds}
             onLoadThread={loadMessageThread}
             onSendMessage={sendMessage}
             onClose={() => setShowRoster(false)}
