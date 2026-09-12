@@ -14,7 +14,8 @@ import ErrorBoundary from '../components/ErrorBoundary';
 import CallSummaryModal from '../components/calls/CallSummaryModal';
 import NativeSetupModal from '../components/crew/NativeSetupModal';
 import BeaconMode from '../components/crew/BeaconMode';
-import { setCrewGpsSharing } from '../services/api';
+import CrewRoster from '../components/crew/CrewRoster';
+import { setCrewGpsSharing, getCrewMessages, sendCrewMessage } from '../services/api';
 import { isNative as isNativePlatform } from '../lib/native';
 import { enqueueOfflineAction, subscribeOfflineQueue } from '../lib/offlineActionQueue';
 import { STATUS_COLORS, STATUS_LABELS } from '../data/mockData';
@@ -194,6 +195,13 @@ export default function CrewMobile() {
   const [showCaseSummary,  setShowCaseSummary]  = useState(false);
   const [showCaseHistory,  setShowCaseHistory]  = useState(false);
   const [showBeacon,       setShowBeacon]       = useState(false);
+  const [showRoster,       setShowRoster]       = useState(false);
+  // { [otherUnitId]: Message[] } — private crew-to-crew DMs, shift-scoped
+  // (cleared server-side at shift end, so this just naturally goes stale/empty
+  // next shift too). Keyed by id and merged/deduped since both a thread's own
+  // GET-on-open and the live 'dm:received' socket echo can each deliver the
+  // same message.
+  const [messagesByUnit,   setMessagesByUnit]   = useState({});
   const isNative = isNativePlatform();
   const { scheduleNotif } = useCrewNotifications();
   const [showNativeSetup,  setShowNativeSetup]  = useState(
@@ -203,6 +211,47 @@ export default function CrewMobile() {
   const myUnit = units.find(u =>
     u.id === user?.unit_id || u.unit_number === user?.unit_number
   ) || null;
+
+  // Merges (not replaces) a thread's messages, deduped by id — a GET-on-open
+  // and the live socket echo can each deliver the same message, and merging
+  // instead of replacing means a message that arrived over the socket while
+  // the GET was still in flight doesn't get wiped out when that GET resolves.
+  const mergeMessages = useCallback((otherId, incoming) => {
+    if (!incoming.length) return;
+    setMessagesByUnit(prev => {
+      const existing = prev[otherId] || [];
+      const byId = new Map(existing.map(m => [m.id, m]));
+      incoming.forEach(m => byId.set(m.id, m));
+      const merged = [...byId.values()].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+      return { ...prev, [otherId]: merged };
+    });
+  }, []);
+
+  const loadMessageThread = useCallback(async (otherId) => {
+    try {
+      const res = await getCrewMessages(otherId);
+      if (Array.isArray(res.data)) mergeMessages(otherId, res.data);
+    } catch {}
+  }, [mergeMessages]);
+
+  const sendMessage = useCallback(async (otherId, text) => {
+    try {
+      const res = await sendCrewMessage(otherId, text);
+      mergeMessages(otherId, [res.data]);
+      return null;
+    } catch (err) {
+      return err.response?.data?.error || 'Failed to send — check connection and try again.';
+    }
+  }, [mergeMessages]);
+
+  // The 'dm:received' socket handler (below) uses this via a ref-free plain
+  // closure over myUnit -- fine here since useSocket always dispatches
+  // through the latest handlers object passed on each render, not the one
+  // captured when the listener was first registered.
+  const handleDmReceived = useCallback((msg) => {
+    const otherId = msg.from_unit_id === myUnit?.id ? msg.to_unit_id : msg.from_unit_id;
+    mergeMessages(otherId, [msg]);
+  }, [myUnit?.id, mergeMessages]);
 
   // Non-closed call — drives status buttons and SOS
   const myActiveCall = calls.find(c => {
@@ -340,6 +389,7 @@ export default function CrewMobile() {
     if (showCaseSummary)  { setShowCaseSummary(false); return true; }
     if (showCaseHistory)  { setShowCaseHistory(false); return true; }
     if (showBeacon)       { setShowBeacon(false); return true; }
+    if (showRoster)       { setShowRoster(false); return true; }
     return false;
   };
 
@@ -380,6 +430,7 @@ export default function CrewMobile() {
     'unit:gps_update':     handleGpsUpdate,
     'unit:status_change':  handleStatusChange,
     'unit:updated':        handleUnitUpdated,
+    'dm:received':         handleDmReceived,
     'call:created':        handleCallCreated,
     'call:updated':        handleCallUpdated,
     'call:status_change':  handleCallStatusChange,
@@ -724,6 +775,13 @@ export default function CrewMobile() {
           🧭 Find Medic
         </button>
 
+        <button
+          onClick={() => setShowRoster(true)}
+          className="w-full py-3 rounded-2xl bg-gray-800 border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 text-sm font-medium transition-colors flex items-center justify-center gap-2"
+        >
+          🧑‍🤝‍🧑 Today's Crew
+        </button>
+
         {protocolsError && (
           <div className="text-red-400 text-xs text-center font-medium">{protocolsError}</div>
         )}
@@ -760,6 +818,19 @@ export default function CrewMobile() {
             myUnit={myUnit}
             units={units}
             onClose={() => setShowBeacon(false)}
+          />
+        </ErrorBoundary>
+      )}
+
+      {showRoster && (
+        <ErrorBoundary onClose={() => setShowRoster(false)}>
+          <CrewRoster
+            myUnit={myUnit}
+            units={units}
+            messagesByUnit={messagesByUnit}
+            onLoadThread={loadMessageThread}
+            onSendMessage={sendMessage}
+            onClose={() => setShowRoster(false)}
           />
         </ErrorBoundary>
       )}

@@ -206,6 +206,11 @@ let calls        = [];
 let locations    = [];
 let parkPaths    = [];
 let currentShift = null;
+// Crew-to-crew direct messages — in-memory only and never broadcast to
+// dispatchers/display (unlike everything else emitDispatch touches), since
+// these are private between the two medics, not part of the dispatch record.
+// Cleared at shift end same as calls.
+let directMessages = [];
 let nextCallNum  = 100;
 const gpsDiscardLastLog  = new Map(); // unit_id → last discard log timestamp
 
@@ -1661,6 +1666,7 @@ app.post('/api/shift/end', verifyToken, async (req, res) => {
     (c.additional_unit_ids || []).forEach(id => busyUnitIds.add(id));
   });
   calls = openCalls;
+  directMessages = [];
   units.forEach(u => {
     if (busyUnitIds.has(u.id)) return;
     u.status  = 'out_of_service';
@@ -2025,6 +2031,47 @@ app.delete('/api/locations/:id', verifyToken, async (req, res) => {
   persist(deleteLocationFromDb(req.params.id), 'location ' + req.params.id);
   emitDispatch('location:removed', { id: req.params.id });
   res.json({ ok: true });
+});
+
+// ── Crew direct messages ─────────────────────────────────────────
+// Private, shift-scoped, crew-to-crew only — deliberately never routed
+// through emitDispatch, so dispatchers/display never see these (unlike the
+// per-call comment thread, which is the accountable dispatch record).
+app.get('/api/crew/messages/:unitId', verifyToken, (req, res) => {
+  if (req.user.role !== 'crew') return res.status(403).json({ error: 'Forbidden' });
+  const otherId = req.params.unitId;
+  const thread = directMessages.filter(m =>
+    (m.from_unit_id === req.user.unit_id && m.to_unit_id === otherId) ||
+    (m.from_unit_id === otherId && m.to_unit_id === req.user.unit_id)
+  );
+  res.json(thread);
+});
+
+app.post('/api/crew/messages', verifyToken, (req, res) => {
+  if (req.user.role !== 'crew') return res.status(403).json({ error: 'Forbidden' });
+  const { to_unit_id, text } = req.body;
+  const trimmed = (text || '').trim();
+  if (!trimmed) return res.status(400).json({ error: 'Message text is required' });
+  if (to_unit_id === req.user.unit_id) return res.status(400).json({ error: "Can't message yourself" });
+  const toUnit = units.find(u => u.id === to_unit_id);
+  if (!toUnit) return res.status(404).json({ error: 'Unit not found' });
+  const fromUnit = units.find(u => u.id === req.user.unit_id);
+  const msg = {
+    id: `dm-${Date.now()}`,
+    from_unit_id: req.user.unit_id,
+    from_unit_number: fromUnit?.unit_number || '',
+    to_unit_id,
+    text: trimmed,
+    created_at: new Date().toISOString()
+  };
+  directMessages.push(msg);
+  io.to(`crew:${to_unit_id}`).emit('dm:received', msg);
+  // Echoes back to the sender's own room too, so another open tab/device on
+  // the same unit (and the sender's own socket, for the same reason units/
+  // calls updates always echo back) stays in sync without a duplicate local
+  // append — the client dedupes by this message's id.
+  io.to(`crew:${req.user.unit_id}`).emit('dm:received', msg);
+  res.status(201).json(msg);
 });
 
 app.patch('/api/calls/:id/location', verifyToken, async (req, res) => {

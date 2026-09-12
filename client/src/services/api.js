@@ -34,6 +34,10 @@ export const deleteUnit = (unitId) => api.delete(`/units/${unitId}`);
 export const clearUnitGps = (unitId) => api.delete(`/units/${unitId}/gps`);
 export const setCrewGpsSharing = (enabled) => api.patch('/crew/gps-sharing', { enabled });
 
+// ── Crew direct messages ──────────────────────────────────────────
+export const getCrewMessages  = (unitId) => api.get(`/crew/messages/${unitId}`);
+export const sendCrewMessage  = (toUnitId, text) => api.post('/crew/messages', { to_unit_id: toUnitId, text });
+
 // ── Calls ──────────────────────────────────────────────────────────
 export const getCalls = () => api.get('/calls');
 export const getCall = (id) => api.get(`/calls/${id}`);
