@@ -264,7 +264,13 @@ export default function CrewMobile() {
   const handleDmReceived = useCallback((msg) => {
     const otherId = msg.from_unit_id === myUnit?.id ? msg.to_unit_id : msg.from_unit_id;
     mergeMessages(otherId, [msg]);
-  }, [myUnit?.id, mergeMessages]);
+    // This event also echoes back to the sender's own room (see the server's
+    // POST /api/crew/messages) so their other tab/device stays in sync --
+    // must not notify on our own outgoing message, only a real incoming one.
+    if (msg.from_unit_id !== myUnit?.id) {
+      scheduleNotif(`💬 ${msg.from_unit_number || 'New message'}`, msg.text);
+    }
+  }, [myUnit?.id, mergeMessages, scheduleNotif]);
 
   // A thread is unread if the other unit's most recent message postdates the
   // last time we opened that thread (or we've never opened it at all).
