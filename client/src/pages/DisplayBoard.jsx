@@ -4,6 +4,9 @@ import { useSocket } from '../hooks/useSocket';
 import ParkMap from '../components/map/ParkMap';
 import { STATUS_COLORS } from '../data/mockData';
 
+// Same convention as UnitPanel.jsx's dispatcher-side unit list
+const TYPE_BADGE = { ALS: 'bg-red-900/50 text-red-300', BLS: 'bg-blue-900/50 text-blue-300', Cart: 'bg-green-900/50 text-green-300' };
+
 function Clock() {
   const [time, setTime] = useState(new Date());
   useEffect(() => {
@@ -154,10 +157,15 @@ export default function DisplayBoard() {
               );
               return (
                 <div key={u.id} className="px-2 py-2 rounded-lg bg-gray-750 border border-gray-700">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1.5">
                     <div className="w-2.5 h-2.5 rounded-full flex-shrink-0"
                       style={{ background: STATUS_COLORS[u.status] || '#9ca3af' }} />
                     <span className="text-white text-xs font-bold truncate">{u.unit_number}</span>
+                    {u.unit_type && (
+                      <span className={`text-[10px] font-bold px-1 rounded flex-shrink-0 ${TYPE_BADGE[u.unit_type] || 'bg-gray-700 text-gray-400'}`}>
+                        {u.unit_type}
+                      </span>
+                    )}
                   </div>
                   {assignedCall && (
                     <div className="mt-0.5 pl-4 text-gray-400 text-xs truncate leading-tight">
