@@ -281,7 +281,7 @@ export default function CallDetail({
                             : isAdditional
                               ? 'bg-blue-700 border-blue-400 text-white'
                               : 'bg-gray-700 border-gray-500 text-gray-300 hover:border-gray-400'}`}>
-                        {TYPE_ICONS[u.unit_type] || '🚑'} {u.unit_number}
+                        {TYPE_ICONS[u.unit_type] || '🚑'} {u.unit_number}{u.crew && ` · ${u.crew}`}
                         {isPrimary && ' · lead'}
                       </button>
                     );
@@ -526,7 +526,7 @@ export default function CallDetail({
                           ${selectedUnitId === u.id
                             ? 'bg-green-700 border-green-400 text-white'
                             : 'bg-gray-600 border-gray-500 text-gray-300 hover:border-gray-400'}`}>
-                        {TYPE_ICONS[u.unit_type] || '🚑'} {u.unit_number}
+                        {TYPE_ICONS[u.unit_type] || '🚑'} {u.unit_number}{u.crew && ` · ${u.crew}`}
                       </button>
                     ))}
                   </div>
@@ -567,6 +567,7 @@ export default function CallDetail({
                         <div>
                           <span className="text-white text-sm font-semibold">{u.unit_number}</span>
                           <span className="text-gray-400 text-xs ml-2">{u.unit_type}</span>
+                          {u.crew && <span className="text-gray-400 text-xs ml-2">{u.crew}</span>}
                           {addedAt && (
                             <div className="text-gray-500 text-xs">
                               Added {new Date(addedAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
@@ -654,7 +655,7 @@ export default function CallDetail({
                           ${addUnitId === u.id
                             ? 'bg-blue-700 border-blue-400 text-white'
                             : 'bg-gray-600 border-gray-500 text-gray-300 hover:border-gray-400'}`}>
-                        {TYPE_ICONS[u.unit_type] || '🚑'} {u.unit_number}
+                        {TYPE_ICONS[u.unit_type] || '🚑'} {u.unit_number}{u.crew && ` · ${u.crew}`}
                       </button>
                     ))}
                   </div>

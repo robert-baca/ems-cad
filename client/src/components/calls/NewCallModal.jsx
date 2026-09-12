@@ -233,7 +233,7 @@ export default function NewCallModal({ pin, units, onDispatch, onClose, parentCa
                         ${selectedCartId === u.id
                           ? 'bg-yellow-700 border-yellow-400 text-white'
                           : 'bg-gray-700 border-gray-600 text-gray-300 hover:border-gray-400'}`}>
-                      🛺 {u.unit_number}
+                      🛺 {u.unit_number}{u.crew && ` · ${u.crew}`}
                     </button>
                   ))}
                 </div>
@@ -259,7 +259,7 @@ export default function NewCallModal({ pin, units, onDispatch, onClose, parentCa
                       ${selectedUnitIds.includes(u.id)
                         ? 'bg-blue-700 border-blue-400 text-white'
                         : 'bg-gray-700 border-gray-600 text-gray-300 hover:border-gray-400'}`}>
-                    {TYPE_ICONS[u.unit_type] || '🚑'} {u.unit_number}
+                    {TYPE_ICONS[u.unit_type] || '🚑'} {u.unit_number}{u.crew && ` · ${u.crew}`}
                   </button>
                 ))}
               </div>
