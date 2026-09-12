@@ -192,9 +192,14 @@ function rateLimit(windowMs, max, keyFn) {
 }
 const loginRateLimit = rateLimit(60 * 1000, 20, req => req.ip);
 // Keyed per-unit (post-auth) rather than per-IP — many phones can share one
-// park Wi-Fi/carrier NAT egress IP, and the 5s heartbeat means 12/min per
-// unit is normal; this only catches a runaway/malicious client well above that.
-const gpsRateLimit = rateLimit(60 * 1000, 30, req => req.user?.unit_id || req.ip);
+// park Wi-Fi/carrier NAT egress IP. This used to assume only the 5s heartbeat
+// posts (12/min), but the client's movement-triggered posts aren't heartbeat-
+// gated — a unit walking/driving continuously with a good-accuracy fix can post
+// roughly every 900ms (~65/min), which blew through a 30/min cap for hours on
+// rollout day, freezing that unit's pin on dispatch for the whole episode.
+// 90/min gives headroom above that real ceiling while still catching a
+// runaway/malicious client well above normal movement traffic.
+const gpsRateLimit = rateLimit(60 * 1000, 90, req => req.user?.unit_id || req.ip);
 
 let units        = [];
 let calls        = [];
