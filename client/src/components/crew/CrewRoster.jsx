@@ -19,7 +19,14 @@ function sortUnits(units) {
 
 // ── Roster list ──────────────────────────────────────────────────────
 function RosterList({ myUnit, units, unreadUnitIds, onSelect, onClose }) {
-  const others = sortUnits(units.filter(u => u.id !== myUnit?.id));
+  // Carts aren't crew to message, and a unit taken off shift (out_of_service,
+  // same status the server resets it to when removed from the day's roster)
+  // shouldn't stay listed here -- units is the app's live, socket-updated
+  // list already, so this naturally drops someone the moment dispatch takes
+  // them off shift, no refresh needed.
+  const others = sortUnits(units.filter(u =>
+    u.id !== myUnit?.id && u.unit_type !== 'Cart' && u.status !== 'out_of_service'
+  ));
 
   return (
     <div className="fixed inset-0 z-50 bg-gray-950 flex flex-col">
