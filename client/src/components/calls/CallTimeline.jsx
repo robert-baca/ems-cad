@@ -53,8 +53,11 @@ function TimeRow({ step, ts, isLast, prevTs, nextTs, onUpdate, onClear, baseDate
     if (inputVal.trim()) {
       let iso = parseManualTime(inputVal, baseDate);
       if (!iso) { setTimeError('Invalid time (HH:MM)'); return; }
-      // Cross-midnight: if time is before the previous step, try the next calendar day
-      if (prevTs && new Date(iso) < new Date(prevTs)) {
+      // Cross-midnight: only assume it if the gap is wide (real crossings land near 24h here).
+      // A same-day rounding artifact — typing "02:26" against a prevTs of 02:26:35 — is only
+      // seconds off and must not be pushed a full day forward just because nextTs isn't set yet.
+      const CROSS_MIDNIGHT_MIN_GAP_MS = 3 * 60 * 60 * 1000;
+      if (prevTs && new Date(prevTs) - new Date(iso) > CROSS_MIDNIGHT_MIN_GAP_MS) {
         const nextDay = new Date(iso);
         nextDay.setDate(nextDay.getDate() + 1);
         if (!nextTs || new Date(nextDay) <= new Date(nextTs)) {
