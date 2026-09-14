@@ -154,3 +154,21 @@ body {
   scrollbar-width: thin;
   scrollbar-color: #4b5563 #1f2937;
 }
+
+/* Incident report printing (CallReport.jsx) — hide the rest of the app so
+   only the report content ends up on the printed page / saved PDF. */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  #call-report-print,
+  #call-report-print * {
+    visibility: visible;
+  }
+  #call-report-print {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+  }
+}

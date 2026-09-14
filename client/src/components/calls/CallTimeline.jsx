@@ -1,6 +1,6 @@
 import { useState } from 'react';
 
-const STEPS = [
+export const STEPS = [
   { label: 'Received',           tsField: 'received_at' },
   { label: 'Dispatched',         tsField: 'dispatched_at' },
   { label: 'Acknowledged',       tsField: 'acknowledged_at' },

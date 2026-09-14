@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import CallTimeline from './CallTimeline';
 import CallComments from './CallComments';
 import CloseCallModal from './CloseCallModal';
+import CallReport from './CallReport';
 import GpsTrackTab from './GpsTrackTab';
 import { STATUS_COLORS, STATUS_LABELS, VALID_UNIT_STATUSES, CALL_TYPES } from '../../data/mockData';
 import { updateCallNarrative, updateCallLocation, updateCallDetails } from '../../services/api';
@@ -66,6 +67,7 @@ export default function CallDetail({
   const [addUnitSubmitting, setAddUnitSubmitting] = useState(false);
   const [addUnitError,      setAddUnitError]      = useState('');
   const [showCloseModal, setShowCloseModal] = useState(false);
+  const [showReport, setShowReport] = useState(false);
   const [narrative, setNarrative]         = useState(call.narrative || '');
   // Tracks the last narrative value *this component* wrote (initial load or
   // its own blur-save) so the resync effect below can tell "the call's
@@ -102,6 +104,7 @@ export default function CallDetail({
     setAddUnitSubmitting(false);
     setAddUnitError('');
     setShowCloseModal(false);
+    setShowReport(false);
     setNarrative(call.narrative || '');
     lastPushedNarrativeRef.current = call.narrative || '';
     setAddingAid(false);
@@ -787,6 +790,13 @@ export default function CallDetail({
       {/* Actions */}
       <div className="p-4 border-t border-gray-700 flex gap-2 flex-shrink-0">
         <button
+          onClick={() => setShowReport(true)}
+          title="Printable incident report (timeline, units, narrative, comments)"
+          className="py-2 px-3 text-sm bg-gray-700 hover:bg-gray-600 text-gray-200 rounded-lg transition-colors font-semibold"
+        >
+          🖨
+        </button>
+        <button
           onClick={() => onSplitCall?.(call)}
           title="Create a new case linked to this one (second patient)"
           className="flex-1 py-2 text-sm bg-gray-700 hover:bg-gray-600 text-gray-200 rounded-lg transition-colors font-semibold"
@@ -817,6 +827,15 @@ export default function CallDetail({
             onClose?.();
           }}
           onClose={() => setShowCloseModal(false)}
+        />
+      )}
+
+      {showReport && (
+        <CallReport
+          call={call}
+          unit={unit}
+          additionalUnits={additionalUnits}
+          onClose={() => setShowReport(false)}
         />
       )}
     </div>
