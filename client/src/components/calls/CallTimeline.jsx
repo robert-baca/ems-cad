@@ -53,14 +53,18 @@ function TimeRow({ step, ts, isLast, prevTs, nextTs, onUpdate, onClear, baseDate
     if (inputVal.trim()) {
       let iso = parseManualTime(inputVal, baseDate);
       if (!iso) { setTimeError('Invalid time (HH:MM)'); return; }
-      // Cross-midnight: only assume it if the gap is wide (real crossings land near 24h here).
-      // A same-day rounding artifact — typing "02:26" against a prevTs of 02:26:35 — is only
-      // seconds off and must not be pushed a full day forward just because nextTs isn't set yet.
-      const CROSS_MIDNIGHT_MIN_GAP_MS = 3 * 60 * 60 * 1000;
-      if (prevTs && new Date(prevTs) - new Date(iso) > CROSS_MIDNIGHT_MIN_GAP_MS) {
+      // Cross-midnight: only assume it if the backward gap is wide AND rolling forward lands
+      // close after prevTs. A rounding artifact (02:26 vs prevTs 02:26:35) is seconds off, not
+      // wide. An AM/PM mixup (09:42 vs prevTs 21:42) is wide (12h) but rolling it forward would
+      // still land 12h *after* prevTs — no real timeline step is ever that far from the last —
+      // so it falls through to the "must be after" error instead of landing a day ahead.
+      const CROSS_MIDNIGHT_MIN_BACK_GAP_MS = 3 * 60 * 60 * 1000;
+      const CROSS_MIDNIGHT_MAX_FORWARD_GAP_MS = 4 * 60 * 60 * 1000;
+      if (prevTs && new Date(prevTs) - new Date(iso) > CROSS_MIDNIGHT_MIN_BACK_GAP_MS) {
         const nextDay = new Date(iso);
         nextDay.setDate(nextDay.getDate() + 1);
-        if (!nextTs || new Date(nextDay) <= new Date(nextTs)) {
+        const forwardGap = nextDay - new Date(prevTs);
+        if (forwardGap <= CROSS_MIDNIGHT_MAX_FORWARD_GAP_MS && (!nextTs || new Date(nextDay) <= new Date(nextTs))) {
           iso = nextDay.toISOString();
         }
       }
