@@ -1732,6 +1732,38 @@ function getUnitActiveCall(unitId, excludeCallId = null) {
   ) || null;
 }
 
+// getUnitActiveCall only catches a double-dispatch at the moment it happens (assign/create check
+// current unit state). It can't catch one created by backdating a call's own received_at/
+// dispatched_at/closed_at after the fact via PATCH /calls/:id/timestamps — that endpoint applies
+// whatever the dispatcher types with no unit-conflict check at all, so a correction could put a
+// unit "on" two calls at once without anyone noticing until a QI report or an audit like this one
+// turns it up. This checks temporal overlap against a call's full history (not just currently-
+// open calls), since a backdated edit can make two already-closed calls overlap too.
+function getCallWindow(c) {
+  const start = c.dispatched_at || c.received_at;
+  const end = c.closed_at || null; // null = still open-ended (not yet closed)
+  return { start, end };
+}
+
+function windowsOverlap(aStart, aEnd, bStart, bEnd) {
+  const aS = new Date(aStart).getTime();
+  const aE = aEnd ? new Date(aEnd).getTime() : Infinity;
+  const bS = new Date(bStart).getTime();
+  const bE = bEnd ? new Date(bEnd).getTime() : Infinity;
+  return aS < bE && bS < aE;
+}
+
+function getUnitOverlappingCall(unitId, excludeCallId, start, end) {
+  if (!start) return null;
+  return calls.find(c => {
+    if (c.id === excludeCallId) return false;
+    if (c.assigned_unit_id !== unitId && !(c.additional_unit_ids || []).includes(unitId)) return false;
+    const w = getCallWindow(c);
+    if (!w.start) return false;
+    return windowsOverlap(start, end, w.start, w.end);
+  }) || null;
+}
+
 // ── GPS helpers ───────────────────────────────────────────────────
 // Crew units here are all foot/bike/cart inside the park — nothing is ever
 // road-legal-vehicle fast. 20 m/s (~45 mph) is well above real cart speed but
@@ -2174,10 +2206,28 @@ app.patch('/api/calls/:id/timestamps', verifyToken, async (req, res) => {
   const ALLOWED = ['received_at','dispatched_at','acknowledged_at','en_route_at',
                    'on_scene_at','patient_contact_at','arrived_first_aid_at','transporting_at',
                    'cleared_at','available_at','closed_at'];
-  const changes = {};
+  const pendingChanges = {};
   Object.entries(req.body).forEach(([k, v]) => {
-    if (ALLOWED.includes(k)) { call[k] = v; changes[k] = v; }
+    if (ALLOWED.includes(k)) pendingChanges[k] = v;
   });
+
+  // Validate against the prospective merged state before touching the live call object, so a
+  // rejected edit leaves it untouched instead of partially applied.
+  const merged = { ...call, ...pendingChanges };
+  const { start: mergedStart, end: mergedEnd } = getCallWindow(merged);
+  const unitIds = [call.assigned_unit_id, ...(call.additional_unit_ids || [])].filter(Boolean);
+  for (const uid of unitIds) {
+    const conflict = getUnitOverlappingCall(uid, call.id, mergedStart, mergedEnd);
+    if (conflict) {
+      const unit = units.find(u => u.id === uid);
+      return res.status(409).json({
+        error: `${unit ? unit.unit_number : 'Unit'} would overlap with call #${conflict.call_number} — adjust the times or fix call #${conflict.call_number} first`
+      });
+    }
+  }
+
+  const changes = {};
+  Object.entries(pendingChanges).forEach(([k, v]) => { call[k] = v; changes[k] = v; });
 
   // Recalc call.status from remaining timestamps and sync the primary +
   // co-dispatched + mid-call-added units — matches PATCH /api/calls/:id/status's
