@@ -40,33 +40,34 @@ function parseManualTime(str, baseDate) {
 function TimeRow({ step, ts, isLast, prevTs, nextTs, onUpdate, onClear, baseDate }) {
   const [editing, setEditing] = useState(false);
   const [inputVal, setInputVal] = useState('');
+  const [nextDay, setNextDay] = useState(false);
   const [timeError, setTimeError] = useState('');
   const done = !!ts;
 
   const startEdit = () => {
     setInputVal(ts ? fmtTime24(ts) : '');
+    setNextDay(false);
     setTimeError('');
     setEditing(true);
   };
 
+  // The entered time is only ever anchored to baseDate's calendar date — whether it should
+  // actually land on the following day is for the dispatcher to say via the "Next day" checkbox
+  // below, not something to infer from the gap to prevTs. Guessing that used to silently land a
+  // timestamp a full day ahead whenever the guess was wrong (whole-minute entry a few seconds
+  // before a precise prevTs, or an AM/PM mixup) — see git history on this file for the two
+  // incidents that came from trusting that heuristic.
+  const sameDayIso = inputVal.trim() ? parseManualTime(inputVal, baseDate) : null;
+  const showNextDayOption = !!(sameDayIso && prevTs && new Date(sameDayIso) < new Date(prevTs));
+
   const commit = () => {
     if (inputVal.trim()) {
-      let iso = parseManualTime(inputVal, baseDate);
-      if (!iso) { setTimeError('Invalid time (HH:MM)'); return; }
-      // Cross-midnight: only assume it if the backward gap is wide AND rolling forward lands
-      // close after prevTs. A rounding artifact (02:26 vs prevTs 02:26:35) is seconds off, not
-      // wide. An AM/PM mixup (09:42 vs prevTs 21:42) is wide (12h) but rolling it forward would
-      // still land 12h *after* prevTs — no real timeline step is ever that far from the last —
-      // so it falls through to the "must be after" error instead of landing a day ahead.
-      const CROSS_MIDNIGHT_MIN_BACK_GAP_MS = 3 * 60 * 60 * 1000;
-      const CROSS_MIDNIGHT_MAX_FORWARD_GAP_MS = 4 * 60 * 60 * 1000;
-      if (prevTs && new Date(prevTs) - new Date(iso) > CROSS_MIDNIGHT_MIN_BACK_GAP_MS) {
-        const nextDay = new Date(iso);
-        nextDay.setDate(nextDay.getDate() + 1);
-        const forwardGap = nextDay - new Date(prevTs);
-        if (forwardGap <= CROSS_MIDNIGHT_MAX_FORWARD_GAP_MS && (!nextTs || new Date(nextDay) <= new Date(nextTs))) {
-          iso = nextDay.toISOString();
-        }
+      if (!sameDayIso) { setTimeError('Invalid time (HH:MM)'); return; }
+      let iso = sameDayIso;
+      if (nextDay) {
+        const d = new Date(iso);
+        d.setDate(d.getDate() + 1);
+        iso = d.toISOString();
       }
       if (prevTs && new Date(iso) < new Date(prevTs)) {
         setTimeError(`Must be after ${fmtTime24(prevTs)}`); return;
@@ -110,6 +111,22 @@ function TimeRow({ step, ts, isLast, prevTs, nextTs, onUpdate, onClear, baseDate
 
           {editing ? (
             <div className="flex items-center gap-1">
+              {showNextDayOption && (
+                <button
+                  type="button"
+                  // Keep focus on the time input instead of moving it here — otherwise the
+                  // input's onBlur commits with the pre-toggle value before this button's own
+                  // click updates nextDay.
+                  onMouseDown={e => e.preventDefault()}
+                  onClick={() => { setNextDay(v => !v); setTimeError(''); }}
+                  className={`flex items-center gap-1 text-[10px] whitespace-nowrap px-1 py-0.5 rounded border ${
+                    nextDay ? 'bg-amber-500/20 border-amber-400 text-amber-300' : 'border-gray-600 text-gray-400 hover:text-amber-300'
+                  }`}
+                  title="Check if this time is on the day after Received"
+                >
+                  {nextDay ? '☑' : '☐'} Next day
+                </button>
+              )}
               <input
                 autoFocus
                 type="text"
