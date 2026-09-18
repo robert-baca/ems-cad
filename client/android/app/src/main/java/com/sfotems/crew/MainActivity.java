@@ -79,6 +79,18 @@ public class MainActivity extends BridgeActivity {
         webView.getSettings().setBuiltInZoomControls(false);
         webView.getSettings().setDisplayZoomControls(false);
         webView.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        // Android's own Autofill "Save password?" prompt (which can itself
+        // ask for a fingerprint to confirm the save) has nothing to do with
+        // this app's own biometric lock above, but the two can collide on
+        // this WebView -- reported on-device as a full app hang requiring a
+        // force-close right after confirming "yes" to the fingerprint
+        // prompt. This app already has its own lock screen and credentials
+        // shouldn't be cached in Google Password Manager on a shared crew
+        // device anyway, so disable WebView Autofill entirely rather than
+        // try to make the two prompts coexist. API 26+ only (minSdk is 24).
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            webView.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
+        }
 
         addBackHandler(webView);
         fixMissingPluginBridgeOnSecondaryOrigins(webView);
