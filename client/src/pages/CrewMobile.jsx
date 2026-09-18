@@ -473,7 +473,19 @@ export default function CrewMobile() {
         `${call.call_type} · ${call.location_name || 'Unknown location'}`
       );
     },
-    'call:comment_added':  handleCommentAdded,
+    'call:comment_added':  (payload) => {
+      handleCommentAdded(payload);
+      // Don't notify on the echo of our own comment (see CrewChat/addComment —
+      // there's no optimistic local update, so our own sends round-trip through
+      // this same event).
+      const { comment } = payload;
+      if (comment.author !== myUnit?.unit_number) {
+        scheduleNotif(
+          comment.author === 'Dispatcher' ? '💬 Dispatch' : `💬 ${comment.author}`,
+          comment.text
+        );
+      }
+    },
     'shift:ended':         () => { setUnits([]); setCalls([]); setShiftEnded(true); }
   });
 
