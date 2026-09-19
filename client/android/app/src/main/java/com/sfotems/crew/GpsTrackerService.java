@@ -300,6 +300,22 @@ public class GpsTrackerService extends Service {
         // arriving at all, not whether they're passing the accuracy/movement
         // checks.
         lastLocationReceivedMs = now;
+
+        // Crew phones are personally owned, not managed/kiosk devices — unlike
+        // a fleet phone, one of these can have Developer Options enabled with
+        // a leftover mock-location app still set as the active provider (games,
+        // testing tools, privacy apps), which reports a fixed fake fix with
+        // whatever accuracy it likes. Investigated as a candidate cause for a
+        // suspiciously tight, rock-steady wrong fix recurring on Medic 8 at the
+        // exact same coordinate across multiple sessions -- ruled out in that
+        // specific case (Developer Options were confirmed off on that phone),
+        // but the check costs nothing and Android flags this directly rather
+        // than needing to be inferred from symptoms, so it stays in as a
+        // defensive guard against whichever future phone does have it enabled.
+        if (loc.isFromMockProvider()) {
+            android.util.Log.w("GpsTracker", "Dropped fix from mock location provider: " + loc.getLatitude() + "," + loc.getLongitude());
+            return;
+        }
         if (now - lastPostMs < MIN_INTERVAL_MS) return;
 
         float   accuracy      = loc.hasAccuracy() ? loc.getAccuracy() : -1f;
