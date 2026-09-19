@@ -39,25 +39,12 @@ export function stopCrewGpsTracking() {
 
 export function useCrewGps({ token, unit, enabled = true }) {
   const unitRef     = useRef(unit);
-  const wakeLockRef = useRef(null);
   const watchIdRef  = useRef(null);
   const lastPostAttemptRef = useRef(0);
   const [bgPermNeeded, setBgPermNeeded] = useState(false);
   const [gpsStatus,    setGpsStatus]    = useState('idle');
 
   unitRef.current = unit;
-
-  // Re-acquire wake lock when tab becomes visible again (web only)
-  useEffect(() => {
-    if (isNative()) return;
-    const reacquire = async () => {
-      if (document.visibilityState === 'visible' && 'wakeLock' in navigator) {
-        try { wakeLockRef.current = await navigator.wakeLock.request('screen'); } catch {}
-      }
-    };
-    document.addEventListener('visibilitychange', reacquire);
-    return () => document.removeEventListener('visibilitychange', reacquire);
-  }, []);
 
   useEffect(() => {
     if (!enabled || !token) return;
@@ -187,41 +174,40 @@ export function useCrewGps({ token, unit, enabled = true }) {
         watchIdRef.current = null;
       };
     } else {
-      // Web path — browser geolocation + screen wake lock
+      // Web path — plain browser tab, no native tracker. This is a rare
+      // fallback (a phone with no app installed yet, or the app used straight
+      // in a browser) so it only needs to keep last_gps_at from going stale,
+      // not live tracking -- but it used to hold the screen awake indefinitely
+      // (navigator.wakeLock) and run a continuous enableHighAccuracy
+      // watchPosition, i.e. the exact same always-on-screen + continuously-
+      // engaged-GPS-chip pattern that turned out to be the main battery drain
+      // on the native Android app (see MainActivity.java's FLAG_KEEP_SCREEN_ON
+      // removal). Every actual post here was already gated to once per
+      // STALE_MS anyway, so a continuous watch was holding the GPS chip live
+      // between posts for no benefit -- polling getCurrentPosition on that same
+      // interval gets the same one-fix-every-3-minutes result while letting
+      // the chip (and the screen) idle in between.
       if (!navigator.geolocation) return;
 
-      if ('wakeLock' in navigator) {
-        navigator.wakeLock.request('screen')
-          .then(lock => { wakeLockRef.current = lock; })
-          .catch(() => {});
-      }
-
-      const postIfStale = (lat, lng) => {
-        // Gated on our own last attempt, not the server-echoed unit.last_gps_at --
-        // that value only updates once the socket round-trip lands back in this
-        // component's props, and watchPosition can fire faster than that lands.
-        // Trusting the echoed value let a slow/missed round-trip make every
-        // callback look "stale" forever, turning this 3-min fallback into a
-        // continuous post loop (confirmed on 555 2/Medic 2's rollout-day logs).
-        const now = Date.now();
-        if (now - lastPostAttemptRef.current < STALE_MS) return;
-        lastPostAttemptRef.current = now;
-        fetch('/api/crew/gps', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ lat, lng })
-        }).catch(() => {});
+      const postOnce = () => {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            fetch('/api/crew/gps', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+              body: JSON.stringify({ lat: pos.coords.latitude, lng: pos.coords.longitude })
+            }).catch(() => {});
+          },
+          () => {},
+          { enableHighAccuracy: true, maximumAge: STALE_MS }
+        );
       };
 
-      watchIdRef.current = navigator.geolocation.watchPosition(
-        (pos) => postIfStale(pos.coords.latitude, pos.coords.longitude),
-        null,
-        { enableHighAccuracy: true, maximumAge: 10000 }
-      );
+      postOnce();
+      watchIdRef.current = setInterval(postOnce, STALE_MS);
 
       return () => {
-        if (watchIdRef.current !== null) navigator.geolocation.clearWatch(watchIdRef.current);
-        wakeLockRef.current?.release().catch(() => {});
+        if (watchIdRef.current !== null) clearInterval(watchIdRef.current);
       };
     }
   }, [enabled, token]);
