@@ -64,7 +64,13 @@ public class MainActivity extends BridgeActivity {
             WebView.setWebContentsDebuggingEnabled(true);
         }
         super.onCreate(savedInstanceState);
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        // FLAG_KEEP_SCREEN_ON used to be set here, holding the display on at full
+        // brightness for the entire time the app was open -- reported as a major
+        // battery drain across a full shift. Removed so the screen times out per
+        // the device's own display settings like any other app; the lock screen
+        // below (promptUnlock/LOCK_GRACE_MS) already handles re-authenticating
+        // after the screen sleeps, and new-call notifications already wake the
+        // screen on their own (see NOTIF_CHANNEL_ID's IMPORTANCE_MAX channel).
         // Blocks screenshots/screen-recording and blanks the Recents thumbnail --
         // the app can show active-call/crew screens, so this stays on at all times,
         // not just while locked.
