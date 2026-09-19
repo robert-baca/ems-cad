@@ -286,6 +286,7 @@ async function initDb() {
   await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS additional_unit_timestamps JSONB DEFAULT '{}'`);
   await pool.query(`ALTER TABLE locations ADD COLUMN IF NOT EXISTS location_type TEXT DEFAULT 'permanent'`);
   await pool.query(`ALTER TABLE units ADD COLUMN IF NOT EXISTS last_gps_fix_ts TEXT`);
+  await pool.query(`ALTER TABLE units ADD COLUMN IF NOT EXISTS last_gps_accuracy DOUBLE PRECISION`);
 
   // Prune calls older than 90 days
   const pruneDate = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
@@ -409,18 +410,19 @@ async function initDb() {
 async function saveUnit(unit) {
   await pool.query(`
     INSERT INTO units (id, unit_number, unit_name, unit_type, status, crew, station,
-      last_lat, last_lng, last_gps_at, last_gps_fix_ts, password_hash, profile)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+      last_lat, last_lng, last_gps_at, last_gps_fix_ts, last_gps_accuracy, password_hash, profile)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
     ON CONFLICT (id) DO UPDATE SET
       unit_number=EXCLUDED.unit_number, unit_name=EXCLUDED.unit_name, unit_type=EXCLUDED.unit_type,
       status=EXCLUDED.status, crew=EXCLUDED.crew, station=EXCLUDED.station,
       last_lat=EXCLUDED.last_lat, last_lng=EXCLUDED.last_lng,
       last_gps_at=EXCLUDED.last_gps_at, last_gps_fix_ts=EXCLUDED.last_gps_fix_ts,
+      last_gps_accuracy=EXCLUDED.last_gps_accuracy,
       password_hash=EXCLUDED.password_hash, profile=EXCLUDED.profile
   `, [unit.id, unit.unit_number, unit.unit_name, unit.unit_type, unit.status,
       unit.crew, unit.station, unit.last_lat, unit.last_lng,
-      unit.last_gps_at, unit.last_gps_fix_ts || null, unit.password_hash,
-      unit.profile ? JSON.stringify(unit.profile) : null]);
+      unit.last_gps_at, unit.last_gps_fix_ts || null, unit.last_gps_accuracy ?? null,
+      unit.password_hash, unit.profile ? JSON.stringify(unit.profile) : null]);
 }
 
 async function deleteUnitFromDb(id) {
@@ -1790,6 +1792,14 @@ const MAX_GPS_SPEED_MPS = 20;
 const DEGRADED_ACCURACY_M = 100;
 const DEGRADED_ACCURACY_OVERRIDE_S = 120;
 
+// See the implausible-speed check's isLikelyCorrection branch below: a new
+// fix has to be at least this many times more accurate than the (already
+// degraded) reference it's being compared against before it's trusted over
+// the speed check. Guards against a marginally-better-but-still-bad fix
+// flip-flopping the pin between two wrong positions instead of only ever
+// accepting a real correction.
+const ACCURACY_CORRECTION_RATIO = 3;
+
 function haversineMeters(lat1, lng1, lat2, lng2) {
   const R = 6371000;
   const toRad = d => d * Math.PI / 180;
@@ -1853,16 +1863,36 @@ function applyGpsUpdate(unit, lat, lng, timestamp, accuracy) {
       const distM = haversineMeters(unit.last_lat, unit.last_lng, lat, lng);
       const speedMps = distM / dtS;
       if (speedMps > MAX_GPS_SPEED_MPS) {
-        console.log(`[gps] ${unit.unit_number} — rejected, implausible speed (${speedMps.toFixed(1)} m/s over ${dtS.toFixed(1)}s, ${distM.toFixed(0)}m)`);
-        return false;
+        // Comparing only against the last *accepted* fix means a bad fix that
+        // slipped in as the reference (e.g. a network-fallback fix under
+        // DEGRADED_ACCURACY_M, which the check above doesn't catch) poisons
+        // every fix after it -- confirmed in production on Medic 8: the unit's
+        // phone got a real, accurate fix back near its true position, but it
+        // was rejected here as an "impossible" 450m jump away from the
+        // already-wrong reference, three times in a row, leaving the wrong
+        // position locked in indefinitely with no way back. If the new fix is
+        // meaningfully more trustworthy than the reference it's being measured
+        // against, treat it as a correction rather than an error -- but only
+        // when the reference itself was already degraded, so a single
+        // precise-but-wrong reading never gets to override a fix we actually
+        // trust.
+        const referenceAccuracy = unit.last_gps_accuracy;
+        const isLikelyCorrection = accuracy != null && referenceAccuracy != null &&
+          referenceAccuracy > DEGRADED_ACCURACY_M && accuracy * ACCURACY_CORRECTION_RATIO <= referenceAccuracy;
+        if (!isLikelyCorrection) {
+          console.log(`[gps] ${unit.unit_number} — rejected, implausible speed (${speedMps.toFixed(1)} m/s over ${dtS.toFixed(1)}s, ${distM.toFixed(0)}m)`);
+          return false;
+        }
+        console.log(`[gps] ${unit.unit_number} — accepting despite implausible speed: new fix (${accuracy}m) far more accurate than degraded reference (${referenceAccuracy}m), likely a correction`);
       }
     }
   }
 
-  unit.last_lat        = lat;
-  unit.last_lng        = lng;
-  unit.last_gps_at     = timestamp;
-  unit.last_gps_fix_ts = timestamp;
+  unit.last_lat          = lat;
+  unit.last_lng          = lng;
+  unit.last_gps_at       = timestamp;
+  unit.last_gps_fix_ts   = timestamp;
+  unit.last_gps_accuracy = accuracy ?? null;
   persist(saveUnit(unit), 'unit ' + unit.id);
 
   const activeCall = getUnitActiveCall(unit.id);
