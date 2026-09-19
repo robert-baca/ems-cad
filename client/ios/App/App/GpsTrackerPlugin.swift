@@ -100,7 +100,13 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
     public override func load() {
         GpsTrackerPlugin.log("load() called")
         locationManager.delegate = self
-        locationManager.desiredAccuracy = kCLLocationAccuracyBest
+        // kCLLocationAccuracyBest keeps the GPS chip running flat-out with no
+        // OS-level duty-cycling at all -- reported as a major battery drain
+        // over a shift. NearestTenMeters still comfortably clears
+        // maxAccuracyM/minDistanceM below (both already tolerate fixes far
+        // coarser than 10m) and is plenty for a theme park's scale, while
+        // letting iOS back off the chip between fixes.
+        locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
         // kCLDistanceFilterNone, not a fixed distance -- distanceFilter is an
         // OS-level gate that suppresses didUpdateLocations entirely below the
         // threshold, with no periodic override. That silently defeated the
