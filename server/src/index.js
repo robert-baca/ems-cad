@@ -1800,6 +1800,35 @@ const DEGRADED_ACCURACY_OVERRIDE_S = 120;
 // accepting a real correction.
 const ACCURACY_CORRECTION_RATIO = 3;
 
+// Confirmed live on Medic 8 (2026-09-19): after being corrected away from a
+// bad fix, the phone drifted right back to the *exact same wrong coordinate*
+// later on, this time reporting 53m accuracy -- comfortably under
+// DEGRADED_ACCURACY_M, so it sailed through as a fully trusted fix with no
+// warning at all. A fixed wrong point recurring like this looks like the
+// phone locking onto a specific mis-located WiFi AP or cell tower whenever it
+// loses a clean GPS lock, not random multipath scatter, and it can slip back
+// in any time enough real gap (~23s+ at max walking-cart speed) puts it under
+// the implausible-speed cap too. Rejected/corrected-away-from points are
+// remembered per unit for SUSPECT_POINT_TTL_MS so a later fix landing back on
+// one needs to clear a tighter accuracy bar before being trusted again,
+// rather than being taken at face value the moment it's merely "not that bad."
+const SUSPECT_POINT_RADIUS_M    = 25;
+const SUSPECT_POINT_TTL_MS      = 45 * 60 * 1000;
+const SUSPECT_REENTRY_ACCURACY_M = 30;
+const MAX_SUSPECT_POINTS_PER_UNIT = 5;
+
+function flagSuspectPoint(unit, lat, lng) {
+  const points = (unit.gps_suspect_points || []).filter(p => Date.now() - p.at < SUSPECT_POINT_TTL_MS);
+  points.push({ lat, lng, at: Date.now() });
+  unit.gps_suspect_points = points.slice(-MAX_SUSPECT_POINTS_PER_UNIT);
+}
+
+function nearSuspectPoint(unit, lat, lng) {
+  const points = (unit.gps_suspect_points || []).filter(p => Date.now() - p.at < SUSPECT_POINT_TTL_MS);
+  unit.gps_suspect_points = points;
+  return points.some(p => haversineMeters(p.lat, p.lng, lat, lng) < SUSPECT_POINT_RADIUS_M);
+}
+
 function haversineMeters(lat1, lng1, lat2, lng2) {
   const R = 6371000;
   const toRad = d => d * Math.PI / 180;
@@ -1846,8 +1875,19 @@ function applyGpsUpdate(unit, lat, lng, timestamp, accuracy) {
     const sinceLastFixS = (new Date(timestamp).getTime() - new Date(unit.last_gps_fix_ts).getTime()) / 1000;
     if (sinceLastFixS < DEGRADED_ACCURACY_OVERRIDE_S) {
       console.log(`[gps] ${unit.unit_number} — rejected, degraded accuracy (${accuracy}m) with a recent-enough fix already on record`);
+      flagSuspectPoint(unit, lat, lng);
       return false;
     }
+  }
+
+  // A point this unit has been rejected/corrected away from before needs a
+  // tighter bar to be trusted again, not just "under the normal degraded
+  // threshold" — see flagSuspectPoint()'s callers and the comment above
+  // SUSPECT_POINT_RADIUS_M for why (a fixed wrong point that keeps recurring
+  // with deceptively reasonable accuracy).
+  if (nearSuspectPoint(unit, lat, lng) && (accuracy == null || accuracy > SUSPECT_REENTRY_ACCURACY_M)) {
+    console.log(`[gps] ${unit.unit_number} — rejected, near a known-suspect point (${accuracy ?? '?'}m, needs <${SUSPECT_REENTRY_ACCURACY_M}m to re-trust)`);
+    return false;
   }
 
   // GPS multipath near large structures can produce a fix that self-reports
@@ -1884,6 +1924,11 @@ function applyGpsUpdate(unit, lat, lng, timestamp, accuracy) {
           return false;
         }
         console.log(`[gps] ${unit.unit_number} — accepting despite implausible speed: new fix (${accuracy}m) far more accurate than degraded reference (${referenceAccuracy}m), likely a correction`);
+        // The reference we just overrode is now confirmed wrong -- remember it
+        // so a later fix drifting back to that same spot needs real accuracy
+        // to be re-trusted, instead of being taken at face value again the
+        // moment it merely clears DEGRADED_ACCURACY_M.
+        flagSuspectPoint(unit, unit.last_lat, unit.last_lng);
       }
     }
   }
