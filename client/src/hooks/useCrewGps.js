@@ -97,7 +97,20 @@ export function useCrewGps({ token, unit, enabled = true }) {
           const { Geolocation } = await import('@capacitor/geolocation');
           const id = await Geolocation.watchPosition(
             { enableHighAccuracy: true },
-            (pos) => { if (pos && !cancelled) postGpsJs(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy); }
+            (pos) => {
+              if (!pos || cancelled) return;
+              // Unlike every other GPS path here (native Android/iOS, the plain-
+              // web fallback below), this callback had no throttling at all --
+              // a callback firing several times a second would fire that many
+              // HTTP POSTs *and* native getStatus() calls, unthrottled,
+              // for as long as this rare fallback stays active. Match the
+              // native tracker's own cadence instead of hammering both the
+              // battery and the network.
+              const now = Date.now();
+              if (now - lastPostAttemptRef.current < 2000) return;
+              lastPostAttemptRef.current = now;
+              postGpsJs(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy);
+            }
           );
           if (cancelled) {
             Geolocation.clearWatch({ id }).catch(() => {});
