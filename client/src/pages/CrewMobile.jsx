@@ -599,6 +599,18 @@ export default function CrewMobile() {
   const GPS_STALE_MS = 90000;
   const gpsAgeMs = myUnit?.last_gps_at ? nowTick - new Date(myUnit.last_gps_at).getTime() : null;
   const gpsStale = gpsAgeMs != null && gpsAgeMs > GPS_STALE_MS;
+  // Right after opening the app, last_gps_at still holds whatever position was
+  // last posted before it was closed -- often well past GPS_STALE_MS -- so
+  // gpsStale is briefly true through no fault of the tracker, before the first
+  // fresh fix of this session lands. Latches true the first time a fix comes in
+  // under the stale threshold and stays true for the rest of this mount, so a
+  // real mid-session staleness later (tracker actually stuck) still reads as
+  // "GPS stale" rather than silently getting relabeled every time.
+  const hasFreshFixRef = useRef(false);
+  useEffect(() => {
+    if (gpsAgeMs != null && gpsAgeMs <= GPS_STALE_MS) hasFreshFixRef.current = true;
+  }, [gpsAgeMs]);
+  const gpsConnecting = gpsStale && !hasFreshFixRef.current;
 
   const unitColor = STATUS_COLORS[myUnit?.status] || '#9ca3af';
 
@@ -703,17 +715,17 @@ export default function CrewMobile() {
               onClick={openGpsSettings}
               className="ml-auto flex items-center gap-1.5 px-2 py-1 rounded-full bg-black/20 hover:bg-black/35 transition-colors"
             >
-              <div className={`w-1.5 h-1.5 rounded-full ${gpsStale ? 'bg-amber-400' : myUnit.last_gps_at ? 'bg-green-400' : 'bg-gray-500'}`} />
-              <span className={`text-xs ${gpsStale ? 'text-amber-400' : myUnit.last_gps_at ? 'text-green-400' : 'text-gray-400'}`}>
-                {gpsStale ? 'GPS stale' : 'GPS'}
+              <div className={`w-1.5 h-1.5 rounded-full ${gpsConnecting ? 'bg-blue-400' : gpsStale ? 'bg-amber-400' : myUnit.last_gps_at ? 'bg-green-400' : 'bg-gray-500'}`} />
+              <span className={`text-xs ${gpsConnecting ? 'text-blue-400' : gpsStale ? 'text-amber-400' : myUnit.last_gps_at ? 'text-green-400' : 'text-gray-400'}`}>
+                {gpsConnecting ? 'Connecting…' : gpsStale ? 'GPS stale' : 'GPS'}
               </span>
               <span className="text-gray-400 text-xs">⚙️</span>
             </button>
           ) : (
             myUnit.last_gps_at && (
               <div className="ml-auto flex items-center gap-1">
-                <div className={`w-1.5 h-1.5 rounded-full ${gpsStale ? 'bg-amber-400' : 'bg-green-400'}`} />
-                <span className={`text-xs ${gpsStale ? 'text-amber-400' : 'text-green-400'}`}>{gpsStale ? 'GPS stale' : 'GPS'}</span>
+                <div className={`w-1.5 h-1.5 rounded-full ${gpsConnecting ? 'bg-blue-400' : gpsStale ? 'bg-amber-400' : 'bg-green-400'}`} />
+                <span className={`text-xs ${gpsConnecting ? 'text-blue-400' : gpsStale ? 'text-amber-400' : 'text-green-400'}`}>{gpsConnecting ? 'Connecting…' : gpsStale ? 'GPS stale' : 'GPS'}</span>
               </div>
             )
           )}
