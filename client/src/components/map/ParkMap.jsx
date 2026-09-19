@@ -52,11 +52,26 @@ export default function ParkMap({
       container: containerRef.current,
       style: 'mapbox://styles/mapbox/satellite-streets-v12',
       center: PARK_CENTER,
-      zoom: PARK_ZOOM
+      zoom: PARK_ZOOM,
+      // A tilted/rotated camera compounds the satellite imagery's own baked-in
+      // parallax around tall buildings (rooftops are photographed at an angle,
+      // not straight down) with a second, gesture-dependent tilt that varies
+      // every time -- reported as a dropped call pin appearing to drift
+      // further from a building the more a dispatcher zoomed, which tracked
+      // with an accidental two-finger twist/pitch during the pinch gesture
+      // rather than anything about the pin itself (confirmed: it's placed via
+      // Mapbox's own click-to-lngLat and never repositioned after that).
+      // Locking the camera straight-down removes that variable component;
+      // the underlying per-zoom-tile parallax is inherent to the imagery and
+      // can't be corrected here.
+      pitchWithRotate: false,
+      dragRotate: false,
+      touchPitch: false
     });
     mapRef.current = map;
+    map.touchZoomRotate.disableRotation();
 
-    map.addControl(new mapboxgl.NavigationControl(), 'top-left');
+    map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), 'top-left');
     map.addControl(new mapboxgl.ScaleControl(), 'bottom-right');
 
     map.on('load', () => {
