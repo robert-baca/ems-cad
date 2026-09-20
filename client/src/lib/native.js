@@ -29,3 +29,15 @@ export function getBackgroundGeolocation() {
 export function nativeCall(plugin, method, options = {}) {
   return window.Capacitor.nativePromise(plugin, method, options);
 }
+
+// Same reasoning as nativeCall above, but for persistent event listeners
+// (addListener-style APIs, e.g. PushNotifications' 'registration' event)
+// rather than one-shot calls -- registerPlugin()'s proxy builds its own
+// addListener() on top of this same low-level nativeCallback dispatch, gated
+// behind the same broken PluginHeaders check. Returns a Capacitor
+// CallbackID (string) that can be passed to window.Capacitor.removeListener
+// to unsubscribe, mirroring what the standard proxy's addListener() would
+// have returned.
+export function nativeListener(plugin, eventName, callback) {
+  return window.Capacitor.nativeCallback(plugin, 'addListener', { eventName }, callback);
+}

@@ -6,6 +6,7 @@ import { useCalls } from '../hooks/useCalls';
 import { useLocations } from '../hooks/useLocations';
 import { useSocket } from '../hooks/useSocket';
 import { useCrewGps, stopCrewGpsTracking } from '../hooks/useCrewGps';
+import { usePushRegistration } from '../hooks/usePushRegistration';
 import { useCrewNotifications } from '../hooks/useCrewNotifications';
 import ActiveCall from '../components/crew/ActiveCall';
 import StatusButtons from '../components/crew/StatusButtons';
@@ -401,6 +402,11 @@ export default function CrewMobile() {
     unit: myUnit,
     enabled: !!myUnit && !showNativeSetup && gpsSharingEnabled,
   });
+
+  // Same one-time-setup-screen deferral as useCrewGps above — the native
+  // setup flow already drives permission prompts one at a time; racing this
+  // against it can cause iOS to drop/reorder its own dialogs.
+  usePushRegistration({ token: user?.token, enabled: !!myUnit && !showNativeSetup });
 
   // Hardware/gesture back on Android and the floating back button on iOS both
   // call into window.__handleNativeBack natively (MainActivity.java /

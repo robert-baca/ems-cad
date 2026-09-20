@@ -125,7 +125,7 @@ public class MainActivity extends BridgeActivity {
     private static final String[] KNOWN_PLUGIN_IDS = {
         "CapacitorCookies", "WebView", "CapacitorHttp", "SystemBars",
         "GpsTracker", "BackgroundGeolocation", "Browser", "Geolocation",
-        "LocalNotifications", "StatusBar", "NativeBiometric", "Haptics"
+        "LocalNotifications", "StatusBar", "NativeBiometric", "Haptics", "PushNotifications"
     };
 
     private void fixMissingPluginBridgeOnSecondaryOrigins(WebView webView) {

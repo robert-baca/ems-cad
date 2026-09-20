@@ -8,6 +8,7 @@ const bcrypt     = require('bcryptjs');
 const { Pool }   = require('pg');
 const { scrypt, timingSafeEqual, randomUUID } = require('crypto');
 const { promisify } = require('util');
+const { sendPushToUnit } = require('./push');
 require('dotenv').config();
 
 const scryptAsync = promisify(scrypt);
@@ -287,6 +288,8 @@ async function initDb() {
   await pool.query(`ALTER TABLE locations ADD COLUMN IF NOT EXISTS location_type TEXT DEFAULT 'permanent'`);
   await pool.query(`ALTER TABLE units ADD COLUMN IF NOT EXISTS last_gps_fix_ts TEXT`);
   await pool.query(`ALTER TABLE units ADD COLUMN IF NOT EXISTS last_gps_accuracy DOUBLE PRECISION`);
+  await pool.query(`ALTER TABLE units ADD COLUMN IF NOT EXISTS push_token TEXT`);
+  await pool.query(`ALTER TABLE units ADD COLUMN IF NOT EXISTS push_platform TEXT`);
 
   // Prune calls older than 90 days
   const pruneDate = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
@@ -410,18 +413,20 @@ async function initDb() {
 async function saveUnit(unit) {
   await pool.query(`
     INSERT INTO units (id, unit_number, unit_name, unit_type, status, crew, station,
-      last_lat, last_lng, last_gps_at, last_gps_fix_ts, last_gps_accuracy, password_hash, profile)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+      last_lat, last_lng, last_gps_at, last_gps_fix_ts, last_gps_accuracy, push_token, push_platform, password_hash, profile)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
     ON CONFLICT (id) DO UPDATE SET
       unit_number=EXCLUDED.unit_number, unit_name=EXCLUDED.unit_name, unit_type=EXCLUDED.unit_type,
       status=EXCLUDED.status, crew=EXCLUDED.crew, station=EXCLUDED.station,
       last_lat=EXCLUDED.last_lat, last_lng=EXCLUDED.last_lng,
       last_gps_at=EXCLUDED.last_gps_at, last_gps_fix_ts=EXCLUDED.last_gps_fix_ts,
       last_gps_accuracy=EXCLUDED.last_gps_accuracy,
+      push_token=EXCLUDED.push_token, push_platform=EXCLUDED.push_platform,
       password_hash=EXCLUDED.password_hash, profile=EXCLUDED.profile
   `, [unit.id, unit.unit_number, unit.unit_name, unit.unit_type, unit.status,
       unit.crew, unit.station, unit.last_lat, unit.last_lng,
       unit.last_gps_at, unit.last_gps_fix_ts || null, unit.last_gps_accuracy ?? null,
+      unit.push_token ?? null, unit.push_platform ?? null,
       unit.password_hash, unit.profile ? JSON.stringify(unit.profile) : null]);
 }
 
@@ -1051,7 +1056,15 @@ app.post('/api/units/:id/ping', verifyToken, async (req, res) => {
   if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
   const unit = units.find(u => u.id === req.params.id);
   if (!unit) return res.status(404).json({ error: 'Not found' });
-  io.to(`crew:${unit.id}`).emit('crew:attention_ping', { from: req.user.name || req.user.username || 'Dispatch' });
+  const from = req.user.name || req.user.username || 'Dispatch';
+  io.to(`crew:${unit.id}`).emit('crew:attention_ping', { from });
+  // Also a real push (see push.js) so it still lands if the app's process
+  // isn't alive to receive the socket event above at all -- the socket path
+  // stays too since it's what drives the immediate haptic buzz while the
+  // app IS running, which a push notification can't do. Fire-and-forget:
+  // the response shouldn't wait on an external API call, and a unit with no
+  // registered device is an expected no-op, not a failure worth reporting.
+  sendPushToUnit(unit, { title: '🔔 Dispatch needs you', body: `${from} is trying to reach you` }).catch(() => {});
   res.json({ ok: true });
 });
 
@@ -2038,6 +2051,25 @@ app.patch('/api/crew/gps-sharing', verifyToken, (req, res) => {
   unit.gps_sharing_disabled = !req.body.enabled;
   emitDispatch('unit:updated', { ...unit, password_hash: undefined });
   res.json({ ok: true, gps_sharing_disabled: unit.gps_sharing_disabled });
+});
+
+// Registers this device for real push notifications (see push.js) —
+// persisted (unlike gps_permission_status/gps_sharing_disabled) since a
+// push token stays valid across shifts/restarts, not just for the current
+// session, and re-registering every app launch would just overwrite it with
+// the same value on an unchanged device anyway.
+app.post('/api/crew/push-token', verifyToken, async (req, res) => {
+  if (req.user.role !== 'crew') return res.status(403).json({ error: 'Forbidden' });
+  const unit = units.find(u => u.id === req.user.unit_id);
+  if (!unit) return res.status(404).json({ error: 'Not found' });
+  const { pushToken, platform } = req.body;
+  if (!pushToken || !['ios', 'android'].includes(platform)) {
+    return res.status(400).json({ error: 'pushToken and a valid platform are required' });
+  }
+  unit.push_token = pushToken;
+  unit.push_platform = platform;
+  persist(saveUnit(unit), 'unit ' + unit.id);
+  res.json({ ok: true });
 });
 
 // ── GPS history ───────────────────────────────────────────────────
