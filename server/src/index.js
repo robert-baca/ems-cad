@@ -1434,11 +1434,6 @@ app.patch('/api/calls/:id/status', verifyToken, async (req, res) => {
 
   persist(saveCall(call), 'call ' + call.id);
 
-  const tsField = TS_MAP[req.body.status];
-  const payload = { call_id: call.id, status: call.status, ...(tsField && call[tsField] ? { [tsField]: call[tsField] } : {}) };
-  emitDispatch('call:status_change', payload);
-  io.to(`crew:${call.assigned_unit_id}`).emit('call:updated', { call_id: call.id, changes: { status: call.status } });
-
   const isClose = req.body.status === 'closed';
   const newUnitStatus = isClose ? 'available' : req.body.status;
   // On close: all units (initial + added mid-call) return to available.
@@ -1452,15 +1447,35 @@ app.patch('/api/calls/:id/status', verifyToken, async (req, res) => {
     ? [call.assigned_unit_id, ...(call.additional_unit_ids || [])].filter(Boolean)
     : [...new Set([call.assigned_unit_id, ...(call.co_unit_ids || []), ...(call.additional_unit_ids || [])])].filter(Boolean);
 
+  // Also collected so the dispatcher-facing call:status_change broadcast below
+  // can carry every affected unit's new status in the same, single event, in
+  // addition to (not instead of) each unit's own emitDispatch below — a
+  // dispatcher's connection dropping any one of several back-to-back
+  // unit:status_change events previously left that specific unit's status
+  // stuck on the board until a refresh, while the others (and the call
+  // itself) updated fine. Piggybacking the full set onto the one event this
+  // endpoint already reliably sends gives the dispatcher UI a second, atomic
+  // chance to catch up even if an individual emit went missing.
+  const unitUpdates = [];
   unitIdsToUpdate.forEach(uid => {
     const unit = units.find(u => u.id === uid);
     if (unit && isForwardStatusChange(unit.status, newUnitStatus)) {
       unit.status = newUnitStatus;
       persist(saveUnit(unit), 'unit ' + unit.id);
+      unitUpdates.push({ unit_id: unit.id, status: unit.status });
       emitDispatch('unit:status_change', { unit_id: unit.id, status: unit.status });
       io.to(`crew:${uid}`).emit('unit:status_change', { unit_id: uid, status: newUnitStatus });
     }
   });
+
+  const tsField = TS_MAP[req.body.status];
+  const payload = {
+    call_id: call.id, status: call.status,
+    ...(tsField && call[tsField] ? { [tsField]: call[tsField] } : {}),
+    ...(unitUpdates.length ? { unit_updates: unitUpdates } : {})
+  };
+  emitDispatch('call:status_change', payload);
+  io.to(`crew:${call.assigned_unit_id}`).emit('call:updated', { call_id: call.id, changes: { status: call.status } });
 
   // Notify all associated crew phones of the call status update (so their call card stays in sync)
   [...new Set([...(call.co_unit_ids || []), ...(call.additional_unit_ids || [])])].forEach(uid => {

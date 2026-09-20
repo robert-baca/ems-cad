@@ -83,8 +83,23 @@ export function useCalls(setUnits) {
   const handleCallCreated      = useCallback((call) => setCalls(prev => prev.some(c => c.id === call.id) ? prev : [call, ...prev]), []);
   const handleCallUpdated      = useCallback(({ call_id, changes }) =>
     setCalls(prev => prev.map(c => c.id === call_id ? { ...c, ...changes } : c)), []);
-  const handleCallStatusChange = useCallback(({ call_id, status, ...timestamps }) =>
-    setCalls(prev => prev.map(c => c.id === call_id ? { ...c, status, ...timestamps } : c)), []);
+  // unit_updates rides along on this same event (see server's PATCH
+  // .../status) specifically so a dispatcher's view can't end up with the
+  // call advanced but an additional unit stuck behind it — that used to
+  // depend on this unit's own separate unit:status_change event also
+  // landing, and a dropped one of those left it stuck until a manual
+  // refresh. Applying it here too means it only takes this one call event
+  // (which everything else about the call already depends on) to catch it
+  // up, regardless of whether its own individual event made it through.
+  const handleCallStatusChange = useCallback(({ call_id, status, unit_updates, ...timestamps }) => {
+    setCalls(prev => prev.map(c => c.id === call_id ? { ...c, status, ...timestamps } : c));
+    if (unit_updates?.length && setUnits) {
+      setUnits(prev => prev.map(u => {
+        const found = unit_updates.find(x => x.unit_id === u.id);
+        return found ? { ...u, status: found.status } : u;
+      }));
+    }
+  }, [setUnits]);
   const handleCallAssigned     = useCallback(({ call_id, unit_id }) =>
     setCalls(prev => prev.map(c => c.id === call_id ? { ...c, assigned_unit_id: unit_id } : c)), []);
 
