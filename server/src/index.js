@@ -100,6 +100,23 @@ function emitDispatch(event, payload) {
   io.to('display').emit(event, sanitizeForDisplay(event, payload));
 }
 
+// Every "this unit was just assigned/added to a call" moment shares this so
+// the real push (see push.js) can't drift out of sync with the socket event
+// it's meant to back up. Unlike the socket event alone, the push still
+// reaches the crew member if their app has been fully force-closed, not
+// just backgrounded -- the single biggest reliability gap for the one alert
+// in this app where missing it actually matters most. Deliberately not
+// called from the socket-reconnect resend (a crew phone catching up on its
+// own already-active call, not a new assignment) -- that would re-push on
+// every reconnect, not just genuinely new ones.
+function notifyUnitAssigned(unit, call) {
+  io.to(`crew:${unit.id}`).emit('call:assigned_to_me', call);
+  sendPushToUnit(unit, {
+    title: `📡 New Call — Case #${call.call_number}`,
+    body: `${call.call_type} · ${call.location_name || 'Unknown location'}`
+  }).catch(() => {});
+}
+
 // ── Startup security checks ─────────────────────────────────────────
 // Most missing env vars just get a loud warning rather than a hard failure
 // (avoid taking down a live dispatch system over a missing config value;
@@ -1213,13 +1230,13 @@ app.post('/api/calls', verifyToken, async (req, res) => {
 
   emitDispatch('call:created', call);
   if (hasUnit) {
-    io.to(`crew:${call.assigned_unit_id}`).emit('call:assigned_to_me', call);
     const unit = units.find(u => u.id === call.assigned_unit_id);
     if (unit) {
       unit.status = 'dispatched';
       persist(saveUnit(unit), 'unit ' + unit.id);
       emitDispatch('unit:status_change', { unit_id: unit.id, status: 'dispatched' });
       io.to(`crew:${unit.id}`).emit('unit:status_change', { unit_id: unit.id, status: 'dispatched' });
+      notifyUnitAssigned(unit, call);
     }
   }
   additionalIds.forEach(uid => {
@@ -1229,7 +1246,7 @@ app.post('/api/calls', verifyToken, async (req, res) => {
       persist(saveUnit(u), 'unit ' + u.id);
       emitDispatch('unit:status_change', { unit_id: u.id, status: 'dispatched' });
       io.to(`crew:${uid}`).emit('unit:status_change', { unit_id: u.id, status: 'dispatched' });
-      io.to(`crew:${uid}`).emit('call:assigned_to_me', call);
+      notifyUnitAssigned(u, call);
     }
   });
 
@@ -1317,7 +1334,7 @@ app.patch('/api/calls/:id/assign', verifyToken, async (req, res) => {
         persist(saveUnit(u), 'unit ' + u.id);
         emitDispatch('unit:status_change', { unit_id: u.id, status: 'dispatched' });
         io.to(`crew:${uid}`).emit('unit:status_change', { unit_id: u.id, status: 'dispatched' });
-        io.to(`crew:${uid}`).emit('call:assigned_to_me', call);
+        notifyUnitAssigned(u, call);
       }
     });
 
@@ -1329,7 +1346,7 @@ app.patch('/api/calls/:id/assign', verifyToken, async (req, res) => {
 
   persist(saveCall(call), 'call ' + call.id);
   emitDispatch('call:assigned', { call_id: call.id, unit_id: req.body.unit_id });
-  io.to(`crew:${req.body.unit_id}`).emit('call:assigned_to_me', call);
+  if (unit) notifyUnitAssigned(unit, call);
   res.json(call);
 });
 
@@ -1357,7 +1374,7 @@ app.post('/api/calls/:id/add-unit', verifyToken, async (req, res) => {
     persist(saveUnit(unit), 'unit ' + unit.id);
     emitDispatch('unit:status_change', { unit_id: unit.id, status: joinStatus });
     io.to(`crew:${unit_id}`).emit('unit:status_change', { unit_id: unit.id, status: joinStatus });
-    io.to(`crew:${unit_id}`).emit('call:assigned_to_me', call);
+    notifyUnitAssigned(unit, call);
   }
   persist(saveCall(call), 'call ' + call.id);
   emitDispatch('call:updated', {
