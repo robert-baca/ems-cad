@@ -32,6 +32,7 @@ export const editUnit = (unitId, data) => api.put(`/units/${unitId}`, data);
 export const updateUnitProfile = (unitId, profile) => api.put(`/units/${unitId}/profile`, profile);
 export const deleteUnit = (unitId) => api.delete(`/units/${unitId}`);
 export const clearUnitGps = (unitId) => api.delete(`/units/${unitId}/gps`);
+export const pingUnit = (unitId) => api.post(`/units/${unitId}/ping`);
 export const setCrewGpsSharing = (enabled) => api.patch('/crew/gps-sharing', { enabled });
 
 // ── Crew direct messages ──────────────────────────────────────────

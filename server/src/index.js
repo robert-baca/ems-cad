@@ -1042,6 +1042,19 @@ app.delete('/api/units/:id/gps', verifyToken, async (req, res) => {
   res.json({ ok: true });
 });
 
+// Dispatcher-to-crew attention ping — not tied to a call, just "look at your
+// phone." The crew app reacts with an immediate haptic buzz (works even with
+// the app open, unlike a notification banner, which most OSes suppress while
+// the app is already in the foreground) plus a local notification for when
+// the phone's locked/backgrounded.
+app.post('/api/units/:id/ping', verifyToken, async (req, res) => {
+  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
+  const unit = units.find(u => u.id === req.params.id);
+  if (!unit) return res.status(404).json({ error: 'Not found' });
+  io.to(`crew:${unit.id}`).emit('crew:attention_ping', { from: req.user.name || req.user.username || 'Dispatch' });
+  res.json({ ok: true });
+});
+
 app.delete('/api/units/:id', verifyToken, async (req, res) => {
   if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
   const idx = units.findIndex(u => u.id === req.params.id);

@@ -61,7 +61,7 @@ export default function DispatcherDashboard() {
     units, setUnits,
     handleGpsUpdate, handleStatusChange, handleProfileUpdate,
     handleUnitUpdated, handleUnitRemoved,
-    addUnit, editUnit, removeUnit, changeStatus, clearGps
+    addUnit, editUnit, removeUnit, changeStatus, clearGps, pingUnit
   } = useUnits();
   const {
     calls, setCalls,
@@ -438,6 +438,7 @@ export default function DispatcherDashboard() {
             onStatusChange={changeStatus}
             onClearGps={clearGps}
             onFlyTo={(unit) => setFlyToTarget({ lat: unit.last_lat, lng: unit.last_lng, _t: Date.now() })}
+            onPing={pingUnit}
             readOnly={isOverwatch}
           />
         )}

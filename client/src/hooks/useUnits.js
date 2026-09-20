@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
-import { getUnits, updateUnitStatus, createUnit as apiCreateUnit, editUnit as apiEditUnit, deleteUnit as apiDeleteUnit, clearUnitGps as apiClearGps } from '../services/api';
+import { getUnits, updateUnitStatus, createUnit as apiCreateUnit, editUnit as apiEditUnit, deleteUnit as apiDeleteUnit, clearUnitGps as apiClearGps, pingUnit as apiPingUnit } from '../services/api';
 
 export function useUnits() {
   const [units, setUnits] = useState([]);
@@ -129,10 +129,18 @@ export function useUnits() {
     try { await apiClearGps(unitId); } catch {}
   }, []);
 
+  // Fire-and-forget attention ping — no local state to update, the crew
+  // phone reacts entirely on its own end (see CrewMobile.jsx's
+  // crew:attention_ping handler).
+  const pingUnit = useCallback(async (unitId) => {
+    try { await apiPingUnit(unitId); return null; }
+    catch (err) { return err?.response?.data?.error || 'Failed to send'; }
+  }, []);
+
   return {
     units, setUnits,
     handleGpsUpdate, handleStatusChange, handleProfileUpdate,
     handleUnitUpdated, handleUnitRemoved,
-    changeStatus, addUnit, editUnit, removeUnit, moveUnit, clearGps
+    changeStatus, addUnit, editUnit, removeUnit, moveUnit, clearGps, pingUnit
   };
 }

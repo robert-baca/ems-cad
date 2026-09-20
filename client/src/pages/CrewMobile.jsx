@@ -16,7 +16,7 @@ import NativeSetupModal from '../components/crew/NativeSetupModal';
 import BeaconMode from '../components/crew/BeaconMode';
 import CrewRoster from '../components/crew/CrewRoster';
 import { setCrewGpsSharing, getCrewMessages, sendCrewMessage } from '../services/api';
-import { isNative as isNativePlatform } from '../lib/native';
+import { isNative as isNativePlatform, nativeCall } from '../lib/native';
 import { enqueueOfflineAction, subscribeOfflineQueue } from '../lib/offlineActionQueue';
 import { STATUS_COLORS, STATUS_LABELS } from '../data/mockData';
 
@@ -472,6 +472,20 @@ export default function CrewMobile() {
         `📡 New Call — Case #${call.call_number}`,
         `${call.call_type} · ${call.location_name || 'Unknown location'}`
       );
+    },
+    // Dispatcher-initiated "get their attention" ping — not tied to a call.
+    // A local notification alone won't reliably show/vibrate while this app
+    // is already open and in the foreground (the OS assumes you're already
+    // looking at it), which is exactly when this is most likely to be used —
+    // so this fires a direct haptic buzz too, which works regardless of
+    // foreground state. Wrapped in try/catch and silently no-ops on an app
+    // build that doesn't have @capacitor/haptics yet, same defensive pattern
+    // as every other native plugin call in this file.
+    'crew:attention_ping': (payload) => {
+      scheduleNotif('🔔 Dispatch needs you', payload?.from ? `${payload.from} is trying to reach you` : 'Check the app');
+      if (isNative) {
+        nativeCall('Haptics', 'impact', { style: 'HEAVY' }).catch(() => {});
+      }
     },
     'call:comment_added':  (payload) => {
       handleCommentAdded(payload);

@@ -36,7 +36,7 @@ const TYPE_BADGE = { ALS: 'bg-red-900/50 text-red-300', BLS: 'bg-blue-900/50 tex
 // for a new dispatch elsewhere in the app (CallDetail/NewCallModal availableUnits).
 const ON_CALL_STATUSES = new Set(['dispatched', 'en_route', 'on_scene', 'patient_contact', 'transporting']);
 
-function UnitCard({ unit, activeCall, isSelected, onClick, onHistory, onEdit, onToggleOos, onFlyTo, onClearGps, dismissedGpsWarning, onDismissGpsWarning, readOnly }) {
+function UnitCard({ unit, activeCall, isSelected, onClick, onHistory, onEdit, onToggleOos, onFlyTo, onClearGps, onPing, dismissedGpsWarning, onDismissGpsWarning, readOnly }) {
   const color = STATUS_COLORS[unit.status] || '#9ca3af';
   const profile = unit.profile;
   const hasGps = unit.last_lat && unit.last_lng;
@@ -135,6 +135,15 @@ function UnitCard({ unit, activeCall, isSelected, onClick, onHistory, onEdit, on
       {/* Expanded action row when selected */}
       {isSelected && (
         <div className="px-2 pb-2 flex gap-1.5 flex-wrap">
+          {!readOnly && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onPing(unit); }}
+              className="flex-1 py-1.5 rounded-lg text-xs font-bold bg-gray-700 hover:bg-purple-900 text-gray-400 hover:text-purple-300 transition-colors"
+              title="Buzz this unit's phone to get their attention — not tied to a call"
+            >
+              🔔 Ping
+            </button>
+          )}
           {!readOnly && (!ON_CALL_STATUSES.has(unit.status) || !activeCall) && (
             <button
               onClick={(e) => { e.stopPropagation(); onToggleOos(unit); }}
@@ -192,7 +201,7 @@ function UnitCard({ unit, activeCall, isSelected, onClick, onHistory, onEdit, on
 
 const GPS_WARNING_DISMISS_KEY = 'dismissedGpsWarnings';
 
-export default function UnitPanel({ units, calls, selectedUnitId, onSelectUnit, onUnitHistory, onEditUnit, onRemoveUnit, onAddUnit, onStatusChange, onClearGps, onFlyTo, readOnly = false }) {
+export default function UnitPanel({ units, calls, selectedUnitId, onSelectUnit, onUnitHistory, onEditUnit, onRemoveUnit, onAddUnit, onStatusChange, onClearGps, onFlyTo, onPing, readOnly = false }) {
   const [editingUnit,  setEditingUnit]  = useState(null);
   const [showAddUnit,  setShowAddUnit]  = useState(false);
   // unit id -> the exact gps_permission_status value dismissed for it, so a
@@ -280,6 +289,7 @@ export default function UnitPanel({ units, calls, selectedUnitId, onSelectUnit, 
                 }}
                 onFlyTo={(u) => onFlyTo?.(u)}
                 onClearGps={(id) => onClearGps?.(id)}
+                onPing={(u) => onPing?.(u.id)}
                 dismissedGpsWarning={dismissedGpsWarnings[unit.id]}
                 onDismissGpsWarning={dismissGpsWarning}
                 readOnly={readOnly}
