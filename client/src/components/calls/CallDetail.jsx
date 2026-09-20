@@ -46,7 +46,7 @@ function LiveClock() {
 
 export default function CallDetail({
   call, unit, units = [], authorName = 'Dispatcher',
-  onClose, onTimestampUpdate, onLogTime, onAddComment, onAssignUnit, onCloseCall, onAddUnit,
+  onClose, onTimestampUpdate, onLogTime, loggingCooldown = false, onAddComment, onAssignUnit, onCloseCall, onAddUnit,
   onRemoveUnit, onSplitCall, parentCall, subCases = [], onUpdatePriority, onAddMutualAid, onRemoveMutualAid,
   onChangeUnitStatus, onRepositionPin
 }) {
@@ -249,9 +249,11 @@ export default function CallDetail({
           <span className="text-green-300 text-xs font-medium">Next: {nextTsLabel}</span>
           <button
             onClick={() => onLogTime?.(call.id)}
-            className="text-xs px-3 py-1 bg-green-700 hover:bg-green-600 text-white font-bold rounded-lg transition-colors"
+            disabled={loggingCooldown}
+            title={loggingCooldown ? 'Just logged — give it a second to sync' : undefined}
+            className="text-xs px-3 py-1 bg-green-700 hover:bg-green-600 disabled:bg-green-900 disabled:text-green-400/60 disabled:cursor-not-allowed text-white font-bold rounded-lg transition-colors"
           >
-            ⏱ Log Now
+            {loggingCooldown ? '✓ Logged' : '⏱ Log Now'}
           </button>
         </div>
       )}

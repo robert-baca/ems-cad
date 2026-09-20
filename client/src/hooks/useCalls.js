@@ -50,9 +50,20 @@ function isForwardUnitStatus(fromStatus, toStatus) {
 // server's unit:status_change event round-trips back — sits stale until
 // whatever event happens to arrive next, which reads as the unit panel
 // getting "stuck" on the previous status.
+// After a Log Now request settles, still worth a short buffer before letting
+// the button fire again — a click landing right as the server's confirming
+// call:status_change/unit:status_change broadcast is still in flight (not
+// yet applied to local state) computes "next status" from the same
+// pre-update snapshot the just-finished click did, tripping the same race
+// this whole flow is built to avoid. Purely a UI-level throttle; the
+// loggingRef guard below still exists as the hard backstop against a true
+// double-fire.
+const LOG_NOW_COOLDOWN_MS = 1500;
+
 export function useCalls(setUnits) {
   const [calls, setCalls] = useState([]);
-  const loggingRef = useRef(new Set()); // tracks in-flight logTimeNow calls per callId
+  const loggingRef = useRef(new Set()); // tracks in-flight-or-cooling-down logTimeNow calls per callId
+  const [loggingCallIds, setLoggingCallIds] = useState(() => new Set());
 
   // Returns a { unitId: previousStatus } snapshot of whatever it actually
   // changed, so a failed server write can be rolled back precisely instead
@@ -235,9 +246,24 @@ export function useCalls(setUnits) {
     updateCallTimestamps(callId, { [field]: isoValue }).catch(() => {});
   }, []);
 
+  // Releases the lock after LOG_NOW_COOLDOWN_MS instead of immediately —
+  // see LOG_NOW_COOLDOWN_MS's comment.
+  const releaseLoggingLock = useCallback((callId) => {
+    setTimeout(() => {
+      loggingRef.current.delete(callId);
+      setLoggingCallIds(prev => {
+        if (!prev.has(callId)) return prev;
+        const next = new Set(prev);
+        next.delete(callId);
+        return next;
+      });
+    }, LOG_NOW_COOLDOWN_MS);
+  }, []);
+
   const logTimeNow = useCallback((callId) => {
     if (loggingRef.current.has(callId)) return;
     loggingRef.current.add(callId);
+    setLoggingCallIds(prev => new Set(prev).add(callId));
     const now = new Date().toISOString();
     let nextField = null;
     let callSnapshot = null;
@@ -286,13 +312,19 @@ export function useCalls(setUnits) {
           ? { ...c, ...Object.fromEntries(fields.map(f => [f, callSnapshot[f]])) }
           : c));
         revertUnits(unitsSnapshot);
-      }).finally(() => loggingRef.current.delete(callId));
+      }).finally(() => releaseLoggingLock(callId));
     } else {
-      // Nothing to log — no network round-trip was started, so release the
-      // lock immediately instead of waiting out a fixed timer.
+      // Nothing to log — no network round-trip was started, so nothing to
+      // cool down after either; release the lock immediately.
       loggingRef.current.delete(callId);
+      setLoggingCallIds(prev => {
+        if (!prev.has(callId)) return prev;
+        const next = new Set(prev);
+        next.delete(callId);
+        return next;
+      });
     }
-  }, [syncUnitsForward, revertUnits]);
+  }, [syncUnitsForward, revertUnits, releaseLoggingLock]);
 
   // See advanceStatus's comment above for `onNetworkError` — same deal here:
   // a genuine connectivity failure hands off to the offline queue and keeps
@@ -417,7 +449,7 @@ export function useCalls(setUnits) {
     calls, setCalls,
     handleCallCreated, handleCallUpdated, handleCallStatusChange, handleCallAssigned,
     handleCommentAdded,
-    dispatchCall, assignUnit, advanceStatus, closeCall, updateTimestamp, logTimeNow, addComment,
+    dispatchCall, assignUnit, advanceStatus, closeCall, updateTimestamp, logTimeNow, loggingCallIds, addComment,
     addUnitToCall, removeUnitFromCall, updatePriority, updateCallLocationPin, addMutualAid, removeMutualAid
   };
 }

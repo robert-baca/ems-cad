@@ -67,7 +67,7 @@ export default function DispatcherDashboard() {
     calls, setCalls,
     handleCallCreated, handleCallUpdated, handleCallStatusChange, handleCallAssigned,
     handleCommentAdded,
-    dispatchCall, assignUnit, closeCall, updateTimestamp, logTimeNow, addComment,
+    dispatchCall, assignUnit, closeCall, updateTimestamp, logTimeNow, loggingCallIds, addComment,
     addUnitToCall, removeUnitFromCall, updatePriority, updateCallLocationPin, addMutualAid, removeMutualAid
   } = useCalls(setUnits);
   const { locations, addLocation, removeLocation, clearShiftLocations, setPermLocations, addRemoteLocation, removeRemoteLocation } = useLocations();
@@ -564,6 +564,7 @@ export default function DispatcherDashboard() {
               onClose={() => setSelectedCallId(null)}
               onTimestampUpdate={updateTimestamp}
               onLogTime={logTimeNow}
+              loggingCooldown={loggingCallIds.has(selectedCall.id)}
               onAddComment={addComment}
               onAssignUnit={assignUnit}
               onAddUnit={addUnitToCall}
