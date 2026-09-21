@@ -855,6 +855,14 @@ function resolveInitialUnitStatus(status) {
 // actually self-reported being. 'available'/'out_of_service' aren't part of
 // the linear flow, so anything into or out of them is always allowed.
 const STATUS_SEQUENCE = ['dispatched', 'acknowledged', 'en_route', 'on_scene', 'patient_contact', 'transporting', 'cleared'];
+// Shared with the stale-call-escalation check further down (staleCallCheck) —
+// hoisted here rather than left local to PATCH .../status so both can use
+// the same status->timestamp-field mapping.
+const STATUS_TS_MAP = {
+  dispatched: 'dispatched_at', acknowledged: 'acknowledged_at', en_route: 'en_route_at', on_scene: 'on_scene_at',
+  patient_contact: 'patient_contact_at', transporting: 'transporting_at',
+  cleared: 'cleared_at', available: 'available_at'
+};
 function isForwardStatusChange(fromStatus, toStatus) {
   const fromIdx = STATUS_SEQUENCE.indexOf(fromStatus);
   const toIdx = STATUS_SEQUENCE.indexOf(toStatus);
@@ -1083,6 +1091,23 @@ app.post('/api/units/:id/ping', verifyToken, async (req, res) => {
   // registered device is an expected no-op, not a failure worth reporting.
   sendPushToUnit(unit, { title: '🔔 Dispatch needs you', body: `${from} is trying to reach you` }).catch(() => {});
   res.json({ ok: true });
+});
+
+// Park-wide alert to every crew member at once (severe weather, evacuation,
+// etc.) — same dual socket+push pattern as the per-unit ping above, just
+// fanned out to every unit with a registered device instead of one.
+app.post('/api/broadcast', verifyToken, async (req, res) => {
+  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
+  const message = req.body.message?.trim();
+  if (!message) return res.status(400).json({ error: 'message required' });
+  const from = req.user.name || req.user.username || 'Dispatch';
+  io.to('crew_all').emit('crew:broadcast', { from, message });
+  const targets = units.filter(u => u.push_token);
+  const results = await Promise.allSettled(
+    targets.map(u => sendPushToUnit(u, { title: `📢 ${from}`, body: message }))
+  );
+  const sent = results.filter(r => r.status === 'fulfilled' && r.value === true).length;
+  res.json({ ok: true, sent, targeted: targets.length });
 });
 
 app.delete('/api/units/:id', verifyToken, async (req, res) => {
@@ -1462,11 +1487,7 @@ app.patch('/api/calls/:id/status', verifyToken, async (req, res) => {
     return res.status(409).json({ error: `Call is already past '${req.body.status}' (currently '${call.status}')` });
   }
 
-  const TS_MAP = {
-    acknowledged: 'acknowledged_at', en_route: 'en_route_at', on_scene: 'on_scene_at',
-    patient_contact: 'patient_contact_at', transporting: 'transporting_at',
-    cleared: 'cleared_at', available: 'available_at'
-  };
+  const TS_MAP = STATUS_TS_MAP;
   call.status = req.body.status;
   if (req.body.disposition) call.disposition = req.body.disposition;
   if (req.body.close_notes)  call.close_notes  = req.body.close_notes;
@@ -1555,6 +1576,19 @@ app.post('/api/calls/:id/comments', verifyToken, async (req, res) => {
   const commentUnitIds = [call.assigned_unit_id, ...(call.additional_unit_ids || [])].filter(Boolean);
   commentUnitIds.forEach(uid => {
     io.to(`crew:${uid}`).emit('call:comment_added', { call_id: call.id, comment });
+    // Real push backup for the same reason as notifyUnitAssigned — this
+    // socket event only reaches a unit whose app process is still alive.
+    // Skip whichever unit the comment's author actually is: that unit
+    // already knows what it just sent (its own client has no optimistic
+    // local update and relies on this same echo to show its own message,
+    // but there's nothing to *notify* it of).
+    const u = units.find(x => x.id === uid);
+    if (u && comment.author !== u.unit_number) {
+      sendPushToUnit(u, {
+        title: comment.author === 'Dispatcher' ? '💬 Dispatch' : `💬 ${comment.author}`,
+        body: comment.text
+      }).catch(() => {});
+    }
   });
   res.json(comment);
 });
@@ -1790,6 +1824,47 @@ function getUnitActiveCall(unitId, excludeCallId = null) {
     c.status !== 'closed' &&
     (c.assigned_unit_id === unitId || (c.additional_unit_ids || []).includes(unitId))
   ) || null;
+}
+
+// Nudges the unit(s) on a call that's sat in the same status unusually long
+// — easy for a busy dispatcher board to bury, and the crew member may not
+// realize how much time has actually passed while heads-down on scene. A
+// first pass at a single generic threshold rather than per-status tuning
+// (on-scene vs. transporting realistically warrant different thresholds,
+// but this is a reasonable starting point to see how noisy/quiet it is in
+// practice before over-engineering it).
+//
+// call._staleNudgedStatus tracks which status this call was last nudged
+// for -- in-memory only, deliberately not persisted, since it's a
+// session-scoped throttle, not part of the incident record. Comparing it
+// against call.status directly means it self-resets the moment the status
+// actually advances: the old value can never match the new status, so a
+// later stall at a further stage nudges again on its own.
+const STALE_STATUS_THRESHOLD_MS = 20 * 60 * 1000;
+const STALE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
+
+function checkStaleCalls() {
+  const now = Date.now();
+  calls.forEach(call => {
+    if (['pending', 'closed', 'available', 'cleared'].includes(call.status)) return;
+    const tsField = STATUS_TS_MAP[call.status];
+    const tsValue = tsField && call[tsField];
+    if (!tsValue) return;
+    const ageMs = now - new Date(tsValue).getTime();
+    if (ageMs < STALE_STATUS_THRESHOLD_MS || call._staleNudgedStatus === call.status) return;
+    call._staleNudgedStatus = call.status;
+
+    const ageMin = Math.round(ageMs / 60000);
+    const unitIds = [call.assigned_unit_id, ...(call.additional_unit_ids || [])].filter(Boolean);
+    unitIds.forEach(uid => {
+      const unit = units.find(u => u.id === uid);
+      if (!unit) return;
+      sendPushToUnit(unit, {
+        title: `⏱ Case #${call.call_number} check-in`,
+        body: `Still showing "${call.status}" after ${ageMin} min — update your status if that's changed.`
+      }).catch(() => {});
+    });
+  });
 }
 
 // getUnitActiveCall only catches a double-dispatch at the moment it happens (assign/create check
@@ -2255,6 +2330,10 @@ app.post('/api/crew/messages', verifyToken, (req, res) => {
   // calls updates always echo back) stays in sync without a duplicate local
   // append — the client dedupes by this message's id.
   io.to(`crew:${req.user.unit_id}`).emit('dm:received', msg);
+  // Real push to the recipient only — same reliability backup as everywhere
+  // else, not the sender (which just gets its own echo above, nothing to
+  // notify it of). toUnit was already fetched above to validate the target.
+  sendPushToUnit(toUnit, { title: `💬 ${msg.from_unit_number || 'New message'}`, body: msg.text }).catch(() => {});
   res.status(201).json(msg);
 });
 
@@ -2558,6 +2637,7 @@ initDb()
       console.log(`   Default login — dispatchers: "dispatch" / "ems2024"`);
       console.log(`   Crew sign-in is PIN-based via /api/auth/crew-login (personnel table)\n`);
     });
+    setInterval(checkStaleCalls, STALE_CHECK_INTERVAL_MS);
   })
   .catch(err => {
     console.error('[db] Failed to connect to database:', err.message);

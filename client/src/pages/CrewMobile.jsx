@@ -493,6 +493,16 @@ export default function CrewMobile() {
         nativeCall('Haptics', 'impact', { style: 'HEAVY' }).catch(() => {});
       }
     },
+    // Park-wide alert to every crew member — same immediate-attention
+    // treatment as the per-unit ping above (buzz + notification), since a
+    // broadcast (severe weather, evacuation) is exactly the kind of thing
+    // that shouldn't wait for someone to happen to glance at their phone.
+    'crew:broadcast': (payload) => {
+      scheduleNotif(`📢 ${payload?.from || 'Dispatch'}`, payload?.message || '');
+      if (isNative) {
+        nativeCall('Haptics', 'impact', { style: 'HEAVY' }).catch(() => {});
+      }
+    },
     'call:comment_added':  (payload) => {
       handleCommentAdded(payload);
       // Don't notify on the echo of our own comment (see CrewChat/addComment —

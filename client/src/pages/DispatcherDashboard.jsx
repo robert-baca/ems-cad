@@ -19,6 +19,8 @@ import ShiftSetup from './ShiftSetup';
 import ShiftSummaryModal from '../components/shift/ShiftSummaryModal';
 import OptionsModal from '../components/settings/OptionsModal';
 import CallSummaryModal from '../components/calls/CallSummaryModal';
+import BroadcastModal from '../components/calls/BroadcastModal';
+import { sendBroadcast } from '../services/api';
 
 // Reconstructs which calls have an unanswered backup request, from comment
 // history alone — sosAlerts otherwise only ever grows/shrinks from live
@@ -88,6 +90,7 @@ export default function DispatcherDashboard() {
   const [flyToTarget,       setFlyToTarget]         = useState(null);
   const [splitParentId,     setSplitParentId]       = useState(null);
   const [showOptions,       setShowOptions]          = useState(false);
+  const [showBroadcast,     setShowBroadcast]        = useState(false);
   const [overwatchCallId,   setOverwatchCallId]      = useState(null);
   const [repositioningCallId, setRepositioningCallId] = useState(null);
   const [leftOpen,          setLeftOpen]             = useState(true);
@@ -383,6 +386,13 @@ export default function DispatcherDashboard() {
               >
                 ⚙ Options
               </button>
+              <button
+                onClick={() => setShowBroadcast(true)}
+                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium transition-colors bg-purple-900/60 border border-purple-700 text-purple-300 hover:bg-purple-800"
+                title="Send a park-wide alert to every crew member"
+              >
+                📢 Broadcast
+              </button>
               {currentShift && (
                 <button
                   onClick={handleEndShift}
@@ -590,6 +600,13 @@ export default function DispatcherDashboard() {
           onClose={() => setShowOptions(false)}
           locations={locations}
           onRemoveLocation={removeLocation}
+        />
+      )}
+
+      {!isOverwatch && showBroadcast && (
+        <BroadcastModal
+          onSend={async (message) => (await sendBroadcast(message)).data}
+          onClose={() => setShowBroadcast(false)}
         />
       )}
 

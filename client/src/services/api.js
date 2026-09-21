@@ -33,6 +33,7 @@ export const updateUnitProfile = (unitId, profile) => api.put(`/units/${unitId}/
 export const deleteUnit = (unitId) => api.delete(`/units/${unitId}`);
 export const clearUnitGps = (unitId) => api.delete(`/units/${unitId}/gps`);
 export const pingUnit = (unitId) => api.post(`/units/${unitId}/ping`);
+export const sendBroadcast = (message) => api.post('/broadcast', { message });
 export const setCrewGpsSharing = (enabled) => api.patch('/crew/gps-sharing', { enabled });
 export const registerPushToken = (pushToken, platform) => api.post('/crew/push-token', { pushToken, platform });
 
