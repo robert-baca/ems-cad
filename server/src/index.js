@@ -8,7 +8,7 @@ const bcrypt     = require('bcryptjs');
 const { Pool }   = require('pg');
 const { scrypt, timingSafeEqual, randomUUID } = require('crypto');
 const { promisify } = require('util');
-const { sendPushToUnit } = require('./push');
+const { sendPushToUnit, sendPushToUnitDetailed } = require('./push');
 require('dotenv').config();
 
 const scryptAsync = promisify(scrypt);
@@ -1093,6 +1093,20 @@ app.post('/api/units/:id/ping', verifyToken, async (req, res) => {
   res.json({ ok: true });
 });
 
+// Dispatcher-triggered test push -- unlike /ping, this waits on Apple/Google's
+// actual answer and returns it, so dispatch can confirm a phone really can be
+// reached while the app is closed (and see why not, if it can't).
+app.post('/api/units/:id/test-push', verifyToken, async (req, res) => {
+  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
+  const unit = units.find(u => u.id === req.params.id);
+  if (!unit) return res.status(404).json({ error: 'Not found' });
+  const result = await sendPushToUnitDetailed(unit, {
+    title: '✅ Test notification',
+    body: 'Push notifications are working on this phone.'
+  });
+  res.json({ ...result, platform: unit.push_platform || null, push_status: unit.push_status || null, push_error: unit.push_error || null });
+});
+
 // Park-wide alert to every crew member at once (severe weather, evacuation,
 // etc.) — same dual socket+push pattern as the per-unit ping above, just
 // fanned out to every unit with a registered device instead of one.
@@ -1773,6 +1787,8 @@ app.post('/api/shift/end', verifyToken, async (req, res) => {
     // unit's broadcasts/messages.
     u.push_token    = null;
     u.push_platform = null;
+    u.push_status   = null;
+    u.push_error    = null;
     persist(saveUnit(u), 'unit ' + u.id);
   });
 
@@ -2170,12 +2186,33 @@ app.post('/api/crew/push-token', verifyToken, async (req, res) => {
     if (u.id !== unit.id && u.push_token === pushToken) {
       u.push_token = null;
       u.push_platform = null;
+      u.push_status = null;
+      u.push_error = null;
       persist(saveUnit(u), 'unit ' + u.id);
     }
   });
   unit.push_token = pushToken;
   unit.push_platform = platform;
+  unit.push_status = 'registered';
+  unit.push_error = null;
   persist(saveUnit(unit), 'unit ' + unit.id);
+  emitDispatch('unit:updated', { ...unit, password_hash: undefined });
+  res.json({ ok: true });
+});
+
+// The phone reports when push *couldn't* be set up (notifications denied, or
+// OS registration failed -- e.g. an iOS build missing the aps-environment
+// entitlement), which otherwise leaves no trace server-side at all. In-memory
+// only, like gps_permission_status: live device state, re-reported each login.
+app.post('/api/crew/push-status', verifyToken, (req, res) => {
+  if (req.user.role !== 'crew') return res.status(403).json({ error: 'Forbidden' });
+  const unit = units.find(u => u.id === req.user.unit_id);
+  if (!unit) return res.status(404).json({ error: 'Not found' });
+  const { status, error } = req.body;
+  if (!['denied', 'error'].includes(status)) return res.status(400).json({ error: 'Invalid status' });
+  unit.push_status = status;
+  unit.push_error = error ? String(error).slice(0, 300) : null;
+  emitDispatch('unit:updated', { ...unit, password_hash: undefined });
   res.json({ ok: true });
 });
 

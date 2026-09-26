@@ -17,6 +17,15 @@ const GPS_PERMISSION_LABELS = {
   battery_restricted: 'battery optimization not disabled — may get killed in the background',
 };
 
+// What dispatch sees for a unit's push setup. push_token survives server
+// restarts (persisted); push_status/push_error are live reports from the phone.
+function pushInfo(unit) {
+  if (unit.push_status === 'denied') return { icon: '🔕', text: 'Notifications off on phone', cls: 'text-amber-400' };
+  if (unit.push_status === 'error')  return { icon: '⚠', text: 'Push setup failed', cls: 'text-red-400', title: unit.push_error };
+  if (unit.push_token) return { icon: '🔔', text: `Push ready · ${unit.push_platform === 'ios' ? 'iPhone' : 'Android'}`, cls: 'text-gray-500' };
+  return null;
+}
+
 const TYPE_ORDER = { ALS: 0, BLS: 1, Cart: 2, Bike: 3 };
 const STATUS_PRIORITY = { dispatched: 0, en_route: 0, on_scene: 0, patient_contact: 0, transporting: 0, available: 1, cleared: 2, out_of_service: 3 };
 
@@ -36,7 +45,7 @@ const TYPE_BADGE = { ALS: 'bg-red-900/50 text-red-300', BLS: 'bg-blue-900/50 tex
 // for a new dispatch elsewhere in the app (CallDetail/NewCallModal availableUnits).
 const ON_CALL_STATUSES = new Set(['dispatched', 'en_route', 'on_scene', 'patient_contact', 'transporting']);
 
-function UnitCard({ unit, activeCall, isSelected, onClick, onHistory, onEdit, onToggleOos, onFlyTo, onClearGps, onPing, dismissedGpsWarning, onDismissGpsWarning, readOnly }) {
+function UnitCard({ unit, activeCall, isSelected, onClick, onHistory, onEdit, onToggleOos, onFlyTo, onClearGps, onPing, onTestPush, dismissedGpsWarning, onDismissGpsWarning, readOnly }) {
   const color = STATUS_COLORS[unit.status] || '#9ca3af';
   const profile = unit.profile;
   const hasGps = unit.last_lat && unit.last_lng;
@@ -52,6 +61,13 @@ function UnitCard({ unit, activeCall, isSelected, onClick, onHistory, onEdit, on
   // different bad value (e.g. denied after being battery_restricted), that's
   // a new problem worth surfacing again rather than staying silently hidden.
   const showGpsWarning = gpsWarningValue && dismissedGpsWarning !== gpsWarningValue;
+  const push = pushInfo(unit);
+  const [pushTest, setPushTest] = useState(null); // null | 'sending' | { ok, error }
+
+  const runTestPush = async () => {
+    setPushTest('sending');
+    setPushTest(await onTestPush(unit.id));
+  };
 
   return (
     <div
@@ -99,6 +115,11 @@ function UnitCard({ unit, activeCall, isSelected, onClick, onHistory, onEdit, on
               🚫 GPS sharing off (crew)
             </div>
           )}
+          {push && (
+            <div className={`text-xs mt-0.5 font-medium truncate ${push.cls}`} title={push.title}>
+              {push.icon} {push.text}
+            </div>
+          )}
         </button>
 
         {/* Outside the main button (can't nest a dismiss button inside it) */}
@@ -143,6 +164,21 @@ function UnitCard({ unit, activeCall, isSelected, onClick, onHistory, onEdit, on
             >
               🔔 Ping
             </button>
+          )}
+          {!readOnly && onTestPush && (
+            <button
+              onClick={(e) => { e.stopPropagation(); runTestPush(); }}
+              disabled={pushTest === 'sending'}
+              className="flex-1 py-1.5 rounded-lg text-xs font-bold bg-gray-700 hover:bg-indigo-900 text-gray-400 hover:text-indigo-300 transition-colors disabled:opacity-50"
+              title="Send a real push notification and show whether Apple/Google delivered it — works even if the app is closed"
+            >
+              {pushTest === 'sending' ? 'Sending…' : '📲 Test Push'}
+            </button>
+          )}
+          {pushTest && pushTest !== 'sending' && (
+            <div className={`w-full text-xs px-1 ${pushTest.ok ? 'text-green-400' : 'text-red-400'}`}>
+              {pushTest.ok ? '✓ Sent — check the phone' : `✕ ${pushTest.error}`}
+            </div>
           )}
           {!readOnly && (!ON_CALL_STATUSES.has(unit.status) || !activeCall) && (
             <button
@@ -201,7 +237,7 @@ function UnitCard({ unit, activeCall, isSelected, onClick, onHistory, onEdit, on
 
 const GPS_WARNING_DISMISS_KEY = 'dismissedGpsWarnings';
 
-export default function UnitPanel({ units, calls, selectedUnitId, onSelectUnit, onUnitHistory, onEditUnit, onRemoveUnit, onAddUnit, onStatusChange, onClearGps, onFlyTo, onPing, readOnly = false }) {
+export default function UnitPanel({ units, calls, selectedUnitId, onSelectUnit, onUnitHistory, onEditUnit, onRemoveUnit, onAddUnit, onStatusChange, onClearGps, onFlyTo, onPing, onTestPush, readOnly = false }) {
   const [editingUnit,  setEditingUnit]  = useState(null);
   const [showAddUnit,  setShowAddUnit]  = useState(false);
   // unit id -> the exact gps_permission_status value dismissed for it, so a
@@ -290,6 +326,7 @@ export default function UnitPanel({ units, calls, selectedUnitId, onSelectUnit, 
                 onFlyTo={(u) => onFlyTo?.(u)}
                 onClearGps={(id) => onClearGps?.(id)}
                 onPing={(u) => onPing?.(u.id)}
+                onTestPush={onTestPush}
                 dismissedGpsWarning={dismissedGpsWarnings[unit.id]}
                 onDismissGpsWarning={dismissGpsWarning}
                 readOnly={readOnly}

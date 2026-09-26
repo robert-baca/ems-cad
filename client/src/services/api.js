@@ -36,6 +36,8 @@ export const pingUnit = (unitId) => api.post(`/units/${unitId}/ping`);
 export const sendBroadcast = (message) => api.post('/broadcast', { message });
 export const setCrewGpsSharing = (enabled) => api.patch('/crew/gps-sharing', { enabled });
 export const registerPushToken = (pushToken, platform) => api.post('/crew/push-token', { pushToken, platform });
+export const reportPushStatus = (status, error) => api.post('/crew/push-status', { status, error });
+export const testPushUnit = (unitId) => api.post(`/units/${unitId}/test-push`);
 
 // ── Crew direct messages ──────────────────────────────────────────
 export const getCrewMessages  = (unitId) => api.get(`/crew/messages/${unitId}`);

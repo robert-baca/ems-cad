@@ -35,7 +35,7 @@ async function sendAndroid(pushToken, title, body) {
   const app = getFirebaseApp();
   if (!app) {
     console.warn('[push] FIREBASE_SERVICE_ACCOUNT_B64 not set — Android push skipped');
-    return false;
+    return { ok: false, error: 'Server is missing Firebase credentials' };
   }
   try {
     const admin = require('firebase-admin');
@@ -44,10 +44,10 @@ async function sendAndroid(pushToken, title, body) {
       notification: { title, body },
       android: { priority: 'high' }
     });
-    return true;
+    return { ok: true };
   } catch (e) {
     console.error('[push] Android send failed:', e.message);
-    return false;
+    return { ok: false, error: e.code || e.message };
   }
 }
 
@@ -80,14 +80,14 @@ function sendIos(pushToken, title, body) {
     const bundleId = process.env.APNS_BUNDLE_ID;
     if (!token || !bundleId) {
       console.warn('[push] APNs env vars not fully set — iOS push skipped');
-      resolve(false);
+      resolve({ ok: false, error: 'Server is missing APNs credentials' });
       return;
     }
 
     const client = http2.connect('https://api.push.apple.com:443');
     client.on('error', (e) => {
       console.error('[push] iOS connection error:', e.message);
-      resolve(false);
+      resolve({ ok: false, error: e.message });
     });
 
     const payload = JSON.stringify({ aps: { alert: { title, body }, sound: 'default' } });
@@ -110,12 +110,16 @@ function sendIos(pushToken, title, body) {
       if (status !== 200) {
         console.error(`[push] iOS send failed: status=${status} body=${responseBody}`);
       }
-      resolve(status === 200);
+      // APNs error bodies are {"reason":"BadDeviceToken"} etc. -- surface
+      // the reason itself so a failed test push says *why*.
+      let reason = null;
+      try { reason = JSON.parse(responseBody).reason; } catch {}
+      resolve(status === 200 ? { ok: true } : { ok: false, error: reason || `HTTP ${status}` });
     });
     req.on('error', (e) => {
       console.error('[push] iOS request error:', e.message);
       client.close();
-      resolve(false);
+      resolve({ ok: false, error: e.message });
     });
 
     req.write(payload);
@@ -127,11 +131,18 @@ function sendIos(pushToken, title, body) {
 // shouldn't treat false as an error worth surfacing to the user, since a
 // unit with no registered device (never opened the app since this feature
 // shipped) is an expected, common case, not a failure.
-async function sendPushToUnit(unit, { title, body }) {
-  if (!unit?.push_token || !unit?.push_platform) return false;
-  if (unit.push_platform === 'ios') return sendIos(unit.push_token, title, body);
-  if (unit.push_platform === 'android') return sendAndroid(unit.push_token, title, body);
-  return false;
+async function sendPushToUnit(unit, message) {
+  return (await sendPushToUnitDetailed(unit, message)).ok;
 }
 
-module.exports = { sendPushToUnit };
+// Same as sendPushToUnit, but keeps Apple's/Google's actual failure reason
+// (e.g. BadDeviceToken, registration-token-not-registered) -- used by the
+// dispatcher's Test Push button so a failure is diagnosable, not just "no".
+async function sendPushToUnitDetailed(unit, { title, body }) {
+  if (!unit?.push_token || !unit?.push_platform) return { ok: false, error: 'No phone registered for push on this unit' };
+  if (unit.push_platform === 'ios') return sendIos(unit.push_token, title, body);
+  if (unit.push_platform === 'android') return sendAndroid(unit.push_token, title, body);
+  return { ok: false, error: `Unknown platform ${unit.push_platform}` };
+}
+
+module.exports = { sendPushToUnit, sendPushToUnitDetailed };

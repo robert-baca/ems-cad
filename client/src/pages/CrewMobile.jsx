@@ -406,7 +406,7 @@ export default function CrewMobile() {
   // Same one-time-setup-screen deferral as useCrewGps above — the native
   // setup flow already drives permission prompts one at a time; racing this
   // against it can cause iOS to drop/reorder its own dialogs.
-  usePushRegistration({ token: user?.token, enabled: !!myUnit && !showNativeSetup });
+  const pushState = usePushRegistration({ token: user?.token, enabled: !!myUnit && !showNativeSetup });
 
   // Hardware/gesture back on Android and the floating back button on iOS both
   // call into window.__handleNativeBack natively (MainActivity.java /
@@ -782,6 +782,34 @@ export default function CrewMobile() {
             />
           </button>
         </div>
+
+        {/* Push notification status -- whether dispatch can reach this phone
+            with the app closed. Opens this app's system settings page, which
+            has the Notifications switch on both iOS and Android. */}
+        {isNative && pushState !== 'pending' && (
+          <div className="mt-2 flex items-center justify-between rounded-xl px-4 py-2 bg-gray-900/50 border border-gray-700">
+            <div className="pr-3">
+              <div className="text-xs font-medium text-gray-300">
+                {pushState === 'on' ? '🔔 Notifications on' : pushState === 'denied' ? '🔕 Notifications off' : '⚠ Notifications not working'}
+              </div>
+              <div className="text-[10px] text-gray-500">
+                {pushState === 'on'
+                  ? 'Dispatch can reach you even with the app closed'
+                  : pushState === 'denied'
+                    ? "You won't get new calls or pings while the app is closed"
+                    : 'This phone could not register for alerts — tell dispatch'}
+              </div>
+            </div>
+            {pushState === 'denied' && (
+              <button
+                onClick={openGpsSettings}
+                className="px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-700 hover:bg-blue-600 text-white flex-shrink-0"
+              >
+                Turn On
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Body */}

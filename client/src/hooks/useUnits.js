@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
-import { getUnits, updateUnitStatus, createUnit as apiCreateUnit, editUnit as apiEditUnit, deleteUnit as apiDeleteUnit, clearUnitGps as apiClearGps, pingUnit as apiPingUnit } from '../services/api';
+import { getUnits, updateUnitStatus, createUnit as apiCreateUnit, editUnit as apiEditUnit, deleteUnit as apiDeleteUnit, clearUnitGps as apiClearGps, pingUnit as apiPingUnit, testPushUnit as apiTestPushUnit } from '../services/api';
 
 export function useUnits() {
   const [units, setUnits] = useState([]);
@@ -137,10 +137,16 @@ export function useUnits() {
     catch (err) { return err?.response?.data?.error || 'Failed to send'; }
   }, []);
 
+  // Waits on Apple/Google's actual answer -- returns { ok, error }.
+  const testPush = useCallback(async (unitId) => {
+    try { return (await apiTestPushUnit(unitId)).data; }
+    catch (err) { return { ok: false, error: err?.response?.data?.error || 'Failed to reach server' }; }
+  }, []);
+
   return {
     units, setUnits,
     handleGpsUpdate, handleStatusChange, handleProfileUpdate,
     handleUnitUpdated, handleUnitRemoved,
-    changeStatus, addUnit, editUnit, removeUnit, moveUnit, clearGps, pingUnit
+    changeStatus, addUnit, editUnit, removeUnit, moveUnit, clearGps, pingUnit, testPush
   };
 }
