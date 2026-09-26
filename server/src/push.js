@@ -21,9 +21,11 @@ function getFirebaseApp() {
   const raw = process.env.FIREBASE_SERVICE_ACCOUNT_B64;
   if (!raw) return null;
   try {
-    const admin = require('firebase-admin');
+    // firebase-admin v14 dropped the legacy namespaced API
+    // (admin.credential.cert / admin.messaging) -- modular imports only.
+    const { initializeApp, cert } = require('firebase-admin/app');
     const serviceAccount = JSON.parse(Buffer.from(raw, 'base64').toString('utf8'));
-    firebaseApp = admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+    firebaseApp = initializeApp({ credential: cert(serviceAccount) });
     return firebaseApp;
   } catch (e) {
     console.error('[push] Failed to initialize Firebase Admin:', e.message);
@@ -34,12 +36,15 @@ function getFirebaseApp() {
 async function sendAndroid(pushToken, title, body) {
   const app = getFirebaseApp();
   if (!app) {
-    console.warn('[push] FIREBASE_SERVICE_ACCOUNT_B64 not set — Android push skipped');
-    return { ok: false, error: 'Server is missing Firebase credentials' };
+    const error = process.env.FIREBASE_SERVICE_ACCOUNT_B64
+      ? 'Server could not load Firebase credentials (see server log)'
+      : 'Server is missing Firebase credentials';
+    console.warn(`[push] ${error} — Android push skipped`);
+    return { ok: false, error };
   }
   try {
-    const admin = require('firebase-admin');
-    await admin.messaging(app).send({
+    const { getMessaging } = require('firebase-admin/messaging');
+    await getMessaging(app).send({
       token: pushToken,
       notification: { title, body },
       android: { priority: 'high' }
