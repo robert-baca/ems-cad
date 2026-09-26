@@ -1768,6 +1768,11 @@ app.post('/api/shift/end', verifyToken, async (req, res) => {
     // pre-fills the next Start Shift screen with yesterday's medic names.
     u.crew    = null;
     u.station = null;
+    // Same for the phone registered for push: next shift's crew re-registers
+    // on login, and until then an off-duty phone shouldn't keep getting this
+    // unit's broadcasts/messages.
+    u.push_token    = null;
+    u.push_platform = null;
     persist(saveUnit(u), 'unit ' + u.id);
   });
 
@@ -2158,6 +2163,16 @@ app.post('/api/crew/push-token', verifyToken, async (req, res) => {
   if (!pushToken || !['ios', 'android'].includes(platform)) {
     return res.status(400).json({ error: 'pushToken and a valid platform are required' });
   }
+  // A token identifies a physical phone, not a unit — when that phone logs
+  // into a different unit, drop it from whichever unit it was on before, or
+  // that phone keeps getting the old unit's calls/messages indefinitely.
+  units.forEach(u => {
+    if (u.id !== unit.id && u.push_token === pushToken) {
+      u.push_token = null;
+      u.push_platform = null;
+      persist(saveUnit(u), 'unit ' + u.id);
+    }
+  });
   unit.push_token = pushToken;
   unit.push_platform = platform;
   persist(saveUnit(unit), 'unit ' + unit.id);
