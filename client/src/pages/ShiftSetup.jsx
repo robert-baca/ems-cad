@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { apiBase } from '../lib/native';
+import CloseCallModal from '../components/calls/CloseCallModal';
 
 const TYPE_ICONS  = { ALS: '🚑', BLS: '🚐', Cart: '🛺' };
 const TYPE_ORDER  = { ALS: 0, BLS: 1, Cart: 2 };
@@ -38,6 +39,38 @@ export default function ShiftSetup({ token, onShiftStarted, onViewHistory }) {
   const [addError,   setAddError]   = useState('');
   const [addSaving,  setAddSaving]  = useState(false);
   const nameInputRef = useRef(null);
+
+  // Calls left open at the last shift end carry over (server keeps them so a
+  // disposition can still be recorded), and their units stay tied to them —
+  // the In Service toggle below is ignored server-side for those units. Surface
+  // them here so they can be closed out before the new shift starts.
+  const [openCalls,    setOpenCalls]    = useState([]);
+  const [closingCall,  setClosingCall]  = useState(null);
+
+  useEffect(() => {
+    fetch(`${apiBase()}/calls`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.json())
+      .then(data => { if (Array.isArray(data)) setOpenCalls(data.filter(c => c.status !== 'closed')); })
+      .catch(() => {});
+  }, [token]);
+
+  const unitOpenCall = (unit_id) => openCalls.find(c =>
+    c.assigned_unit_id === unit_id || (c.additional_unit_ids || []).includes(unit_id));
+
+  const handleCloseCall = async (callId, disposition, close_notes) => {
+    const res = await fetch(`${apiBase()}/calls/${callId}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ status: 'closed', disposition, close_notes })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Failed to close call');
+    const call = openCalls.find(c => c.id === callId);
+    const freed = new Set([call?.assigned_unit_id, ...(call?.additional_unit_ids || [])]);
+    setOpenCalls(prev => prev.filter(c => c.id !== callId));
+    setUnits(prev => prev.map(u => freed.has(u.id) ? { ...u, status: 'available' } : u));
+    setClosingCall(null);
+  };
 
   useEffect(() => {
     fetch(`${apiBase()}/units`, { headers: { Authorization: `Bearer ${token}` } })
@@ -211,6 +244,42 @@ export default function ShiftSetup({ token, onShiftStarted, onViewHistory }) {
           <p className="text-gray-400 text-sm mt-1">{today}</p>
         </div>
 
+        {openCalls.length > 0 && (
+          <div className="mb-4 rounded-2xl border border-yellow-700 bg-yellow-900/20 p-4">
+            <div className="text-yellow-300 font-semibold text-sm mb-1">
+              ⚠ {openCalls.length} call{openCalls.length !== 1 ? 's' : ''} still open from last shift
+            </div>
+            <div className="text-yellow-400/80 text-xs mb-3">
+              Units on these calls stay tied to them and can't be set in or out of service until the call is closed.
+            </div>
+            <div className="space-y-2">
+              {openCalls.map(c => {
+                const unitNums = [c.assigned_unit_id, ...(c.additional_unit_ids || [])]
+                  .map(id => units.find(u => u.id === id)?.unit_number)
+                  .filter(Boolean);
+                return (
+                  <div key={c.id} className="flex items-center gap-3 bg-gray-800 rounded-lg px-3 py-2">
+                    <div className="flex-1 min-w-0">
+                      <div className="text-white text-sm font-bold">
+                        #{c.call_number} <span className="font-normal text-gray-300">{c.call_type}</span>
+                      </div>
+                      <div className="text-gray-400 text-xs truncate">
+                        {c.status.replace(/_/g, ' ')}{unitNums.length ? ` · ${unitNums.join(', ')}` : ' · unassigned'}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setClosingCall(c)}
+                      className="text-xs px-3 py-1.5 bg-red-700 hover:bg-red-600 text-white font-semibold rounded-lg transition-colors flex-shrink-0"
+                    >
+                      Close Call
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         <div className="bg-gray-800 rounded-2xl border border-gray-700 overflow-hidden">
 
           {/* Unit roster */}
@@ -361,6 +430,7 @@ export default function ShiftSetup({ token, onShiftStarted, onViewHistory }) {
                 const inService  = s.in_service ?? true;
                 const activeType = s.unit_type || u.unit_type;
                 const isCart     = activeType === 'Cart';
+                const openCall   = unitOpenCall(u.id);
                 return (
                   <div key={u.id}
                     className={`rounded-xl border transition-all ${inService ? 'border-gray-600 bg-gray-750' : 'border-gray-700 bg-gray-800/50'}`}>
@@ -369,7 +439,9 @@ export default function ShiftSetup({ token, onShiftStarted, onViewHistory }) {
                       <span className="text-xl flex-shrink-0">{TYPE_ICONS[activeType] || '🚑'}</span>
                       <div className="flex-1 min-w-0">
                         <div className="text-white font-bold text-sm">{u.unit_number}</div>
-                        {!inService && (
+                        {openCall ? (
+                          <div className="text-yellow-400 text-xs">On open call #{openCall.call_number} — close it above</div>
+                        ) : !inService && (
                           <div className="text-gray-600 text-xs">Out of service</div>
                         )}
                       </div>
@@ -483,6 +555,14 @@ export default function ShiftSetup({ token, onShiftStarted, onViewHistory }) {
           </div>
         </div>
       </div>
+
+      {closingCall && (
+        <CloseCallModal
+          call={closingCall}
+          onConfirm={handleCloseCall}
+          onClose={() => setClosingCall(null)}
+        />
+      )}
     </div>
   );
 }
