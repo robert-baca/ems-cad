@@ -29,23 +29,16 @@ workflows:
         script: |
           cd client
           npx cap sync ios
-      - name: Build and export iOS IPA
+      # Signing is set up BEFORE the archive, so Xcode signs the app with
+      # App/App.entitlements (aps-environment). The old flow archived unsigned
+      # and re-signed at export, which silently dropped that entitlement --
+      # iPhones then failed push registration with "no valid aps-environment
+      # entitlement string found for application".
+      - name: Set up code signing
         script: |
           echo "$APP_STORE_CONNECT_PRIVATE_KEY_B64" | base64 -d > /tmp/key.p8
-          keychain initialize
-          mkdir -p build/ios/ipa
-          xcodebuild \
-            -project client/ios/App/App.xcodeproj \
-            -scheme App \
-            -configuration Release \
-            -archivePath /tmp/App.xcarchive \
-            archive \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO \
-            DEVELOPMENT_TEAM=$APPLE_TEAM_ID \
-            CURRENT_PROJECT_VERSION=$BUILD_NUMBER
           echo "$CERT_PRIVATE_KEY_B64" | base64 -d > /tmp/cert_key.pem
+          keychain initialize
           app-store-connect fetch-signing-files \
             "$BUNDLE_ID" \
             --type IOS_APP_STORE \
@@ -55,38 +48,21 @@ workflows:
             --private-key @file:/tmp/key.p8 \
             --certificate-key @file:/tmp/cert_key.pem
           keychain add-certificates
-          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
-          find "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles" \
-            -name "*.mobileprovision" \
-            -exec cp {} "$HOME/Library/MobileDevice/Provisioning Profiles/" \;
-          PROFILE=$(ls "$HOME/Library/MobileDevice/Provisioning Profiles/"*.mobileprovision | head -1)
-          PROFILE_NAME=$(python3 -c "import subprocess,plistlib; data=subprocess.check_output(['security','cms','-D','-i','${PROFILE}']); print(plistlib.loads(data)['Name'])")
-          CERT=$(security find-identity -v -p codesigning | grep "Apple Distribution" | head -1 | grep -o '".*"' | tr -d '"')
-          echo "Profile: $PROFILE_NAME  Cert: $CERT"
-          cat > /tmp/ExportOptions.plist << PLIST_EOF
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>method</key>
-            <string>app-store-connect</string>
-            <key>teamID</key>
-            <string>${APPLE_TEAM_ID}</string>
-            <key>signingStyle</key>
-            <string>manual</string>
-            <key>provisioningProfiles</key>
-            <dict>
-              <key>${BUNDLE_ID}</key>
-              <string>${PROFILE_NAME}</string>
-            </dict>
-          </dict>
-          </plist>
-          PLIST_EOF
-          xcodebuild \
-            -exportArchive \
-            -archivePath /tmp/App.xcarchive \
-            -exportPath build/ios/ipa \
-            -exportOptionsPlist /tmp/ExportOptions.plist
+          xcode-project use-profiles --project client/ios/App/App.xcodeproj
+      - name: Build signed IPA
+        script: |
+          xcode-project build-ipa \
+            --project client/ios/App/App.xcodeproj \
+            --scheme App \
+            --archive-xcargs "CURRENT_PROJECT_VERSION=$BUILD_NUMBER"
+      - name: Check push entitlement made it into the app
+        script: |
+          rm -rf /tmp/ipa_check && mkdir -p /tmp/ipa_check
+          unzip -q build/ios/ipa/*.ipa -d /tmp/ipa_check
+          codesign -d --entitlements - /tmp/ipa_check/Payload/*.app 2>/dev/null | tee /tmp/ents.txt
+          grep -q "aps-environment" /tmp/ents.txt || { echo "ERROR: aps-environment missing from signed app - push will not work"; exit 1; }
+      - name: Upload to App Store Connect
+        script: |
           app-store-connect publish \
             --path build/ios/ipa/*.ipa \
             --issuer-id "$APP_STORE_CONNECT_ISSUER_ID" \
