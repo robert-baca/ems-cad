@@ -97,6 +97,9 @@ export default function DispatcherDashboard() {
   const [rightOpen,         setRightOpen]            = useState(true);
   const [sosAlerts,         setSosAlerts]            = useState([]);
   const [persistErrors,     setPersistErrors]        = useState([]);
+  // unit_id -> latest unit:unacknowledged event. Shown only while that unit
+  // is still 'dispatched', so it clears itself the moment the crew responds.
+  const [unackAlerts,       setUnackAlerts]          = useState({});
 
   // Load current shift on mount
   useEffect(() => {
@@ -158,6 +161,7 @@ export default function DispatcherDashboard() {
     'unit:status_change':  handleStatusChange,
     'unit:profile_update': handleProfileUpdate,
     'unit:updated':        handleUnitUpdated,
+    'unit:unacknowledged': (a) => setUnackAlerts(prev => ({ ...prev, [a.unit_id]: a })),
     'unit:removed':        handleUnitRemoved,
     'location:added':      addRemoteLocation,
     'location:removed':    ({ id }) => removeRemoteLocation(id),
@@ -316,6 +320,32 @@ export default function DispatcherDashboard() {
           </div>
         );
       })}
+
+      {/* ── Unacknowledged dispatch banners ───────────────────── */}
+      {Object.values(unackAlerts)
+        .filter(a => units.find(u => u.id === a.unit_id)?.status === 'dispatched')
+        .map(a => (
+          <div key={a.unit_id}
+            className="flex items-center gap-3 px-4 py-2.5 bg-red-900/80 border-b border-red-600 flex-shrink-0 animate-pulse"
+          >
+            <span className="text-lg flex-shrink-0">⚠️</span>
+            <div className="flex-1 min-w-0">
+              <div className="text-red-100 font-bold text-sm">
+                {a.unit_number} has not acknowledged Case #{a.call_number}
+              </div>
+              <div className="text-red-300 text-xs">
+                {a.seconds >= 120 ? '2+ minutes' : '1+ minute'} since dispatch — re-alerted their phone. Try the radio.
+              </div>
+            </div>
+            <button
+              onClick={() => setUnackAlerts(prev => { const n = { ...prev }; delete n[a.unit_id]; return n; })}
+              className="flex-shrink-0 text-red-300 hover:text-white text-lg font-bold leading-none px-1"
+              title="Dismiss"
+            >
+              ×
+            </button>
+          </div>
+        ))}
 
       {/* ── Server persist-error banners ──────────────────────── */}
       {persistErrors.map(pe => (

@@ -115,6 +115,36 @@ function notifyUnitAssigned(unit, call) {
     title: `📡 New Call — Case #${call.call_number}`,
     body: `${call.call_type} · ${call.location_name || 'Unknown location'}`
   }).catch(() => {});
+  scheduleAckEscalation(unit.id, call.id);
+}
+
+// A dispatched unit that hasn't acknowledged within a minute probably didn't
+// notice the alert (phone in a pocket, on silent). Re-push the crew and warn
+// dispatch, then once more a minute later. "Acknowledged" = the unit moved
+// off 'dispatched' at all (ack, en route, etc.), or it's no longer on this
+// call. In-memory timers: a server restart mid-window just skips escalation.
+const ACK_ESCALATION_DELAYS_MS = [60 * 1000, 120 * 1000];
+
+function scheduleAckEscalation(unitId, callId) {
+  ACK_ESCALATION_DELAYS_MS.forEach(delay => {
+    setTimeout(() => {
+      const unit = units.find(u => u.id === unitId);
+      const call = calls.find(c => c.id === callId);
+      if (!unit || !call || call.status === 'closed') return;
+      const onCall = call.assigned_unit_id === unitId || (call.additional_unit_ids || []).includes(unitId);
+      if (!onCall || unit.status !== 'dispatched') return;
+      const seconds = Math.round(delay / 1000);
+      console.log(`[ack] ${unit.unit_number} has not acknowledged Case #${call.call_number} after ${seconds}s`);
+      sendPushToUnit(unit, {
+        title: `⚠️ UNACKNOWLEDGED — Case #${call.call_number}`,
+        body: `${call.call_type} · ${call.location_name || 'Unknown location'} — dispatch is waiting on you`
+      }).catch(() => {});
+      emitDispatch('unit:unacknowledged', {
+        unit_id: unit.id, unit_number: unit.unit_number,
+        call_id: call.id, call_number: call.call_number, seconds
+      });
+    }, delay);
+  });
 }
 
 // ── Startup security checks ─────────────────────────────────────────
@@ -1792,6 +1822,9 @@ app.post('/api/shift/end', verifyToken, async (req, res) => {
     persist(saveUnit(u), 'unit ' + u.id);
   });
 
+  // GPS watchdog (checkSilentGps) only tracks the shift in progress.
+  units.forEach(u => { u.last_gps_post_at = null; });
+
   currentShift = null;
   const sanitizedUnits = units.map(u => ({ ...u, password_hash: undefined }));
   emitDispatch('shift:ended', { ...summary, units: sanitizedUnits, open_calls: openCalls });
@@ -1885,6 +1918,37 @@ function checkStaleCalls() {
         body: `Still showing "${call.status}" after ${ageMin} min — update your status if that's changed.`
       }).catch(() => {});
     });
+  });
+}
+
+// A phone that stops posting GPS mid-shift has usually had its app killed by
+// the OS -- and then the app's own "GPS stopped" local notification can't
+// fire either, since that needs the app running. Only the server can notice,
+// and only a real push can reach the phone. One push per silent stretch
+// (tracked against the last post time, so it re-arms once posts resume).
+// Uses last_gps_post_at (any post received, even a fix the filters rejected)
+// rather than last_gps_at, so a phone sending noisy fixes isn't mistaken for
+// one that's gone quiet. In-memory, so a restart only watches phones that
+// have posted since.
+const GPS_SILENT_THRESHOLD_MS = 10 * 60 * 1000;
+const GPS_WATCHDOG_INTERVAL_MS = 60 * 1000;
+
+function checkSilentGps() {
+  if (!currentShift || currentShift.ended_at) return;
+  const now = Date.now();
+  units.forEach(unit => {
+    if (!unit.last_gps_post_at || !unit.push_token) return;
+    if (unit.status === 'out_of_service' || unit.gps_sharing_disabled) return;
+    if (unit._gpsSilentNotifiedFor === unit.last_gps_post_at) return;
+    const silentMs = now - new Date(unit.last_gps_post_at).getTime();
+    if (silentMs < GPS_SILENT_THRESHOLD_MS) return;
+    unit._gpsSilentNotifiedFor = unit.last_gps_post_at;
+    const min = Math.round(silentMs / 60000);
+    console.log(`[gps] ${unit.unit_number} silent for ${min} min — pushing a reopen reminder`);
+    sendPushToUnit(unit, {
+      title: '📍 Location stopped updating',
+      body: `Dispatch hasn't received your location in ${min} min. Open the app to restart tracking.`
+    }).catch(() => {});
   });
 }
 
@@ -2136,6 +2200,8 @@ app.post('/api/crew/gps', verifyToken, gpsRateLimit, (req, res) => {
   // walking around checking every phone. In-memory only — live device state,
   // not meaningful to keep after a restart. Only broadcast when it actually
   // changes; this arrives on every GPS post.
+  unit.last_gps_post_at = new Date().toISOString();
+
   const { gpsPermission } = req.body;
   if (gpsPermission && gpsPermission !== unit.gps_permission_status) {
     unit.gps_permission_status = gpsPermission;
@@ -2195,6 +2261,7 @@ app.post('/api/crew/push-token', verifyToken, async (req, res) => {
   unit.push_platform = platform;
   unit.push_status = 'registered';
   unit.push_error = null;
+  console.log(`[push] ${unit.unit_number} registered (${platform})`);
   persist(saveUnit(unit), 'unit ' + unit.id);
   emitDispatch('unit:updated', { ...unit, password_hash: undefined });
   res.json({ ok: true });
@@ -2212,7 +2279,29 @@ app.post('/api/crew/push-status', verifyToken, (req, res) => {
   if (!['denied', 'error'].includes(status)) return res.status(400).json({ error: 'Invalid status' });
   unit.push_status = status;
   unit.push_error = error ? String(error).slice(0, 300) : null;
+  console.log(`[push] ${unit.unit_number} reported ${status}${unit.push_error ? ': ' + unit.push_error : ''}`);
   emitDispatch('unit:updated', { ...unit, password_hash: undefined });
+  res.json({ ok: true });
+});
+
+// Crew logout: this phone stops receiving pushes for the unit (new calls,
+// the GPS watchdog above, etc.) -- only clears it if it's still this
+// phone's token, so a stale logout can't unregister whoever's on it now.
+app.delete('/api/crew/push-token', verifyToken, (req, res) => {
+  if (req.user.role !== 'crew') return res.status(403).json({ error: 'Forbidden' });
+  const unit = units.find(u => u.id === req.user.unit_id);
+  if (!unit) return res.status(404).json({ error: 'Not found' });
+  const { pushToken } = req.body || {};
+  if (unit.push_token && (!pushToken || pushToken === unit.push_token)) {
+    unit.push_token = null;
+    unit.push_platform = null;
+    unit.push_status = null;
+    unit.push_error = null;
+    unit.last_gps_post_at = null;
+    console.log(`[push] ${unit.unit_number} unregistered (crew logout)`);
+    persist(saveUnit(unit), 'unit ' + unit.id);
+    emitDispatch('unit:updated', { ...unit, password_hash: undefined });
+  }
   res.json({ ok: true });
 });
 
@@ -2690,6 +2779,7 @@ initDb()
       console.log(`   Crew sign-in is PIN-based via /api/auth/crew-login (personnel table)\n`);
     });
     setInterval(checkStaleCalls, STALE_CHECK_INTERVAL_MS);
+    setInterval(checkSilentGps, GPS_WATCHDOG_INTERVAL_MS);
   })
   .catch(err => {
     console.error('[db] Failed to connect to database:', err.message);

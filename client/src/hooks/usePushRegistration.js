@@ -1,6 +1,27 @@
 import { useEffect, useRef, useState } from 'react';
 import { isNative, nativeCall, nativeListener } from '../lib/native';
-import { registerPushToken, reportPushStatus } from '../services/api';
+import { registerPushToken, reportPushStatus, unregisterPushToken } from '../services/api';
+
+// This phone's current push token, so logout can unregister exactly it.
+let currentPushToken = null;
+
+// Call on crew logout, before the auth token is cleared.
+export function unregisterPush() {
+  if (!currentPushToken) return Promise.resolve();
+  const t = currentPushToken;
+  currentPushToken = null;
+  // Capped so a dead connection can't hold up logging out.
+  return Promise.race([
+    unregisterPushToken(t).catch(() => {}),
+    new Promise(resolve => setTimeout(resolve, 3000)),
+  ]);
+}
+
+// An app build without working push support (e.g. an old build missing the
+// native plugin or its AppDelegate hooks) can accept register() and then
+// never answer at all -- neither 'registration' nor 'registrationError'.
+// Treat silence as a failure so it shows up instead of staying invisible.
+const REGISTRATION_TIMEOUT_MS = 20 * 1000;
 
 // Registers this device for real push notifications (delivered even if the
 // app has been fully force-closed) -- separate from the existing
@@ -28,6 +49,8 @@ export function usePushRegistration({ token, enabled = true }) {
     startedRef.current = true;
 
     (async () => {
+      let answered = false;
+      let timeout = null;
       try {
         const perm = await nativeCall('PushNotifications', 'requestPermissions');
         if (perm?.receive !== 'granted') {
@@ -39,14 +62,25 @@ export function usePushRegistration({ token, enabled = true }) {
         // Registered before register() is called below so a registration
         // that resolves synchronously-fast can't fire before this is
         // listening for it.
+        timeout = setTimeout(() => {
+          if (answered) return;
+          setPushState('error');
+          reportPushStatus('error', "No response from the phone's push service after 20s — app build may be out of date").catch(() => {});
+        }, REGISTRATION_TIMEOUT_MS);
+
         nativeListener('PushNotifications', 'registration', (result) => {
           if (!result?.value) return;
+          answered = true;
+          clearTimeout(timeout);
+          currentPushToken = result.value;
           const platform = window.Capacitor?.getPlatform?.() === 'ios' ? 'ios' : 'android';
           setPushState('on');
           registerPushToken(result.value, platform).catch(() => {});
         });
         nativeListener('PushNotifications', 'registrationError', (err) => {
           console.warn('[push] registration failed', err);
+          answered = true;
+          clearTimeout(timeout);
           setPushState('error');
           reportPushStatus('error', err?.error || err?.message || JSON.stringify(err)).catch(() => {});
         });
@@ -54,6 +88,8 @@ export function usePushRegistration({ token, enabled = true }) {
         await nativeCall('PushNotifications', 'register');
       } catch (e) {
         console.warn('[push] setup failed', e);
+        answered = true;
+        clearTimeout(timeout);
         setPushState('error');
         reportPushStatus('error', e?.message || String(e)).catch(() => {});
       }

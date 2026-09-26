@@ -6,7 +6,7 @@ import { useCalls } from '../hooks/useCalls';
 import { useLocations } from '../hooks/useLocations';
 import { useSocket } from '../hooks/useSocket';
 import { useCrewGps, stopCrewGpsTracking } from '../hooks/useCrewGps';
-import { usePushRegistration } from '../hooks/usePushRegistration';
+import { usePushRegistration, unregisterPush } from '../hooks/usePushRegistration';
 import { useCrewNotifications } from '../hooks/useCrewNotifications';
 import ActiveCall from '../components/crew/ActiveCall';
 import StatusButtons from '../components/crew/StatusButtons';
@@ -658,7 +658,7 @@ export default function CrewMobile() {
         </div>
         <div className="text-gray-600 text-xs mb-8">Logged in as {user?.unit_number}</div>
         <button
-          onClick={() => { stopCrewGpsTracking(); logout(); navigate('/login'); }}
+          onClick={async () => { stopCrewGpsTracking(); await unregisterPush(); logout(); navigate('/login'); }}
           className="text-gray-500 hover:text-white text-xs px-3 py-1.5 rounded hover:bg-gray-700 transition-colors border border-gray-700"
         >
           Sign out
@@ -719,7 +719,7 @@ export default function CrewMobile() {
             </div>
           </div>
           <button
-            onClick={() => { stopCrewGpsTracking(); logout(); navigate('/login'); }}
+            onClick={async () => { stopCrewGpsTracking(); await unregisterPush(); logout(); navigate('/login'); }}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-900/40 hover:bg-red-700 border border-red-700/60 hover:border-red-500 text-red-400 hover:text-white text-xs font-semibold transition-colors"
           >
             <span>⏹</span> End Tracking
