@@ -83,7 +83,7 @@ export default function CrewMap({ call, myUnit, locations = [] }) {
   // Route the crew's live position to the call through the published trail
   // network — null when routing isn't possible, so the effect below falls
   // back to a straight line exactly as it did before this existed.
-  const route = useRoute(
+  const { route, why: routeWhy } = useRoute(
     paths, pathsEnabled,
     hasCrewPos ? [myUnit.last_lng, myUnit.last_lat] : null,
     hasCall ? [call.location_lng, call.location_lat] : null
@@ -345,8 +345,21 @@ export default function CrewMap({ call, myUnit, locations = [] }) {
       )}
 
       {distFt != null && (
-        <div className="absolute bottom-2 left-2 bg-black/70 backdrop-blur-sm text-white text-xs font-semibold px-2.5 py-1 rounded-full pointer-events-none select-none">
-          {route ? '🥾' : '🚩'} {distFt < 1000 ? `${distFt} ft` : `${(distFt / 5280).toFixed(2)} mi`} · {getCardinal(bearing)}
+        <div className="absolute bottom-2 left-2 max-w-[85%] bg-black/70 backdrop-blur-sm text-white text-xs font-semibold px-2.5 py-1 rounded-2xl pointer-events-none select-none">
+          <div>{route ? '🥾' : '🚩'} {distFt < 1000 ? `${distFt} ft` : `${(distFt / 5280).toFixed(2)} mi`} · {getCardinal(bearing)}</div>
+          {/* Why there's only a straight line -- so it can be fixed (trace a
+              walkway there) rather than just looking broken. */}
+          {!route && routeWhy && (
+            <div className="text-amber-300 font-normal text-[11px] leading-tight mt-0.5">
+              {{
+                'off': 'Walking routes are turned off',
+                'no-paths': 'Walking routes still loading…',
+                'start-off': `No route: you're ${routeWhy.offFt} ft from a mapped walkway`,
+                'pin-off': `No route: the call pin is ${routeWhy.offFt} ft from a mapped walkway`,
+                'disconnected': 'No route: walkways here aren\u2019t connected',
+              }[routeWhy.reason] || ''}
+            </div>
+          )}
         </div>
       )}
 
