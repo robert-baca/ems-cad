@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { sendPtNote, viewPtNote } from '../../services/api';
+import LicenseScanner from './LicenseScanner';
 
 // Patient handoff notes between medics. This is protected health
 // information: it's only ever held in memory here (never localStorage or
@@ -38,6 +39,8 @@ function Compose({ myUnit, units, myActiveCall, onSent, onCancel }) {
   const [toId, setToId] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
+  const [scanning, setScanning] = useState(false);
+  const [scannedKeys, setScannedKeys] = useState([]); // fields filled from a license, for the check-it hint
 
   // Units someone could actually receive it on: not carts, not this unit.
   // Units on this same call first, then ones with a crew logged in.
@@ -69,7 +72,27 @@ function Compose({ myUnit, units, myActiveCall, onSent, onCancel }) {
   return (
     <>
       <Header title="New PT Notes" onBack={onCancel} backLabel="Cancel" />
+      {scanning && (
+        <LicenseScanner
+          onClose={() => setScanning(false)}
+          onResult={(fields) => {
+            // Scanned values replace what's there for those fields only;
+            // anything typed into the others (allergies, hx…) is kept.
+            setValues(prev => ({ ...prev, ...fields }));
+            setScannedKeys(Object.keys(fields));
+            setScanning(false);
+            setError('');
+          }}
+        />
+      )}
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
+        <button onClick={() => setScanning(true)}
+          className="w-full py-3 rounded-xl bg-gray-700 active:bg-gray-600 text-white text-sm font-semibold flex items-center justify-center gap-2">
+          📷 Scan Driver License / ID
+        </button>
+        {scannedKeys.length > 0 && (
+          <p className="text-green-400 text-xs">✓ Filled from the license — check it matches the patient before sending.</p>
+        )}
         {FIELDS.map(f => (
           <div key={f.key}>
             <label className="block text-gray-400 text-xs mb-1">{f.label}</label>

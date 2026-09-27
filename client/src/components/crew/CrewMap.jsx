@@ -52,10 +52,7 @@ function nextWaypointBearing(points, fromLat, fromLng) {
   return getBearing(fromLat, fromLng, lat, lng);
 }
 
-// `onExit` puts the map in permanent full-screen mode (used by Navigate
-// to…, where the destination is a saved location rather than a call) —
-// its close button then calls onExit instead of collapsing the map.
-export default function CrewMap({ call, myUnit, locations = [], onExit, title }) {
+export default function CrewMap({ call, myUnit, locations = [] }) {
   const containerRef       = useRef(null);
   const mapRef              = useRef(null);
   const mapReadyRef         = useRef(false);
@@ -64,8 +61,7 @@ export default function CrewMap({ call, myUnit, locations = [], onExit, title })
   const locationMarkersRef  = useRef({});
   const navControlRef       = useRef(null);
   const [mapLoaded, setMapLoaded] = useState(false);
-  const [expandedState, setExpanded] = useState(false);
-  const expanded = !!onExit || expandedState;
+  const [expanded,  setExpanded]  = useState(false);
 
   const hasCall = !!(call?.location_lat && call?.location_lng);
   const hasCrewPos = !!(myUnit?.last_lat && myUnit?.last_lng);
@@ -321,14 +317,8 @@ export default function CrewMap({ call, myUnit, locations = [], onExit, title })
         </div>
       )}
 
-      {title && (
-        <div className="absolute left-2 top-[calc(0.5rem+env(safe-area-inset-top))] max-w-[65%] bg-black/70 backdrop-blur-sm text-white text-sm font-bold px-3 py-1.5 rounded-lg truncate pointer-events-none">
-          🧭 {title}
-        </div>
-      )}
-
       <button
-        onClick={() => (onExit ? onExit() : setExpanded(e => !e))}
+        onClick={() => setExpanded(e => !e)}
         className={expanded
           ? 'absolute right-2 top-[calc(0.5rem+env(safe-area-inset-top))] bg-black/70 hover:bg-black/85 backdrop-blur-sm text-white text-xs font-semibold px-2.5 py-1.5 rounded-lg transition-colors'
           : 'absolute top-2 right-2 bg-black/70 hover:bg-black/85 backdrop-blur-sm text-white text-xs font-semibold px-2.5 py-1.5 rounded-lg transition-colors'}
