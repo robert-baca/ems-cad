@@ -12,6 +12,7 @@ const FIELDS = [
   { key: 'dob',         label: 'DOB',             placeholder: 'MM/DD/YYYY', inputMode: 'numeric' },
   { key: 'age',         label: 'Age',             placeholder: 'e.g. 34', inputMode: 'numeric' },
   { key: 'sex',         label: 'Sex',             options: ['M', 'F', 'Other'] },
+  { key: 'location',    label: 'Location',        placeholder: 'Where the patient is — e.g. Bugs Bunny Boomtown' },
   { key: 'address',     label: 'Address',         placeholder: 'Street, city, state, zip', multiline: true },
   { key: 'phone',       label: 'Phone',           placeholder: '(555) 555-5555', inputMode: 'tel' },
   { key: 'medical_hx',  label: 'Medical history', placeholder: 'e.g. HTN, DM2, asthma', multiline: true },
@@ -19,6 +20,14 @@ const FIELDS = [
   { key: 'medications', label: 'Medications',     placeholder: 'e.g. metformin, lisinopril', multiline: true },
   { key: 'notes',       label: 'Other notes',     placeholder: 'Anything else the receiving medic should know', multiline: true },
 ];
+
+// One-line summary for the notes list, e.g. "38F at Bugs Bunny Boomtown".
+export function noteSummary(fields = {}) {
+  const sex = fields.sex === 'M' || fields.sex === 'F' ? fields.sex : '';
+  const who = `${fields.age || ''}${sex}`;
+  if (who && fields.location) return `${who} at ${fields.location}`;
+  return fields.location || who || fields.name || 'Patient';
+}
 
 function fmtTime(iso) {
   return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
@@ -135,6 +144,12 @@ function Compose({ myUnit, units, myActiveCall, onSent, onCancel }) {
         <div className="pt-2">
           <label className="block text-gray-400 text-xs mb-1">Send to</label>
           <div className="space-y-1.5">
+            <button onClick={() => { setToId(myUnit.id); setError(''); }}
+              className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-left text-sm ${
+                toId === myUnit.id ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-200'}`}>
+              <span className="font-semibold">📌 Save to myself</span>
+              <span className="text-xs opacity-80">keep it in Saved</span>
+            </button>
             {recipients.length === 0 && <div className="text-gray-500 text-sm">No other units in service right now.</div>}
             {recipients.map(u => (
               <button key={u.id} onClick={() => { setToId(u.id); setError(''); }}
@@ -148,14 +163,14 @@ function Compose({ myUnit, units, myActiveCall, onSent, onCancel }) {
         </div>
 
         <p className="text-gray-500 text-[11px]">
-          Patient info — only you and the medic you send it to can see it. Deleted automatically after 8 hours. Don't screenshot it.
+          Patient info — only you and the medic you send it to can see it (saved notes: only you). Deleted automatically after 8 hours. Don't screenshot it.
         </p>
         {error && <p className="text-red-400 text-sm">{error}</p>}
       </div>
       <div className="p-4 border-t border-gray-700 flex-shrink-0">
         <button onClick={send} disabled={sending}
           className="w-full py-3.5 rounded-xl bg-blue-600 active:bg-blue-700 disabled:opacity-50 text-white font-bold text-sm">
-          {sending ? 'Sending…' : '📤 Send PT Notes'}
+          {sending ? 'Saving…' : toId === myUnit.id ? '💾 Save PT Notes' : '📤 Send PT Notes'}
         </button>
       </div>
     </>
@@ -163,7 +178,8 @@ function Compose({ myUnit, units, myActiveCall, onSent, onCancel }) {
 }
 
 function NoteView({ note, myUnit, onBack, onViewed }) {
-  const incoming = note.to_unit_id === myUnit.id;
+  const saved = note.to_unit_id === myUnit.id && note.from_unit_id === myUnit.id;
+  const incoming = note.to_unit_id === myUnit.id && !saved;
   const [viewError, setViewError] = useState('');
 
   useEffect(() => {
@@ -177,9 +193,9 @@ function NoteView({ note, myUnit, onBack, onViewed }) {
       <Header title="PT Notes" onBack={onBack} />
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
         <div className="text-gray-400 text-xs">
-          {incoming ? `From ${note.from_unit_number}${note.from_crew ? ` · ${note.from_crew}` : ''}` : `To ${note.to_unit_number}`}
+          {saved ? 'Saved for yourself' : incoming ? `From ${note.from_unit_number}${note.from_crew ? ` · ${note.from_crew}` : ''}` : `To ${note.to_unit_number}`}
           {' · '}{fmtTime(note.created_at)}
-          {!incoming && (note.read_at ? ` · ✓ Read ${fmtTime(note.read_at)}` : ' · Not opened yet')}
+          {!incoming && !saved && (note.read_at ? ` · ✓ Read ${fmtTime(note.read_at)}` : ' · Not opened yet')}
         </div>
         {viewError && <p className="text-amber-400 text-sm">{viewError}</p>}
         {FIELDS.filter(f => note.fields?.[f.key]).map(f => (
@@ -210,8 +226,16 @@ export default function PtNotes({ myUnit, units, myActiveCall, notes, onNoteSent
     return () => { backRef.current = null; };
   }, [backRef, view]);
 
-  const inbox = notes.filter(n => n.to_unit_id === myUnit.id);
-  const sent  = notes.filter(n => n.from_unit_id === myUnit.id);
+  const mine  = n => n.from_unit_id === myUnit.id && n.to_unit_id === myUnit.id;
+  const inbox = notes.filter(n => n.to_unit_id === myUnit.id && !mine(n));
+  const sent  = notes.filter(n => n.from_unit_id === myUnit.id && !mine(n));
+  const saved = notes.filter(mine);
+  const lists = { inbox, sent, saved };
+  const EMPTY = {
+    inbox: 'No patient notes received this shift.',
+    sent:  'You haven’t sent any this shift.',
+    saved: 'Nothing saved — pick “Save to myself” when writing a note.',
+  };
   const unread = inbox.filter(n => !n.read_at).length;
   const openNote = notes.find(n => n.id === openId);
 
@@ -223,7 +247,7 @@ export default function PtNotes({ myUnit, units, myActiveCall, notes, onNoteSent
           units={units}
           myActiveCall={myActiveCall}
           onCancel={() => setView('list')}
-          onSent={(note) => { onNoteSent(note); setTab('sent'); setView('list'); }}
+          onSent={(note) => { onNoteSent(note); setTab(note.to_unit_id === myUnit.id ? 'saved' : 'sent'); setView('list'); }}
         />
       ) : view === 'note' && openNote ? (
         <NoteView note={openNote} myUnit={myUnit} onBack={() => setView('list')} onViewed={onNoteViewed} />
@@ -241,7 +265,7 @@ export default function PtNotes({ myUnit, units, myActiveCall, notes, onNoteSent
             </button>
           </div>
           <div className="flex px-4 border-b border-gray-700 flex-shrink-0">
-            {[['inbox', `Received${unread ? ` (${unread})` : ''}`], ['sent', 'Sent']].map(([id, label]) => (
+            {[['inbox', `Received${unread ? ` (${unread})` : ''}`], ['sent', 'Sent'], ['saved', 'Saved']].map(([id, label]) => (
               <button key={id} onClick={() => setTab(id)}
                 className={`flex-1 py-2 text-sm font-semibold border-b-2 ${tab === id ? 'border-blue-500 text-white' : 'border-transparent text-gray-400'}`}>
                 {label}
@@ -249,23 +273,22 @@ export default function PtNotes({ myUnit, units, myActiveCall, notes, onNoteSent
             ))}
           </div>
           <div className="flex-1 overflow-y-auto p-4 space-y-2">
-            {(tab === 'inbox' ? inbox : sent).length === 0 && (
-              <div className="text-center text-gray-500 text-sm py-10">
-                {tab === 'inbox' ? 'No patient notes received this shift.' : 'You haven’t sent any this shift.'}
-              </div>
+            {lists[tab].length === 0 && (
+              <div className="text-center text-gray-500 text-sm py-10">{EMPTY[tab]}</div>
             )}
-            {(tab === 'inbox' ? inbox : sent).map(n => {
+            {lists[tab].map(n => {
               const isNew = tab === 'inbox' && !n.read_at;
               return (
                 <button key={n.id} onClick={() => { setOpenId(n.id); setView('note'); }}
                   className={`w-full text-left rounded-xl px-3 py-3 border ${isNew ? 'bg-blue-900/40 border-blue-600' : 'bg-gray-800 border-gray-700'}`}>
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-white font-semibold text-sm">
-                      {tab === 'inbox' ? `From ${n.from_unit_number}` : `To ${n.to_unit_number}`}
-                    </span>
+                    <span className="text-white font-bold text-sm truncate">{noteSummary(n.fields)}</span>
                     <span className="text-gray-500 text-xs flex-shrink-0">{fmtTime(n.created_at)}</span>
                   </div>
-                  <div className="text-gray-300 text-sm truncate mt-0.5">{n.fields?.name || 'Patient'}{n.fields?.age ? `, ${n.fields.age}` : ''}</div>
+                  <div className="text-gray-400 text-xs truncate mt-0.5">
+                    {tab === 'inbox' ? `From ${n.from_unit_number}` : tab === 'sent' ? `To ${n.to_unit_number}` : 'Saved'}
+                    {n.fields?.name ? ` · ${n.fields.name}` : ''}
+                  </div>
                   <div className="text-xs mt-0.5">
                     {isNew
                       ? <span className="text-blue-300 font-semibold">New — tap to open</span>

@@ -1320,7 +1320,7 @@ app.get('/api/broadcasts', verifyToken, (req, res) => {
 //  - deleted PT_NOTE_RETENTION_MS after sending; the access log (who
 //    created/viewed which note id, when) is kept and holds no patient data
 const PT_NOTE_RETENTION_MS = 8 * 60 * 60 * 1000;
-const PT_NOTE_FIELDS = ['name', 'dob', 'age', 'sex', 'address', 'phone', 'medical_hx', 'allergies', 'medications', 'notes'];
+const PT_NOTE_FIELDS = ['name', 'dob', 'age', 'sex', 'location', 'address', 'phone', 'medical_hx', 'allergies', 'medications', 'notes'];
 
 function logPtNoteAccess(noteId, action, user) {
   pool.query(
@@ -1351,7 +1351,9 @@ app.post('/api/pt-notes', verifyToken, async (req, res) => {
   if (!from) return res.status(404).json({ error: 'Unit not found' });
   const to = units.find(u => u.id === req.body.to_unit_id);
   if (!to) return res.status(400).json({ error: 'Pick a unit to send it to' });
-  if (to.id === from.id) return res.status(400).json({ error: 'Cannot send notes to your own unit' });
+  // Sending to your own unit = saving it for yourself: no push, no alert,
+  // and it starts out read so it never shows as "new".
+  const toSelf = to.id === from.id;
 
   const fields = {};
   for (const k of PT_NOTE_FIELDS) {
@@ -1374,18 +1376,20 @@ app.post('/api/pt-notes', verifyToken, async (req, res) => {
     created_at: new Date().toISOString(),
     read_at: null
   };
+  if (toSelf) note.read_at = note.created_at;
   try {
     await pool.query(
-      `INSERT INTO pt_notes (id, call_id, call_number, from_unit_id, from_unit_number, from_crew, to_unit_id, to_unit_number, fields, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      `INSERT INTO pt_notes (id, call_id, call_number, from_unit_id, from_unit_number, from_crew, to_unit_id, to_unit_number, fields, created_at, read_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
       [note.id, note.call_id, note.call_number, note.from_unit_id, note.from_unit_number, note.from_crew,
-       note.to_unit_id, note.to_unit_number, JSON.stringify(note.fields), note.created_at]
+       note.to_unit_id, note.to_unit_number, JSON.stringify(note.fields), note.created_at, note.read_at]
     );
   } catch (err) {
     console.error('[pt-notes] save failed:', err.message);
     return res.status(500).json({ error: 'Could not send — try again' });
   }
   logPtNoteAccess(note.id, 'create', req.user);
+  if (toSelf) return res.status(201).json(note);
   // Only the recipient's own socket room -- the one place the full note goes.
   io.to(`crew:${to.id}`).emit('pt_note:received', note);
   sendPushToUnit(to, {
