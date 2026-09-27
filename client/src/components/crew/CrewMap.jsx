@@ -39,6 +39,20 @@ function makeCrewEl() {
   return el;
 }
 
+// The medic in navigation view: a blue arrow in a white disc. The map is
+// turned so "up" is the way she's facing, so the arrow always points up.
+function makeNavArrowEl() {
+  const el = document.createElement('div');
+  el.innerHTML = `
+    <div style="width:54px;height:54px;border-radius:50%;background:rgba(255,255,255,0.95);
+                box-shadow:0 2px 10px rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center">
+      <svg width="30" height="30" viewBox="0 0 24 24">
+        <path d="M12 2 L20 21 L12 16.5 L4 21 Z" fill="#2563eb" stroke="#1e40af" stroke-width="1" stroke-linejoin="round"/>
+      </svg>
+    </div>`;
+  return el;
+}
+
 const EMPTY_LINE = { type: 'Feature', geometry: { type: 'LineString', coordinates: [] } };
 
 // Bearing toward the first route waypoint at least ~15ft ahead of the crew's
@@ -94,6 +108,7 @@ export default function CrewMap({ call, myUnit, locations = [] }) {
   const [navHeading, setNavHeading] = useState(null); // compass, degrees
   const navHeadingRef = useRef(null);
   const lastCamRef    = useRef(0);
+  const camHeadingRef = useRef(null);
 
   const crewLat = navMode && navPos ? navPos.lat : (myUnit?.last_lat ?? null);
   const crewLng = navMode && navPos ? navPos.lng : (myUnit?.last_lng ?? null);
@@ -243,7 +258,13 @@ export default function CrewMap({ call, myUnit, locations = [] }) {
     }
   }, [expanded, navMode, mapLoaded]);
 
-  // Update crew dot + the line to the call as GPS comes in
+  // Swap the crew marker between the plain dot and the navigation arrow.
+  useEffect(() => {
+    crewMarkerRef.current?.remove();
+    crewMarkerRef.current = null;
+  }, [navMode]);
+
+  // Update crew marker + the line to the call as GPS comes in
   useEffect(() => {
     if (!mapReadyRef.current || !crewLat || !crewLng) return;
     const lngLat = [crewLng, crewLat];
@@ -251,10 +272,18 @@ export default function CrewMap({ call, myUnit, locations = [] }) {
     if (crewMarkerRef.current) {
       crewMarkerRef.current.setLngLat(lngLat);
     } else if (mapRef.current) {
-      crewMarkerRef.current = new mapboxgl.Marker({ element: makeCrewEl(), anchor: 'center' })
+      crewMarkerRef.current = new mapboxgl.Marker({
+        element: navMode ? makeNavArrowEl() : makeCrewEl(),
+        anchor: 'center',
+        // Lie flat on the tilted map in nav view, like Google Maps' arrow.
+        pitchAlignment: navMode ? 'map' : 'auto',
+        rotationAlignment: navMode ? 'map' : 'auto',
+      })
         .setLngLat(lngLat)
         .addTo(mapRef.current);
     }
+    // Map is heading-up in nav view, so point the arrow the same way.
+    if (navMode && camHeadingRef.current != null) crewMarkerRef.current?.setRotation(camHeadingRef.current);
 
     const lineSource = mapRef.current?.getSource('crew-line');
     if (lineSource) {
@@ -266,7 +295,7 @@ export default function CrewMap({ call, myUnit, locations = [] }) {
         lineSource.setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: [lngLat, [call.location_lng, call.location_lat]] } });
       }
     }
-  }, [crewLat, crewLng, hasCall, call?.location_lng, call?.location_lat, route]);
+  }, [crewLat, crewLng, hasCall, call?.location_lng, call?.location_lat, route, navMode]);
 
   // A dispatcher can reposition a call's pin mid-call (see CallDetail's
   // "reposition pin" action) — keep the marker in sync instead of only
@@ -369,7 +398,7 @@ export default function CrewMap({ call, myUnit, locations = [] }) {
     const onOrient = (e) => {
       const h = eventHeading(e);
       if (h == null) return;
-      navHeadingRef.current = smoothAngle(navHeadingRef.current, h);
+      navHeadingRef.current = smoothAngle(navHeadingRef.current, h, 0.35);
       setNavHeading(navHeadingRef.current);
     };
     window.addEventListener('deviceorientationabsolute', onOrient, true);
@@ -396,26 +425,37 @@ export default function CrewMap({ call, myUnit, locations = [] }) {
         : routeHeading(route?.points, hasCrewPos ? { lat: Number(crewLat), lng: Number(crewLng) } : null)))
     : null;
 
-  // Third-person follow camera: tilted, heading-up, medic in the lower part
-  // of the screen so the route ahead fills the view. Throttled so compass
-  // jitter doesn't make it swim.
+  // Third-person follow camera: tilted, turned to the way she's facing,
+  // zoomed in close, medic low on the screen so the route ahead fills the
+  // view. Rate-limited, but always applies the LATEST position/heading once
+  // the limit passes -- the first version dropped updates inside the
+  // window, so the map could stop short of where she was actually facing.
+  camHeadingRef.current = camHeading;
+  const camTimerRef = useRef(null);
   useEffect(() => {
     const map = mapRef.current;
     if (!navMode || !map || !mapReadyRef.current || !hasCrewPos) return;
-    const now = Date.now();
-    if (now - lastCamRef.current < 250) return;
-    lastCamRef.current = now;
-    const h = map.getContainer().clientHeight || 600;
-    map.easeTo({
-      center: [Number(crewLng), Number(crewLat)],
-      bearing: camHeading ?? map.getBearing(),
-      pitch: 60,
-      zoom: 19,
-      padding: { top: Math.round(h * 0.45), bottom: 0, left: 0, right: 0 },
-      duration: 400,
-      essential: true,
-    });
+    const apply = () => {
+      camTimerRef.current = null;
+      lastCamRef.current = Date.now();
+      const h = map.getContainer().clientHeight || 600;
+      // Turning in place changes only the heading -- keep the arrow in step.
+      if (camHeadingRef.current != null) crewMarkerRef.current?.setRotation(camHeadingRef.current);
+      map.easeTo({
+        center: [Number(crewLng), Number(crewLat)],
+        bearing: camHeadingRef.current ?? map.getBearing(),
+        pitch: 55,
+        zoom: 20,
+        padding: { top: Math.round(h * 0.55), bottom: 0, left: 0, right: 0 },
+        duration: 300,
+        essential: true,
+      });
+    };
+    const wait = 200 - (Date.now() - lastCamRef.current);
+    if (wait <= 0) apply();
+    else if (!camTimerRef.current) camTimerRef.current = setTimeout(apply, wait);
   }, [navMode, crewLat, crewLng, camHeading, hasCrewPos]);
+  useEffect(() => () => clearTimeout(camTimerRef.current), []);
 
   const startNav = async () => {
     // iOS only allows compass access from a tap -- this is that tap.
