@@ -16,8 +16,9 @@ import CallSummaryModal from '../components/calls/CallSummaryModal';
 import NativeSetupModal from '../components/crew/NativeSetupModal';
 import BeaconMode from '../components/crew/BeaconMode';
 import CrewRoster from '../components/crew/CrewRoster';
-import { setCrewGpsSharing, getCrewMessages, sendCrewMessage, getBroadcasts, markBroadcastRead, releaseFromCall } from '../services/api';
+import { setCrewGpsSharing, getCrewMessages, sendCrewMessage, getBroadcasts, markBroadcastRead, releaseFromCall, getPtNotes } from '../services/api';
 import CrewBroadcasts from '../components/crew/CrewBroadcasts';
+import PtNotes from '../components/crew/PtNotes';
 import { isNative as isNativePlatform, nativeCall } from '../lib/native';
 import { enqueueOfflineAction, subscribeOfflineQueue } from '../lib/offlineActionQueue';
 import { STATUS_COLORS, STATUS_LABELS } from '../data/mockData';
@@ -209,6 +210,9 @@ export default function CrewMobile() {
   const [shiftEnded,       setShiftEnded]       = useState(false);
   const [showCaseSummary,  setShowCaseSummary]  = useState(false);
   const [showCaseHistory,  setShowCaseHistory]  = useState(false);
+  // Patient handoff notes (PHI) -- memory only, never persisted on the device.
+  const [showPtNotes,      setShowPtNotes]      = useState(false);
+  const [ptNotes,          setPtNotes]          = useState([]);
   const [showBeacon,       setShowBeacon]       = useState(false);
   const [showRoster,       setShowRoster]       = useState(false);
   // { [otherUnitId]: Message[] } — private crew-to-crew DMs, shift-scoped
@@ -441,10 +445,12 @@ export default function CrewMobile() {
   // render) avoids the native call reading stale state.
   const closeTopOverlayRef = useRef(null);
   const beaconBackRef = useRef(null);
+  const ptNotesBackRef = useRef(null);
   closeTopOverlayRef.current = () => {
     if (showDisposition)  { setShowDisposition(false); return true; }
     if (showCaseSummary)  { setShowCaseSummary(false); return true; }
     if (showCaseHistory)  { setShowCaseHistory(false); return true; }
+    if (showPtNotes)      { if (ptNotesBackRef.current?.()) return true; setShowPtNotes(false); return true; }
     if (showBeacon)       { if (beaconBackRef.current?.()) return true; setShowBeacon(false); return true; }
     if (showRoster)       { setShowRoster(false); return true; }
     return false;
@@ -540,7 +546,16 @@ export default function CrewMobile() {
         );
       }
     },
-    'shift:ended':         () => { setUnits([]); setCalls([]); setBroadcasts([]); setShiftEnded(true); }
+    'shift:ended':         () => { setUnits([]); setCalls([]); setBroadcasts([]); setPtNotes([]); setShiftEnded(true); },
+    // Full note arrives only on this unit's own socket room. The local
+    // notification says who it's from, never any patient details.
+    'pt_note:received':    (note) => {
+      if (!note?.id) return;
+      setPtNotes(prev => prev.some(n => n.id === note.id) ? prev : [note, ...prev]);
+      scheduleNotif(`📋 Patient notes from ${note.from_unit_number}`, 'Open PT Notes to view');
+      if (isNative) nativeCall('Haptics', 'impact', { style: 'HEAVY' }).catch(() => {});
+    },
+    'pt_note:read':        ({ id, read_at }) => setPtNotes(prev => prev.map(n => n.id === id ? { ...n, read_at } : n))
   });
 
   // Load this shift's broadcasts on login, and again whenever the app comes
@@ -549,9 +564,14 @@ export default function CrewMobile() {
   // have been missed.
   useEffect(() => {
     if (!myUnit?.id) return;
-    const load = () => getBroadcasts()
-      .then(res => { if (Array.isArray(res.data)) setBroadcasts(res.data); })
-      .catch(() => {});
+    const load = () => {
+      getBroadcasts()
+        .then(res => { if (Array.isArray(res.data)) setBroadcasts(res.data); })
+        .catch(() => {});
+      getPtNotes()
+        .then(res => { if (Array.isArray(res.data)) setPtNotes(res.data); })
+        .catch(() => {});
+    };
     load();
     const onVisible = () => { if (document.visibilityState === 'visible') load(); };
     document.addEventListener('visibilitychange', onVisible);
@@ -973,6 +993,18 @@ export default function CrewMobile() {
         )}
 
         <button
+          onClick={() => setShowPtNotes(true)}
+          className="relative w-full py-3 rounded-2xl bg-gray-800 border border-gray-700 text-gray-200 hover:border-gray-500 text-sm font-semibold transition-colors flex items-center justify-center gap-2"
+        >
+          📝 PT NOTES
+          {ptNotes.some(n => n.to_unit_id === myUnit?.id && !n.read_at) && (
+            <span className="px-2 py-0.5 rounded-full bg-blue-600 text-white text-xs font-bold">
+              {ptNotes.filter(n => n.to_unit_id === myUnit?.id && !n.read_at).length} new
+            </span>
+          )}
+        </button>
+
+        <button
           onClick={() => setShowCaseHistory(true)}
           className="w-full py-3 rounded-2xl bg-gray-800 border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 text-sm font-medium transition-colors flex items-center justify-center gap-2"
         >
@@ -1013,6 +1045,22 @@ export default function CrewMobile() {
             call={myCall}
             units={units}
             onClose={() => setShowCaseSummary(false)}
+          />
+        </ErrorBoundary>
+      )}
+
+      {showPtNotes && myUnit && (
+        <ErrorBoundary onClose={() => setShowPtNotes(false)}>
+          <PtNotes
+            myUnit={myUnit}
+            units={units}
+            myActiveCall={myActiveCall}
+            notes={ptNotes}
+            onNoteSent={(note) => setPtNotes(prev => [note, ...prev.filter(n => n.id !== note.id)])}
+            onNoteViewed={(id, readAt) => setPtNotes(prev => prev.map(n =>
+              n.id === id && !n.read_at && n.to_unit_id === myUnit.id ? { ...n, read_at: readAt || new Date().toISOString() } : n))}
+            onClose={() => setShowPtNotes(false)}
+            backRef={ptNotesBackRef}
           />
         </ErrorBoundary>
       )}
