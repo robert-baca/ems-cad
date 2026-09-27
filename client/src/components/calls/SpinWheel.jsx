@@ -7,12 +7,17 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 const COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899', '#14b8a6', '#f43f5e', '#84cc16', '#a855f7'];
 const SPIN_MS = 5200;
-const SIZE = 320;           // px, wheel diameter
-const R = SIZE / 2;
+const MINI_SPIN_MS = 3800;
+const SIZE = 320;           // px, main wheel diameter
+const MINI_SIZE = 190;      // px, the mini wheel
 
-const nameOf = (u) => u.crew?.trim() || u.unit_number;
+// The special slice on the main wheel: land on it and a tiny second wheel
+// with the same names pops up to decide.
+const MINI = { id: '__mini_wheel', special: true };
 
-function slicePath(i, n) {
+const nameOf = (u) => (u.special ? '🎡 MINI WHEEL' : (u.crew?.trim() || u.unit_number));
+
+function slicePath(i, n, R) {
   const a0 = (i / n) * 2 * Math.PI - Math.PI / 2;
   const a1 = ((i + 1) / n) * 2 * Math.PI - Math.PI / 2;
   const large = a1 - a0 > Math.PI ? 1 : 0;
@@ -21,9 +26,12 @@ function slicePath(i, n) {
   return `M${R},${R} L${x0},${y0} A${R},${R} 0 ${large} 1 ${x1},${y1} Z`;
 }
 
-function Wheel({ entries, rotation, spinning }) {
+function Wheel({ entries, rotation, spinning, size = SIZE, spinMs = SPIN_MS }) {
+  const SIZE = size;
+  const R = size / 2;
   const n = entries.length;
-  const fontSize = n <= 6 ? 15 : n <= 10 ? 13 : 11;
+  const small = size < 250;
+  const fontSize = (n <= 6 ? 15 : n <= 10 ? 13 : 11) - (small ? 4 : 0);
   return (
     <div className="relative" style={{ width: SIZE, height: SIZE }}>
       {/* Pointer at the top */}
@@ -32,12 +40,14 @@ function Wheel({ entries, rotation, spinning }) {
       <svg width={SIZE} height={SIZE}
         style={{
           transform: `rotate(${rotation}deg)`,
-          transition: spinning ? `transform ${SPIN_MS}ms cubic-bezier(0.12, 0.8, 0.12, 1)` : 'none',
+          transition: spinning ? `transform ${spinMs}ms cubic-bezier(0.12, 0.8, 0.12, 1)` : 'none',
         }}>
         {n === 1 ? (
           <circle cx={R} cy={R} r={R} fill={COLORS[0]} />
         ) : entries.map((u, i) => (
-          <path key={u.id} d={slicePath(i, n)} fill={COLORS[i % COLORS.length]} stroke="#111827" strokeWidth="2" />
+          <path key={u.id} d={slicePath(i, n, R)}
+            fill={u.special ? '#111827' : COLORS[i % COLORS.length]}
+            stroke={u.special ? '#facc15' : '#111827'} strokeWidth={u.special ? 4 : 2} />
         ))}
         {entries.map((u, i) => {
           const mid = ((i + 0.5) / n) * 360; // degrees clockwise from top
@@ -45,7 +55,7 @@ function Wheel({ entries, rotation, spinning }) {
           return (
             <g key={u.id} transform={`rotate(${mid} ${R} ${R})`}>
               <text x={R} y={R - R * 0.58} textAnchor="middle" dominantBaseline="middle"
-                fill="#ffffff" fontSize={fontSize} fontWeight="800"
+                fill={u.special ? '#facc15' : '#ffffff'} fontSize={u.special ? fontSize - 1 : fontSize} fontWeight="800"
                 style={{ paintOrder: 'stroke', stroke: 'rgba(0,0,0,0.45)', strokeWidth: 3 }}
                 transform={`rotate(90 ${R} ${R - R * 0.58})`}>
                 {label.length > 14 ? `${label.slice(0, 13)}…` : label}
@@ -53,7 +63,7 @@ function Wheel({ entries, rotation, spinning }) {
             </g>
           );
         })}
-        <circle cx={R} cy={R} r={22} fill="#111827" stroke="#ffffff" strokeWidth="3" />
+        <circle cx={R} cy={R} r={small ? 14 : 22} fill="#111827" stroke="#ffffff" strokeWidth="3" />
       </svg>
     </div>
   );
@@ -64,6 +74,8 @@ function Wheel({ entries, rotation, spinning }) {
 export default function SpinWheel({ candidates, calls = [], onPick, onClose }) {
   const [excluded, setExcluded] = useState(() => new Set());
   const [rotation, setRotation] = useState(0);
+  const [miniRotation, setMiniRotation] = useState(0);
+  const [stage, setStage]       = useState('main'); // 'main' | 'mini' (landed on Mini Wheel)
   const [spinning, setSpinning] = useState(false);
   const [winner, setWinner]     = useState(null);
   const [busy, setBusy]         = useState(false);
@@ -75,39 +87,46 @@ export default function SpinWheel({ candidates, calls = [], onPick, onClose }) {
   // The wheel's slices are frozen while it spins, so a unit changing status
   // mid-spin can't reshuffle the slices under the pointer.
   const [frozen, setFrozen]     = useState(null);
+  const [frozenMini, setFrozenMini] = useState(null);
   const timerRef = useRef(null);
   useEffect(() => () => clearTimeout(timerRef.current), []);
 
   const live = useMemo(() => candidates.filter(u => !excluded.has(u.id)), [candidates, excluded]);
-  const entries = frozen || live;
+  // The Mini Wheel slot only makes sense with at least two names to pick from.
+  const mainList = useMemo(() => (live.length >= 2 ? [...live, MINI] : live), [live]);
+  const entries = frozen || mainList;
 
-  const spin = () => {
-    if (spinning || live.length === 0) return;
+  // Spins the main wheel, or (which === 'mini') the mini wheel of names.
+  const spin = (which = 'main') => {
+    const list = which === 'mini' ? live : mainList;
+    if (spinning || list.length === 0) return;
     setWinner(null);
     setError('');
-    const list = live;
+    if (which === 'main') { setStage('main'); setFrozenMini(null); }
     const n = list.length;
     const k = Math.floor(Math.random() * n);
     const seg = 360 / n;
     // Land somewhere inside the winning slice, not always dead centre.
     const within = seg * (0.2 + Math.random() * 0.6);
     const target = (360 - (k * seg + within)) % 360;
-    const current = ((rotation % 360) + 360) % 360;
+    const rot = which === 'mini' ? miniRotation : rotation;
+    const current = ((rot % 360) + 360) % 360;
     const extra = 360 * (5 + Math.floor(Math.random() * 3));
-    setFrozen(list);
+    const next = rot + extra + ((target - current + 360) % 360);
+    if (which === 'mini') { setFrozenMini(list); setMiniRotation(next); }
+    else { setFrozen(list); setRotation(next); }
     setSpinning(true);
-    setRotation(rotation + extra + ((target - current + 360) % 360));
     timerRef.current = setTimeout(() => {
       setSpinning(false);
-      setWinner(list[k]);
-    }, SPIN_MS + 100);
+      if (list[k].special) setStage('mini');   // landed on Mini Wheel -- spin that next
+      else setWinner(list[k]);
+    }, (which === 'mini' ? MINI_SPIN_MS : SPIN_MS) + 100);
   };
 
   const accept = async () => {
-    if (!winner || busy) return;
+    if (!winner || busy || !targetCall) return;
     setBusy(true);
     setError('');
-    if (!targetCall) return;
     const err = await onPick(targetCall, winner);
     setBusy(false);
     if (err) { setError(err); return; }
@@ -116,12 +135,14 @@ export default function SpinWheel({ candidates, calls = [], onPick, onClose }) {
     setExcluded(prev => new Set(prev).add(winner.id));
     setWinner(null);
     setFrozen(null);
+    setStage('main');
   };
 
   const toggle = (id) => {
     if (spinning) return;
     setWinner(null);
     setFrozen(null);
+    setStage('main');
     setExcluded(prev => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id); else next.add(id);
@@ -147,6 +168,11 @@ export default function SpinWheel({ candidates, calls = [], onPick, onClose }) {
           <div className="text-center text-gray-400 text-sm py-12">
             {candidates.length === 0 ? 'No available medics to spin for.' : 'Everyone is off the wheel — tap names below to add them back.'}
           </div>
+        ) : stage === 'mini' ? (
+          <div className="flex flex-col items-center py-3 gap-3">
+            <div className="text-yellow-300 font-black text-2xl tracking-wide animate-bounce">🎡 MINI WHEEL!</div>
+            <Wheel entries={frozenMini || live} rotation={miniRotation} spinning={spinning} size={MINI_SIZE} spinMs={MINI_SPIN_MS} />
+          </div>
         ) : (
           <div className="flex justify-center py-3">
             <Wheel entries={entries} rotation={rotation} spinning={spinning} />
@@ -155,7 +181,7 @@ export default function SpinWheel({ candidates, calls = [], onPick, onClose }) {
 
         {winner ? (
           <div className="mt-2 rounded-xl bg-gradient-to-r from-yellow-500 to-orange-500 p-4 text-center">
-            <div className="text-black/70 text-xs font-bold uppercase tracking-wider">The wheel has spoken</div>
+            <div className="text-black/70 text-xs font-bold uppercase tracking-wider">{stage === 'mini' ? 'The mini wheel has spoken' : 'The wheel has spoken'}</div>
             <div className="text-black text-2xl font-black">🎉 {nameOf(winner)}</div>
             {winner.crew && <div className="text-black/80 text-sm font-semibold">{winner.unit_number}</div>}
             {targetCall && (
@@ -175,7 +201,7 @@ export default function SpinWheel({ candidates, calls = [], onPick, onClose }) {
                   {busy ? 'Working…' : targetCall.assigned_unit_id ? `✅ Add to #${targetCall.call_number}` : `✅ Dispatch to #${targetCall.call_number}`}
                 </button>
               )}
-              <button onClick={spin} disabled={busy}
+              <button onClick={() => spin('main')} disabled={busy}
                 className={`${targetCall ? 'px-4' : 'flex-1'} py-2.5 rounded-lg bg-white/80 text-black font-bold text-sm`}>
                 🔄 Spin again
               </button>
@@ -183,9 +209,10 @@ export default function SpinWheel({ candidates, calls = [], onPick, onClose }) {
             {error && <div className="text-red-900 text-xs font-semibold mt-2">{error}</div>}
           </div>
         ) : (
-          <button onClick={spin} disabled={spinning || live.length === 0}
-            className="w-full mt-2 py-3 rounded-xl bg-gradient-to-r from-pink-600 to-purple-600 hover:brightness-110 disabled:opacity-50 text-white text-lg font-black">
-            {spinning ? 'Spinning…' : '🎡 SPIN'}
+          <button onClick={() => spin(stage === 'mini' ? 'mini' : 'main')} disabled={spinning || live.length === 0}
+            className={`w-full mt-2 py-3 rounded-xl hover:brightness-110 disabled:opacity-50 text-lg font-black ${
+              stage === 'mini' ? 'bg-yellow-400 text-black' : 'bg-gradient-to-r from-pink-600 to-purple-600 text-white'}`}>
+            {spinning ? 'Spinning…' : stage === 'mini' ? '🎡 Spin the Mini Wheel' : '🎡 SPIN'}
           </button>
         )}
 
