@@ -73,7 +73,7 @@ export default function BroadcastModal({ onSend, onClose, broadcasts = [], units
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-700">
           <div>
             <div className="text-white font-bold">📢 Park-Wide Broadcast</div>
-            <div className="text-gray-400 text-xs">Pushes to every crew member's phone</div>
+            <div className="text-gray-400 text-xs">Pushes to every crew member's phone (carts excluded)</div>
           </div>
           <button onClick={onClose}
             className="text-gray-400 hover:text-white w-8 h-8 flex items-center justify-center rounded hover:bg-gray-700 text-xl">
@@ -108,7 +108,7 @@ export default function BroadcastModal({ onSend, onClose, broadcasts = [], units
               </div>
               {error && <p className="text-red-400 text-sm">{error}</p>}
               <p className="text-gray-500 text-xs">
-                Every crew member gets an immediate buzz + notification, even if their app is closed.
+                Every crew member except carts gets an immediate buzz + notification, even if their app is closed.
                 It also stays pinned in their app until they tap Got it.
               </p>
             </>

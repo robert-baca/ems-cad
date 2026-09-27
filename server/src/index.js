@@ -104,6 +104,10 @@ function emitDispatch(event, payload) {
 // dispatcher/display/crew socket events). Strips the password hash, the
 // phone's raw push token (dispatch only needs to know one exists), and
 // server-internal bookkeeping fields (leading underscore).
+function isCartUnit(u) {
+  return u?.unit_type === 'Cart';
+}
+
 function sanitizeUnit(u) {
   const out = {};
   for (const [k, v] of Object.entries(u)) {
@@ -1192,6 +1196,9 @@ app.post('/api/broadcast', verifyToken, async (req, res) => {
   const message = req.body.message?.trim();
   if (!message) return res.status(400).json({ error: 'message required' });
   const from = req.user.name || req.user.username || 'Dispatch';
+  // Carts don't get broadcasts at all -- no push, no in-app banner, and not
+  // counted as expected readers.
+  const recipients = units.filter(u => !isCartUnit(u));
   // Kept (not just pushed) so a crew member who missed the notification
   // still sees it in the app, and dispatch can see who has read it.
   // "Expected readers" = every unit in service right now.
@@ -1201,7 +1208,7 @@ app.post('/api/broadcast', verifyToken, async (req, res) => {
     from_name: from,
     message,
     sent_at: new Date().toISOString(),
-    target_unit_ids: units.filter(u => u.status !== 'out_of_service').map(u => u.id),
+    target_unit_ids: recipients.filter(u => u.status !== 'out_of_service').map(u => u.id),
     reads: {}
   };
   try {
@@ -1211,9 +1218,9 @@ app.post('/api/broadcast', verifyToken, async (req, res) => {
     return res.status(500).json({ error: 'Failed to save broadcast — please try again' });
   }
   broadcasts.push(broadcast);
-  io.to('crew_all').emit('crew:broadcast', { id: broadcast.id, from, message, sent_at: broadcast.sent_at });
+  recipients.forEach(u => io.to(`crew:${u.id}`).emit('crew:broadcast', { id: broadcast.id, from, message, sent_at: broadcast.sent_at }));
   emitDispatch('broadcast:created', broadcast);
-  const targets = units.filter(u => u.push_token);
+  const targets = recipients.filter(u => u.push_token);
   const results = await Promise.allSettled(
     targets.map(u => sendPushToUnit(u, { title: `📢 ${from}`, body: message }))
   );
@@ -1225,6 +1232,8 @@ app.post('/api/broadcast', verifyToken, async (req, res) => {
 // just their own unit's read flag.
 app.get('/api/broadcasts', verifyToken, (req, res) => {
   if (req.user.role === 'crew') {
+    const unit = units.find(u => u.id === req.user.unit_id);
+    if (!unit || isCartUnit(unit)) return res.json([]);
     return res.json(broadcasts.map(b => ({
       id: b.id, from: b.from_name, message: b.message, sent_at: b.sent_at,
       read: !!b.reads[req.user.unit_id]
