@@ -62,6 +62,15 @@ const LOG_NOW_COOLDOWN_MS = 1500;
 
 export function useCalls(setUnits) {
   const [calls, setCalls] = useState([]);
+  // Latest rendered calls, for handlers that must decide something *before*
+  // sending a request. Don't read values assigned inside a setCalls(prev =>
+  // ...) updater right after calling it: React 18 only runs the updater
+  // immediately when nothing else is queued, and with GPS/socket updates
+  // arriving constantly it usually defers it to the next render -- which
+  // left logTimeNow's nextField null, so Log Now updated the screen but
+  // never sent anything to the server.
+  const callsRef = useRef(calls);
+  callsRef.current = calls;
   const loggingRef = useRef(new Set()); // tracks in-flight-or-cooling-down logTimeNow calls per callId
   const [loggingCallIds, setLoggingCallIds] = useState(() => new Set());
 
@@ -72,9 +81,10 @@ export function useCalls(setUnits) {
     if (!setUnits || !call) return null;
     const unitIds = [...new Set([call.assigned_unit_id, ...(call.co_unit_ids || []), ...(call.additional_unit_ids || [])])].filter(Boolean);
     if (!unitIds.length) return null;
-    let snapshot = null;
+    // Filled in by the updater whenever React runs it; returned by reference
+    // so it's populated by the time a failed request needs to revert it.
+    const snapshot = {};
     setUnits(prev => {
-      snapshot = {};
       return prev.map(u => {
         if (unitIds.includes(u.id) && isForwardUnitStatus(u.status, newStatus)) {
           snapshot[u.id] = u.status;
@@ -197,17 +207,11 @@ export function useCalls(setUnits) {
   // failure still rolls back and reports, exactly as before.
   const advanceStatus = useCallback(async (callId, status, { onNetworkError } = {}) => {
     const tsField = STATUS_TS_MAP[status];
-    let snapshot = null;
-    let callForSync = null;
-    setCalls(prev => {
-      snapshot = prev.find(c => c.id === callId) || null;
-      return prev.map(c => {
-        if (c.id !== callId) return c;
-        callForSync = { ...c, status, ...(tsField ? { [tsField]: new Date().toISOString() } : {}) };
-        return callForSync;
-      });
-    });
-    syncUnitsForward(callForSync, status);
+    const snapshot = callsRef.current.find(c => c.id === callId) || null;
+    const tsValue = new Date().toISOString();
+    const patch = { status, ...(tsField ? { [tsField]: tsValue } : {}) };
+    setCalls(prev => prev.map(c => c.id === callId ? { ...c, ...patch } : c));
+    if (snapshot) syncUnitsForward({ ...snapshot, ...patch }, status);
     try {
       await updateCallStatus(callId, status);
       return null;
@@ -266,24 +270,25 @@ export function useCalls(setUnits) {
     setLoggingCallIds(prev => new Set(prev).add(callId));
     const now = new Date().toISOString();
     let nextField = null;
-    let callSnapshot = null;
     let callForSync = null;
-    setCalls(prev => prev.map(c => {
-      if (c.id !== callId) return c;
-      callSnapshot = c;
+    // Decided from the latest rendered state, not inside a setCalls updater
+    // (see callsRef's comment) -- nextField gates whether anything is sent.
+    const callSnapshot = callsRef.current.find(c => c.id === callId) || null;
+    if (callSnapshot) {
       // Start the search after the call's current status, not from the
       // beginning — a call can legitimately reach its current status without
       // every earlier milestone having been logged (e.g. crew jumped
       // straight to Patient Contact), leaving that earlier field null
       // forever. Scanning from the start would offer that already-passed
       // step as "next" and log it, regressing the call's status backward.
-      const currentIdx = TS_STEPS.indexOf(STATUS_TS_MAP[c.status]);
-      nextField = TS_STEPS.slice(currentIdx + 1).find(f => !c[f]);
-      if (!nextField) return c;
-      const newStatus = TS_STATUS_MAP[nextField];
-      callForSync = { ...c, [nextField]: now, ...(newStatus ? { status: newStatus } : {}) };
-      return callForSync;
-    }));
+      const currentIdx = TS_STEPS.indexOf(STATUS_TS_MAP[callSnapshot.status]);
+      nextField = TS_STEPS.slice(currentIdx + 1).find(f => !callSnapshot[f]) || null;
+    }
+    if (nextField) {
+      const patch = { [nextField]: now, ...(TS_STATUS_MAP[nextField] ? { status: TS_STATUS_MAP[nextField] } : {}) };
+      callForSync = { ...callSnapshot, ...patch };
+      setCalls(prev => prev.map(c => c.id === callId ? { ...c, ...patch } : c));
+    }
     if (nextField) {
       const newStatus = TS_STATUS_MAP[nextField];
       const unitsSnapshot = newStatus ? syncUnitsForward(callForSync, newStatus) : null;
