@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-// "Nobody's volunteering" wheel: spins through the available medics and
-// adds the winner to the call. Purely a picker -- the actual assign/add goes
-// through the same onPick handler the normal unit buttons use.
+// "Nobody's volunteering" wheel, opened from the dispatcher header any
+// time. Spins through the available medics; if calls are open, the winner
+// can be sent to one in a tap (onPick -> the same assign/add handlers the
+// normal unit buttons use), otherwise it just announces who's up.
 
 const COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899', '#14b8a6', '#f43f5e', '#84cc16', '#a855f7'];
 const SPIN_MS = 5200;
@@ -58,16 +59,19 @@ function Wheel({ entries, rotation, spinning }) {
   );
 }
 
-// candidates: units that could be added (already filtered to available,
-// non-cart). onPick(unit) -> error string or null. mode: 'assign' | 'add'.
-export default function SpinWheel({ candidates, callNumber, mode, onPick, onClose }) {
+// candidates: available, non-cart units. calls: open calls the winner could
+// be sent to (may be empty). onPick(call, unit) -> error string or null.
+export default function SpinWheel({ candidates, calls = [], onPick, onClose }) {
   const [excluded, setExcluded] = useState(() => new Set());
   const [rotation, setRotation] = useState(0);
   const [spinning, setSpinning] = useState(false);
   const [winner, setWinner]     = useState(null);
   const [busy, setBusy]         = useState(false);
   const [error, setError]       = useState('');
-  const [added, setAdded]       = useState([]); // unit_numbers added this session
+  const [added, setAdded]       = useState([]); // "Medic 7 → #531" this session
+  const [callId, setCallId]     = useState('');
+  // Default target: the newest open call; keep the choice if it's still open.
+  const targetCall = calls.find(c => c.id === callId) || calls[0] || null;
   // The wheel's slices are frozen while it spins, so a unit changing status
   // mid-spin can't reshuffle the slices under the pointer.
   const [frozen, setFrozen]     = useState(null);
@@ -103,10 +107,11 @@ export default function SpinWheel({ candidates, callNumber, mode, onPick, onClos
     if (!winner || busy) return;
     setBusy(true);
     setError('');
-    const err = await onPick(winner);
+    if (!targetCall) return;
+    const err = await onPick(targetCall, winner);
     setBusy(false);
     if (err) { setError(err); return; }
-    setAdded(prev => [...prev, winner.unit_number]);
+    setAdded(prev => [...prev, `${winner.unit_number} → #${targetCall.call_number}`]);
     // Winner drops off the wheel (it's no longer available anyway).
     setExcluded(prev => new Set(prev).add(winner.id));
     setWinner(null);
@@ -124,7 +129,6 @@ export default function SpinWheel({ candidates, callNumber, mode, onPick, onClos
     });
   };
 
-  const verb = mode === 'assign' && added.length === 0 ? 'Dispatch' : 'Add to Call';
 
   return (
     <div className="fixed inset-0 z-[60] bg-black/80 flex items-center justify-center p-4" onClick={() => !spinning && onClose()}>
@@ -132,7 +136,7 @@ export default function SpinWheel({ candidates, callNumber, mode, onPick, onClos
         onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-3">
           <div>
-            <div className="text-white font-black text-lg">🎡 Spin for Case #{callNumber}</div>
+            <div className="text-white font-black text-lg">🎡 Spin the Wheel</div>
             <div className="text-gray-400 text-xs">Nobody volunteering? Let the wheel decide.</div>
           </div>
           <button onClick={onClose} disabled={spinning}
@@ -154,14 +158,26 @@ export default function SpinWheel({ candidates, callNumber, mode, onPick, onClos
             <div className="text-black/70 text-xs font-bold uppercase tracking-wider">The wheel has spoken</div>
             <div className="text-black text-2xl font-black">🎉 {nameOf(winner)}</div>
             {winner.crew && <div className="text-black/80 text-sm font-semibold">{winner.unit_number}</div>}
-            <div className="flex gap-2 mt-3">
-              <button onClick={accept} disabled={busy}
-                className="flex-1 py-2.5 rounded-lg bg-black text-white font-bold text-sm disabled:opacity-60">
-                {busy ? 'Working…' : `✅ ${verb}`}
-              </button>
+            {targetCall && (
+              <select value={targetCall.id} onChange={e => setCallId(e.target.value)}
+                className="w-full mt-3 rounded-lg bg-black/20 text-black font-semibold text-sm px-2 py-2 outline-none">
+                {calls.map(c => (
+                  <option key={c.id} value={c.id}>
+                    Case #{c.call_number} · {c.call_type || 'Call'}{c.location_name ? ` · ${c.location_name}` : ''}{c.assigned_unit_id ? '' : ' (unassigned)'}
+                  </option>
+                ))}
+              </select>
+            )}
+            <div className="flex gap-2 mt-2">
+              {targetCall && (
+                <button onClick={accept} disabled={busy}
+                  className="flex-1 py-2.5 rounded-lg bg-black text-white font-bold text-sm disabled:opacity-60">
+                  {busy ? 'Working…' : targetCall.assigned_unit_id ? `✅ Add to #${targetCall.call_number}` : `✅ Dispatch to #${targetCall.call_number}`}
+                </button>
+              )}
               <button onClick={spin} disabled={busy}
-                className="px-4 py-2.5 rounded-lg bg-white/80 text-black font-bold text-sm">
-                🔄 Re-spin
+                className={`${targetCall ? 'px-4' : 'flex-1'} py-2.5 rounded-lg bg-white/80 text-black font-bold text-sm`}>
+                🔄 Spin again
               </button>
             </div>
             {error && <div className="text-red-900 text-xs font-semibold mt-2">{error}</div>}

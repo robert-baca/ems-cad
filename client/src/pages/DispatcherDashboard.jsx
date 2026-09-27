@@ -20,6 +20,7 @@ import ShiftSummaryModal from '../components/shift/ShiftSummaryModal';
 import OptionsModal from '../components/settings/OptionsModal';
 import CallSummaryModal from '../components/calls/CallSummaryModal';
 import BroadcastModal, { receiptStats } from '../components/calls/BroadcastModal';
+import SpinWheel from '../components/calls/SpinWheel';
 import { sendBroadcast, getBroadcasts } from '../services/api';
 
 // Reconstructs which calls have an unanswered backup request, from comment
@@ -91,6 +92,7 @@ export default function DispatcherDashboard() {
   const [splitParentId,     setSplitParentId]       = useState(null);
   const [showOptions,       setShowOptions]          = useState(false);
   const [showBroadcast,     setShowBroadcast]        = useState(false); // false | 'send' | 'history'
+  const [showSpin,          setShowSpin]             = useState(false);
   // This shift's broadcasts with per-unit read receipts (see BroadcastModal).
   const [broadcasts,        setBroadcasts]           = useState([]);
   const [overwatchCallId,   setOverwatchCallId]      = useState(null);
@@ -452,6 +454,13 @@ export default function DispatcherDashboard() {
                 })()}
               </button>
               <button
+                onClick={() => setShowSpin(true)}
+                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-bold transition-all bg-gradient-to-r from-pink-600 to-purple-600 text-white hover:brightness-110"
+                title="Nobody volunteering? Spin the wheel of available medics"
+              >
+                🎡 Spin
+              </button>
+              <button
                 onClick={() => setShowBroadcast('history')}
                 className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium transition-colors bg-gray-800 border border-gray-600 text-gray-300 hover:bg-gray-700"
                 title="Broadcasts sent this shift and earlier, with who read them"
@@ -666,6 +675,22 @@ export default function DispatcherDashboard() {
           onClose={() => setShowOptions(false)}
           locations={locations}
           onRemoveLocation={removeLocation}
+        />
+      )}
+
+      {!isOverwatch && showSpin && (
+        <SpinWheel
+          // Available medics only: no carts, nobody already on a call.
+          candidates={units.filter(u => (u.status === 'available' || u.status === 'cleared') && u.unit_type !== 'Cart')}
+          // Open calls, newest first. An unassigned one gets the winner as
+          // its lead unit; otherwise the winner is added as dispatched.
+          calls={calls.filter(c => c.status !== 'closed').sort((a, b) => b.call_number - a.call_number)}
+          onPick={async (call, u) => (
+            call.assigned_unit_id
+              ? await addUnitToCall(call.id, u.id, 'dispatched')
+              : await assignUnit(call.id, u.id, undefined, [])
+          ) || null}
+          onClose={() => setShowSpin(false)}
         />
       )}
 
