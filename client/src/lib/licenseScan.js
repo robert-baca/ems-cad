@@ -23,6 +23,10 @@ prepareZXingModule({
 
 const READER_OPTIONS = {
   formats: ['PDF417'],
+  // License barcodes contain control characters (line feeds, record
+  // separators). The default text mode escapes those as "<LF>"/"<RS>",
+  // which broke line splitting and made every real license look invalid.
+  textMode: 'Plain',
   tryHarder: true,
   tryRotate: true,
   maxNumberOfSymbols: 1,
@@ -61,7 +65,10 @@ function ageOn(dob, today = new Date()) {
 // Pulls the AAMVA elements out of the raw barcode text into { DCS: 'SMITH', ... }.
 function elements(text) {
   const out = {};
-  for (let line of text.split(/[\r\n\x1e]+/)) {
+  // Backstop: accept escaped control characters too, in case a decoder
+  // hands back "<LF>"-style text instead of the raw characters.
+  const raw = text.replace(/<(LF|CR|RS|GS|FS|US)>/g, '\n');
+  for (let line of raw.split(/[\r\n\x1c-\x1f]+/)) {
     line = line.trim();
     // The first element of a subfile is glued to its type: "DLDAQ…"/"IDDAQ…".
     const m = line.match(/(?:^|DL|ID)(D[A-Z]{2})(.*)$/);
