@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
 import { getBearing, getDistanceFt, getCardinal } from '../../lib/geo';
-import { getParkPaths, getWayfindingSettings } from '../../services/api';
+import { getParkPaths, getWayfindingSettings, reportWrongRoute } from '../../services/api';
 import { useRoute } from '../../hooks/useRoute';
 import { nextManeuver, routeHeading, ARRIVE_FT } from '../../lib/navGuide';
 
@@ -87,7 +87,9 @@ function smoothAngle(prev, next, alpha = 0.25) {
   return (prev + alpha * d + 360) % 360;
 }
 
-export default function CrewMap({ call, myUnit, locations = [] }) {
+// canMarkOnScene/onMarkOnScene: when set, the navigation view offers
+// "Mark On Scene" as soon as the medic arrives at the pin.
+export default function CrewMap({ call, myUnit, locations = [], canMarkOnScene = false, onMarkOnScene }) {
   const containerRef       = useRef(null);
   const mapRef              = useRef(null);
   const mapReadyRef         = useRef(false);
@@ -108,6 +110,7 @@ export default function CrewMap({ call, myUnit, locations = [] }) {
   const [navHeading, setNavHeading] = useState(null); // compass, degrees
   const navHeadingRef = useRef(null);
   const lastCamRef    = useRef(0);
+  const [reportState, setReportState] = useState(null); // null | 'sending' | 'sent' | 'failed'
   const camHeadingRef = useRef(null);
 
   const crewLat = navMode && navPos ? navPos.lat : (myUnit?.last_lat ?? null);
@@ -488,6 +491,32 @@ export default function CrewMap({ call, myUnit, locations = [] }) {
     return () => { if (window.__crewMapBack === handler) delete window.__crewMapBack; };
   });
 
+  // Beta feedback: one tap records where she is, where she's headed and
+  // the route she was given, for the Wayfinding admin page to review.
+  const reportWrong = async () => {
+    if (reportState === 'sending' || reportState === 'sent' || !hasCrewPos || !hasCall) return;
+    setReportState('sending');
+    try {
+      await reportWrongRoute({
+        call_id: call?.id,
+        crew: [Number(crewLng), Number(crewLat)],
+        dest: [Number(call.location_lng), Number(call.location_lat)],
+        route: route?.points || [],
+      });
+      setReportState('sent');
+    } catch {
+      setReportState('failed');
+    }
+    // Allow another report later on the same walk (e.g. a second bad spot).
+    setTimeout(() => setReportState(null), 20000);
+  };
+
+  const markOnSceneFromNav = () => {
+    onMarkOnScene?.();
+    endNav();
+    setExpanded(false);
+  };
+
   const endNav = () => {
     setNavMode(false);
     const map = mapRef.current;
@@ -526,7 +555,15 @@ export default function CrewMap({ call, myUnit, locations = [] }) {
       {navMode && (
         <div className="absolute left-2 right-2 top-[calc(0.5rem+env(safe-area-inset-top))] rounded-2xl bg-green-700/95 text-white px-4 py-3 shadow-xl pointer-events-none">
           {arrived ? (
-            <div className="text-lg font-black">🏁 You've arrived — look for the call</div>
+            <div className="space-y-2">
+              <div className="text-lg font-black">🏁 You've arrived — look for the call</div>
+              {canMarkOnScene && onMarkOnScene && (
+                <button onClick={markOnSceneFromNav}
+                  className="pointer-events-auto w-full py-3 rounded-xl bg-white text-green-800 text-base font-black active:bg-green-100">
+                  ✓ Mark On Scene
+                </button>
+              )}
+            </div>
           ) : maneuver?.next ? (
             <div className="flex items-center gap-3">
               <span className="text-4xl leading-none">{maneuver.next.arrow}</span>
@@ -550,6 +587,12 @@ export default function CrewMap({ call, myUnit, locations = [] }) {
               ? `${maneuver?.remainingFt ?? distFt} ft to go`
               : 'Locating…'}
           </div>
+          {hasCall && (
+            <button onClick={reportWrong} disabled={reportState === 'sending' || reportState === 'sent'}
+              className="bg-black/75 backdrop-blur-sm text-white text-sm font-semibold px-3 py-2.5 rounded-xl disabled:opacity-80">
+              {reportState === 'sent' ? '✓ Reported' : reportState === 'failed' ? '⚠ Retry' : reportState === 'sending' ? '…' : '👎 Wrong way'}
+            </button>
+          )}
           <button onClick={endNav}
             className="bg-red-700 active:bg-red-800 text-white text-sm font-bold px-4 py-2.5 rounded-xl">
             ✕ End

@@ -88,6 +88,9 @@ export const getCallGpsTrack = (callId) => api.get(`/calls/${callId}/gps-track`)
 
 // ── Wayfinding path curation (admin-only) ────────────────────────────
 export const getWayfindingTraces  = () => api.get('/wayfinding/traces');
+export const reportWrongRoute     = (data) => api.post('/wayfinding/reports', data);
+export const getRouteReports      = () => api.get('/wayfinding/reports');
+export const resolveRouteReport   = (id) => api.post(`/wayfinding/reports/${id}/resolve`);
 export const getParkPaths         = () => api.get('/park-paths');
 export const createParkPath       = (name, coordinates) => api.post('/park-paths', { name, coordinates });
 export const deleteParkPath       = (id) => api.delete(`/park-paths/${id}`);

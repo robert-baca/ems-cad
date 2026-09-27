@@ -476,6 +476,27 @@ async function initDb() {
     )
   `);
 
+  // "Wrong way" reports from the crew navigation view -- where the medic was,
+  // where they were headed, and the route they were given -- so the
+  // wayfinding admin can find and fix bad spots in the path network.
+  // Locations only; no patient information.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS wayfinding_reports (
+      id SERIAL PRIMARY KEY,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      unit_id TEXT,
+      unit_number TEXT,
+      call_id TEXT,
+      call_number INTEGER,
+      crew_lat DOUBLE PRECISION,
+      crew_lng DOUBLE PRECISION,
+      dest_lat DOUBLE PRECISION,
+      dest_lng DOUBLE PRECISION,
+      route JSONB,
+      resolved_at TIMESTAMPTZ
+    )
+  `);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS dispatchers (
       id TEXT PRIMARY KEY,
@@ -2726,6 +2747,54 @@ app.get('/api/wayfinding/settings', verifyToken, async (req, res) => {
     res.json({ enabled: rows[0]?.value === 'true' });
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Wayfinding: crew "wrong way" reports ──────────────────────────────
+const isCoord = v => Array.isArray(v) && v.length === 2 && v.every(n => typeof n === 'number' && Number.isFinite(n));
+
+app.post('/api/wayfinding/reports', verifyToken, async (req, res) => {
+  if (req.user.role !== 'crew') return res.status(403).json({ error: 'Forbidden' });
+  const { call_id, crew, dest, route } = req.body || {};
+  if (!isCoord(crew) || !isCoord(dest)) return res.status(400).json({ error: 'crew and dest positions required' });
+  const cleanRoute = Array.isArray(route) ? route.filter(isCoord).slice(0, 1000) : [];
+  const call = call_id ? calls.find(c => c.id === call_id) : null;
+  try {
+    await pool.query(
+      `INSERT INTO wayfinding_reports (unit_id, unit_number, call_id, call_number, crew_lng, crew_lat, dest_lng, dest_lat, route)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [req.user.unit_id, req.user.unit_number, call?.id || null, call?.call_number || null,
+       crew[0], crew[1], dest[0], dest[1], JSON.stringify(cleanRoute)]
+    );
+    console.log(`[wayfinding] wrong-way report from ${req.user.unit_number}${call ? ` on Case #${call.call_number}` : ''}`);
+    res.status(201).json({ ok: true });
+  } catch (err) {
+    console.error('[wayfinding] report save failed:', err.message);
+    res.status(500).json({ error: 'Could not save report' });
+  }
+});
+
+app.get('/api/wayfinding/reports', verifyToken, async (req, res) => {
+  if (req.user.role !== 'wayfinding_admin') return res.status(403).json({ error: 'Forbidden' });
+  try {
+    const r = await pool.query(
+      `SELECT * FROM wayfinding_reports WHERE resolved_at IS NULL AND created_at > NOW() - INTERVAL '60 days' ORDER BY created_at DESC`
+    );
+    res.json(r.rows.map(x => ({ ...x, route: x.route || [] })));
+  } catch (err) {
+    console.error('[wayfinding] reports query failed:', err.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+app.post('/api/wayfinding/reports/:id/resolve', verifyToken, async (req, res) => {
+  if (req.user.role !== 'wayfinding_admin') return res.status(403).json({ error: 'Forbidden' });
+  try {
+    await pool.query('UPDATE wayfinding_reports SET resolved_at = NOW() WHERE id = $1', [Number(req.params.id)]);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[wayfinding] resolve failed:', err.message);
+    res.status(500).json({ error: 'Database error' });
   }
 });
 

@@ -924,6 +924,7 @@ export default function CrewMobile() {
             isCompleted={callIsCompleted}
             onDismiss={() => setDismissedCallId(myCall?.id)}
             locations={landmarkLocations}
+            onMarkOnScene={() => handleStatusTap('on_scene')}
           />
         </ErrorBoundary>
 

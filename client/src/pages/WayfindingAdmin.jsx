@@ -5,7 +5,8 @@ import { useAuth } from '../context/AuthContext';
 import { useLocations } from '../hooks/useLocations';
 import {
   getWayfindingTraces, getParkPaths, createParkPath, deleteParkPath,
-  getWayfindingSettings, setWayfindingEnabled
+  getWayfindingSettings, setWayfindingEnabled,
+  getRouteReports, resolveRouteReport
 } from '../services/api';
 import { cleanTrace, suggestPathFromTraces } from '../lib/pathSuggest';
 import { snapPointToBasemap, snapSuggestedPath } from '../lib/snapToPath';
@@ -48,6 +49,9 @@ export default function WayfindingAdmin() {
   const [enabled,    setEnabled]    = useState(false);
   const [loadError,  setLoadError]  = useState('');
   const [togglingEnabled, setTogglingEnabled] = useState(false);
+  // Crew "👎 Wrong way" reports from the navigation view (beta feedback).
+  const [reports,         setReports]         = useState([]);
+  const [activeReportId,  setActiveReportId]  = useState(null);
 
   const [drawing,    setDrawing]    = useState(false);
   const [drawPoints, setDrawPoints] = useState([]);
@@ -133,6 +137,23 @@ export default function WayfindingAdmin() {
         id: 'draw-line-layer', type: 'line', source: 'draw-line',
         layout: { 'line-cap': 'round', 'line-join': 'round' },
         paint: { 'line-color': '#60a5fa', 'line-width': 3, 'line-dasharray': [1.5, 1] }
+      });
+
+      // Selected crew "wrong way" report: the route they were given (red
+      // dashed), where they were (red dot) and where they were headed (white).
+      map.addSource('report', { type: 'geojson', data: EMPTY_FC });
+      map.addLayer({
+        id: 'report-route', type: 'line', source: 'report', filter: ['==', '$type', 'LineString'],
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': '#ef4444', 'line-width': 4, 'line-dasharray': [1.5, 1] }
+      });
+      map.addLayer({
+        id: 'report-points', type: 'circle', source: 'report', filter: ['==', '$type', 'Point'],
+        paint: {
+          'circle-radius': 8,
+          'circle-color': ['match', ['get', 'kind'], 'crew', '#ef4444', '#ffffff'],
+          'circle-stroke-color': '#111827', 'circle-stroke-width': 2
+        }
       });
 
       setMapLoaded(true);
@@ -411,6 +432,36 @@ export default function WayfindingAdmin() {
   const oldestPoint  = traces && traces.length > 0 ? traces[traces.length - 1].recorded_at : null;
   const newestPoint  = traces && traces.length > 0 ? traces[0].recorded_at : null;
 
+  useEffect(() => {
+    getRouteReports()
+      .then(res => { if (Array.isArray(res.data)) setReports(res.data); })
+      .catch(() => {});
+  }, []);
+
+  const showReport = (r) => {
+    setActiveReportId(r.id);
+    const map = mapRef.current;
+    if (!map || !mapReadyRef.current) return;
+    const features = [
+      ...(r.route?.length >= 2 ? [{ type: 'Feature', geometry: { type: 'LineString', coordinates: r.route }, properties: {} }] : []),
+      { type: 'Feature', geometry: { type: 'Point', coordinates: [r.crew_lng, r.crew_lat] }, properties: { kind: 'crew' } },
+      { type: 'Feature', geometry: { type: 'Point', coordinates: [r.dest_lng, r.dest_lat] }, properties: { kind: 'dest' } },
+    ];
+    map.getSource('report')?.setData({ type: 'FeatureCollection', features });
+    fitMapToPoints(map, [[r.crew_lng, r.crew_lat], [r.dest_lng, r.dest_lat], ...(r.route || [])]);
+  };
+
+  const resolveReport = async (id) => {
+    try {
+      await resolveRouteReport(id);
+      setReports(prev => prev.filter(r => r.id !== id));
+      if (activeReportId === id) {
+        setActiveReportId(null);
+        mapRef.current?.getSource('report')?.setData(EMPTY_FC);
+      }
+    } catch { /* stays in the list; tap Fixed again */ }
+  };
+
   return (
     <div className="flex flex-col h-screen bg-gray-900 text-white overflow-hidden">
       <header className="flex items-center justify-between px-4 py-2.5 bg-gray-800 border-b border-gray-700 flex-shrink-0">
@@ -598,6 +649,37 @@ export default function WayfindingAdmin() {
                     Quit Batch
                   </button>
                 )}
+              </div>
+            )}
+          </div>
+
+          {/* Crew wrong-way reports */}
+          <div className="p-4 border-b border-gray-700">
+            <div className="text-gray-400 text-xs uppercase tracking-wider mb-2">
+              Route Reports ({reports.length})
+            </div>
+            {reports.length === 0 ? (
+              <div className="text-gray-500 text-xs">No open reports. Crews tap 👎 Wrong way in the navigation view.</div>
+            ) : (
+              <div className="space-y-1.5">
+                <p className="text-gray-500 text-[11px]">Red dot = where they were · white = where they were going · red dashes = route they got.</p>
+                {reports.map(r => (
+                  <div key={r.id}
+                    className={`rounded-lg px-3 py-2 border cursor-pointer ${activeReportId === r.id ? 'bg-red-900/40 border-red-600' : 'bg-gray-750 border-gray-700 hover:border-gray-500'}`}
+                    onClick={() => showReport(r)}>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-white text-sm font-semibold truncate">
+                        {r.unit_number || 'Crew'}{r.call_number ? ` · Case #${r.call_number}` : ''}
+                      </span>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); resolveReport(r.id); }}
+                        className="text-xs px-2 py-0.5 rounded bg-green-800 hover:bg-green-700 text-green-200 flex-shrink-0">
+                        ✓ Fixed
+                      </button>
+                    </div>
+                    <div className="text-gray-500 text-xs">{new Date(r.created_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</div>
+                  </div>
+                ))}
               </div>
             )}
           </div>
