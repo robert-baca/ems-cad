@@ -98,7 +98,9 @@ export default function DispatcherDashboard() {
   const [sosAlerts,         setSosAlerts]            = useState([]);
   const [persistErrors,     setPersistErrors]        = useState([]);
   // unit_id -> latest unit:unacknowledged event. Shown only while that unit
-  // is still 'dispatched', so it clears itself the moment the crew responds.
+  // is still 'dispatched' on that same, still-open call, so it clears itself
+  // the moment the crew responds -- and an old alert can't resurface when
+  // the same unit is later dispatched to a different call.
   const [unackAlerts,       setUnackAlerts]          = useState({});
 
   // Load current shift on mount
@@ -323,7 +325,12 @@ export default function DispatcherDashboard() {
 
       {/* ── Unacknowledged dispatch banners ───────────────────── */}
       {Object.values(unackAlerts)
-        .filter(a => units.find(u => u.id === a.unit_id)?.status === 'dispatched')
+        .filter(a => {
+          if (units.find(u => u.id === a.unit_id)?.status !== 'dispatched') return false;
+          const c = calls.find(x => x.id === a.call_id);
+          return !!c && c.status !== 'closed' &&
+            (c.assigned_unit_id === a.unit_id || (c.additional_unit_ids || []).includes(a.unit_id));
+        })
         .map(a => (
           <div key={a.unit_id}
             className="flex items-center gap-3 px-4 py-2.5 bg-red-900/80 border-b border-red-600 flex-shrink-0 animate-pulse"

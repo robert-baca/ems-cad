@@ -17,22 +17,44 @@ export function unregisterPush() {
   ]);
 }
 
+// Forget the token locally without telling the server -- for when the unit
+// itself was deleted, so there's nothing left server-side to clear.
+export function forgetPushToken() {
+  currentPushToken = null;
+}
+
 // An app build without working push support (e.g. an old build missing the
 // native plugin or its AppDelegate hooks) can accept register() and then
 // never answer at all -- neither 'registration' nor 'registrationError'.
 // Treat silence as a failure so it shows up instead of staying invisible.
 const REGISTRATION_TIMEOUT_MS = 20 * 1000;
 
+// The native 'registration'/'registrationError' listeners can't be removed
+// individually (nativeListener has no matching remove), so they're added
+// once per app session and forward to whichever hook instance is currently
+// mounted. Adding them per mount stacked another pair on every login, each
+// firing its own token POST.
+let listenersAdded = false;
+let activeHandlers = null; // { onToken, onError } of the mounted hook, or null
+
+function ensureListeners() {
+  if (listenersAdded) return;
+  listenersAdded = true;
+  nativeListener('PushNotifications', 'registration', (result) => {
+    if (result?.value) activeHandlers?.onToken(result.value);
+  });
+  nativeListener('PushNotifications', 'registrationError', (err) => {
+    console.warn('[push] registration failed', err);
+    activeHandlers?.onError(err?.error || err?.message || JSON.stringify(err));
+  });
+}
+
 // Registers this device for real push notifications (delivered even if the
 // app has been fully force-closed) -- separate from the existing
 // LocalNotifications-based alerts, which only fire while this app's own
 // process is still alive (see the crew:attention_ping/call:assigned_to_me
-// handlers in CrewMobile.jsx). Fire-and-forget, set up once per login
-// session rather than tied to component mount/unmount -- same reasoning as
-// useCrewGps.js's native tracker not being torn down on unmount, since the
-// registration itself (and the listener waiting on its result) has no
-// reason to restart just because the crew member navigated to a different
-// screen in the app.
+// handlers in CrewMobile.jsx). Runs once per login (CrewMobile mount), and
+// again when retrying after a denial/failure.
 //
 // Returns the outcome so the crew screen can show it: 'pending' (not tried
 // yet / waiting on the OS), 'on', 'denied' (notifications turned off for
@@ -48,62 +70,73 @@ export function usePushRegistration({ token, enabled = true }) {
     if (!enabled || !token || !isNative() || startedRef.current) return;
     startedRef.current = true;
 
+    // Everything below is scoped to this run: once it's torn down (logout,
+    // or a retry starting), a late answer or the timeout must not touch
+    // state or report anything -- the timeout used to fire after logout and
+    // send a push-status report with no login attached.
+    let live = true;
+    let answered = false;
+    let timeout = null;
+
+    const settle = () => { answered = true; clearTimeout(timeout); };
+    const fail = (message) => {
+      if (!live || answered) return;
+      settle();
+      setPushState('error');
+      reportPushStatus('error', message).catch(() => {});
+    };
+
+    activeHandlers = {
+      onToken: (value) => {
+        if (!live) return;
+        settle();
+        currentPushToken = value;
+        const platform = window.Capacitor?.getPlatform?.() === 'ios' ? 'ios' : 'android';
+        setPushState('on');
+        registerPushToken(value, platform).catch(() => {});
+      },
+      onError: fail,
+    };
+
     (async () => {
-      let answered = false;
-      let timeout = null;
       try {
         const perm = await nativeCall('PushNotifications', 'requestPermissions');
+        if (!live) return;
         if (perm?.receive !== 'granted') {
           setPushState('denied');
           reportPushStatus('denied').catch(() => {});
           return;
         }
-
-        // Registered before register() is called below so a registration
-        // that resolves synchronously-fast can't fire before this is
-        // listening for it.
-        timeout = setTimeout(() => {
-          if (answered) return;
-          setPushState('error');
-          reportPushStatus('error', "No response from the phone's push service after 20s — app build may be out of date").catch(() => {});
-        }, REGISTRATION_TIMEOUT_MS);
-
-        nativeListener('PushNotifications', 'registration', (result) => {
-          if (!result?.value) return;
-          answered = true;
-          clearTimeout(timeout);
-          currentPushToken = result.value;
-          const platform = window.Capacitor?.getPlatform?.() === 'ios' ? 'ios' : 'android';
-          setPushState('on');
-          registerPushToken(result.value, platform).catch(() => {});
-        });
-        nativeListener('PushNotifications', 'registrationError', (err) => {
-          console.warn('[push] registration failed', err);
-          answered = true;
-          clearTimeout(timeout);
-          setPushState('error');
-          reportPushStatus('error', err?.error || err?.message || JSON.stringify(err)).catch(() => {});
-        });
-
+        // Listening before register() so a fast answer can't be missed.
+        ensureListeners();
+        timeout = setTimeout(
+          () => fail("No response from the phone's push service after 20s — app build may be out of date"),
+          REGISTRATION_TIMEOUT_MS
+        );
         await nativeCall('PushNotifications', 'register');
       } catch (e) {
         console.warn('[push] setup failed', e);
-        answered = true;
-        clearTimeout(timeout);
-        setPushState('error');
-        reportPushStatus('error', e?.message || String(e)).catch(() => {});
+        fail(e?.message || String(e));
       }
     })();
+
+    return () => {
+      live = false;
+      clearTimeout(timeout);
+      if (activeHandlers?.onError === fail) activeHandlers = null;
+      startedRef.current = false;
+    };
   }, [enabled, token, attempt]);
 
-  // After the user flips notifications on in Settings and comes back, try
-  // again -- requestPermissions() just returns the current state without
-  // re-prompting once it's been decided, so this is cheap.
+  // Retry when the app comes back to the foreground after a denial (they
+  // may have just turned notifications on in Settings) or a failure (e.g.
+  // a timeout on bad signal at startup). requestPermissions() just returns
+  // the current state without re-prompting once it's been decided, so this
+  // is cheap.
   useEffect(() => {
-    if (pushState !== 'denied') return;
+    if (pushState !== 'denied' && pushState !== 'error') return;
     const onVisible = () => {
       if (document.visibilityState !== 'visible') return;
-      startedRef.current = false;
       setPushState('pending');
       setAttempt(n => n + 1);
     };

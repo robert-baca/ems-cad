@@ -245,9 +245,21 @@ export function useCalls(setUnits) {
     }
   }, [syncUnitsForward]);
 
-  const updateTimestamp = useCallback((callId, field, isoValue) => {
+  // Returns an error string on failure (null on success). The server may
+  // refuse an edit (e.g. it would put a unit on two overlapping calls) --
+  // that used to be swallowed, leaving the screen showing a time the server
+  // never saved. On success the server's call:updated echo also brings the
+  // recalculated call status, which this optimistic update doesn't compute.
+  const updateTimestamp = useCallback(async (callId, field, isoValue) => {
+    const before = callsRef.current.find(c => c.id === callId)?.[field] ?? null;
     setCalls(prev => prev.map(c => c.id === callId ? { ...c, [field]: isoValue } : c));
-    updateCallTimestamps(callId, { [field]: isoValue }).catch(() => {});
+    try {
+      await updateCallTimestamps(callId, { [field]: isoValue });
+      return null;
+    } catch (err) {
+      setCalls(prev => prev.map(c => c.id === callId ? { ...c, [field]: before } : c));
+      return err?.response?.data?.error || 'Time change did not save — try again';
+    }
   }, []);
 
   // Releases the lock after LOG_NOW_COOLDOWN_MS instead of immediately —

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 
 export const STEPS = [
   { label: 'Received',           tsField: 'received_at' },
@@ -187,6 +187,12 @@ const ADDITIONAL_TS_LABELS = {
 };
 
 export default function CallTimeline({ call, units = [], onTimestampUpdate }) {
+  const [saveError, setSaveError] = useState('');
+  useEffect(() => { setSaveError(''); }, [call.id]);
+  const saveTime = async (field, iso) => {
+    const err = await onTimestampUpdate?.(field, iso);
+    setSaveError(err || '');
+  };
   const additionalUnitIds = call.additional_unit_ids || [];
   const additionalUnitTimestamps = call.additional_unit_timestamps || {};
 
@@ -200,6 +206,12 @@ export default function CallTimeline({ call, units = [], onTimestampUpdate }) {
 
   return (
     <div className="space-y-4">
+      {saveError && (
+        <div className="px-3 py-2 rounded-lg bg-red-900/60 border border-red-700 text-red-200 text-xs flex items-start gap-2">
+          <span className="flex-1">⚠ {saveError}</span>
+          <button onClick={() => setSaveError('')} className="text-red-400 hover:text-white leading-none">×</button>
+        </div>
+      )}
       <div className="space-y-0.5">
         {STEPS.map((step, i) => (
           <TimeRow
@@ -209,8 +221,8 @@ export default function CallTimeline({ call, units = [], onTimestampUpdate }) {
             isLast={i === STEPS.length - 1}
             prevTs={i > 0 ? call[STEPS[i - 1].tsField] : null}
             nextTs={i < STEPS.length - 1 ? call[STEPS[i + 1].tsField] : null}
-            onUpdate={(field, iso) => onTimestampUpdate?.(field, iso)}
-            onClear={(field) => onTimestampUpdate?.(field, null)}
+            onUpdate={saveTime}
+            onClear={(field) => saveTime(field, null)}
             baseDate={call.received_at}
           />
         ))}

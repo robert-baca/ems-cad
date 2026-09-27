@@ -6,7 +6,7 @@ import { useCalls } from '../hooks/useCalls';
 import { useLocations } from '../hooks/useLocations';
 import { useSocket } from '../hooks/useSocket';
 import { useCrewGps, stopCrewGpsTracking } from '../hooks/useCrewGps';
-import { usePushRegistration, unregisterPush } from '../hooks/usePushRegistration';
+import { usePushRegistration, unregisterPush, forgetPushToken } from '../hooks/usePushRegistration';
 import { useCrewNotifications } from '../hooks/useCrewNotifications';
 import ActiveCall from '../components/crew/ActiveCall';
 import StatusButtons from '../components/crew/StatusButtons';
@@ -345,6 +345,10 @@ export default function CrewMobile() {
     if (!units.length) return;
     if (myUnit && user?.unit_id && myUnit.id !== user.unit_id) {
       stopCrewGpsTracking();
+      // The unit this login pointed at was deleted/recreated, and its push
+      // registration went with it -- just drop the local copy; the next
+      // login registers against the new unit.
+      forgetPushToken();
       logout();
       navigate('/login');
     }

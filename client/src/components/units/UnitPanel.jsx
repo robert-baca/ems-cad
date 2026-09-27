@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { STATUS_COLORS, STATUS_LABELS } from '../../data/mockData';
 import EditUnitModal from './EditUnitModal';
 import AddUnitModal from './AddUnitModal';
@@ -17,12 +17,13 @@ const GPS_PERMISSION_LABELS = {
   battery_restricted: 'battery optimization not disabled — may get killed in the background',
 };
 
-// What dispatch sees for a unit's push setup. push_token survives server
-// restarts (persisted); push_status/push_error are live reports from the phone.
+// What dispatch sees for a unit's push setup. has_push (the server never
+// sends the raw token) survives server restarts; push_status/push_error are
+// live reports from the phone.
 function pushInfo(unit) {
   if (unit.push_status === 'denied') return { icon: '🔕', text: 'Notifications off on phone', cls: 'text-amber-400' };
   if (unit.push_status === 'error')  return { icon: '⚠', text: 'Push setup failed', cls: 'text-red-400', title: unit.push_error };
-  if (unit.push_token) return { icon: '🔔', text: `Push ready · ${unit.push_platform === 'ios' ? 'iPhone' : 'Android'}`, cls: 'text-gray-500' };
+  if (unit.has_push) return { icon: '🔔', text: `Push ready · ${unit.push_platform === 'ios' ? 'iPhone' : 'Android'}`, cls: 'text-gray-500' };
   return null;
 }
 
@@ -68,6 +69,13 @@ function UnitCard({ unit, activeCall, isSelected, onClick, onHistory, onEdit, on
     setPushTest('sending');
     setPushTest(await onTestPush(unit.id));
   };
+
+  // A test result is a point-in-time answer -- clear it before it goes stale.
+  useEffect(() => {
+    if (!pushTest || pushTest === 'sending') return;
+    const t = setTimeout(() => setPushTest(null), 20000);
+    return () => clearTimeout(t);
+  }, [pushTest]);
 
   return (
     <div

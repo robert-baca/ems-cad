@@ -100,6 +100,20 @@ function emitDispatch(event, payload) {
   io.to('display').emit(event, sanitizeForDisplay(event, payload));
 }
 
+// The one shape a unit takes whenever it leaves the server (API responses,
+// dispatcher/display/crew socket events). Strips the password hash, the
+// phone's raw push token (dispatch only needs to know one exists), and
+// server-internal bookkeeping fields (leading underscore).
+function sanitizeUnit(u) {
+  const out = {};
+  for (const [k, v] of Object.entries(u)) {
+    if (k === 'password_hash' || k === 'push_token' || k.startsWith('_')) continue;
+    out[k] = v;
+  }
+  out.has_push = !!u.push_token;
+  return out;
+}
+
 // Every "this unit was just assigned/added to a call" moment shares this so
 // the real push (see push.js) can't drift out of sync with the socket event
 // it's meant to back up. Unlike the socket event alone, the push still
@@ -951,7 +965,7 @@ app.get('/api/units', verifyToken, (req, res) => {
   // BeaconMode.jsx) with no opt-in from the target, matching the always-on
   // GPS visibility dispatch already has — so unlike other crew-facing
   // endpoints, positions here are never masked between crew members.
-  const sanitized = units.map(u => ({ ...u, password_hash: undefined }));
+  const sanitized = units.map(u => sanitizeUnit(u));
   res.json(sanitized);
 });
 
@@ -1044,7 +1058,7 @@ app.post('/api/units', verifyToken, async (req, res) => {
     console.error('[units] failed to save new unit:', err);
     return res.status(500).json({ error: 'Failed to save unit — please try again' });
   }
-  const sanitized = { ...newUnit, password_hash: undefined };
+  const sanitized = sanitizeUnit(newUnit);
   emitDispatch('unit:updated', sanitized);
   res.status(201).json(sanitized);
 });
@@ -1081,7 +1095,7 @@ app.put('/api/units/:id', verifyToken, async (req, res) => {
     console.error('[units] failed to save unit update:', err);
     return res.status(500).json({ error: 'Failed to save unit — please try again' });
   }
-  const sanitized = { ...unit, password_hash: undefined };
+  const sanitized = sanitizeUnit(unit);
   emitDispatch('unit:updated', sanitized);
   res.json(sanitized);
 });
@@ -1095,7 +1109,7 @@ app.delete('/api/units/:id/gps', verifyToken, async (req, res) => {
   unit.last_gps_at     = null;
   unit.last_gps_fix_ts = null; // reset dedup so next ping always lands
   persist(saveUnit(unit), 'unit ' + unit.id);
-  const sanitized = { ...unit, password_hash: undefined };
+  const sanitized = sanitizeUnit(unit);
   emitDispatch('unit:updated', sanitized);
   // Explicit null GPS update so ParkMap on display board removes the dot
   emitDispatch('unit:gps_update', { unit_id: unit.id, unit_number: unit.unit_number, lat: null, lng: null, timestamp: null });
@@ -1678,7 +1692,7 @@ app.post('/api/crew/add-unit', verifyPersonnelPreAuth, async (req, res) => {
     };
     units.push(unit);
     persist(saveUnit(unit), 'unit ' + unit.id);
-    emitDispatch('unit:updated', { ...unit, password_hash: undefined });
+    emitDispatch('unit:updated', sanitizeUnit(unit));
   }
 
   const personnel = req.personnel;
@@ -1729,7 +1743,7 @@ app.post('/api/shift/start', verifyToken, async (req, res) => {
     persist(saveUnit(unit), 'unit ' + unit.id);
   });
 
-  const sanitizedUnits = units.map(u => ({ ...u, password_hash: undefined }));
+  const sanitizedUnits = units.map(u => sanitizeUnit(u));
   emitDispatch('shift:started', { shift: currentShift, units: sanitizedUnits });
   res.json({ shift: currentShift, units: sanitizedUnits });
 });
@@ -1826,7 +1840,7 @@ app.post('/api/shift/end', verifyToken, async (req, res) => {
   units.forEach(u => { u.last_gps_post_at = null; });
 
   currentShift = null;
-  const sanitizedUnits = units.map(u => ({ ...u, password_hash: undefined }));
+  const sanitizedUnits = units.map(u => sanitizeUnit(u));
   emitDispatch('shift:ended', { ...summary, units: sanitizedUnits, open_calls: openCalls });
   units.forEach(u => io.to(`crew:${u.id}`).emit('shift:ended', { units: sanitizedUnits }));
   res.json({ ...summary, open_calls: openCalls });
@@ -1852,7 +1866,7 @@ app.patch('/api/shift/units/:unit_id', verifyToken, async (req, res) => {
     persist(saveShift(currentShift), 'shift staffing');
   }
   persist(saveUnit(unit), 'unit ' + unit.id);
-  const sanitized = { ...unit, password_hash: undefined };
+  const sanitized = sanitizeUnit(unit);
   emitDispatch('unit:updated', sanitized);
   res.json(sanitized);
 });
@@ -1947,7 +1961,9 @@ function checkSilentGps() {
     console.log(`[gps] ${unit.unit_number} silent for ${min} min — pushing a reopen reminder`);
     sendPushToUnit(unit, {
       title: '📍 Location stopped updating',
-      body: `Dispatch hasn't received your location in ${min} min. Open the app to restart tracking.`
+      // Also reaches phones that are running but indoors -- the tracker drops
+      // fixes too inaccurate to use, so both cases look the same from here.
+      body: `Dispatch hasn't gotten your location in ${min} min. If the app is closed, open it. If you're indoors, step outside for a moment.`
     }).catch(() => {});
   });
 }
@@ -2205,7 +2221,7 @@ app.post('/api/crew/gps', verifyToken, gpsRateLimit, (req, res) => {
   const { gpsPermission } = req.body;
   if (gpsPermission && gpsPermission !== unit.gps_permission_status) {
     unit.gps_permission_status = gpsPermission;
-    emitDispatch('unit:updated', { ...unit, password_hash: undefined });
+    emitDispatch('unit:updated', sanitizeUnit(unit));
   }
 
   // Logging every inbound post including self-reported accuracy so a
@@ -2228,7 +2244,7 @@ app.patch('/api/crew/gps-sharing', verifyToken, (req, res) => {
   if (!unit) return res.status(404).json({ error: 'Not found' });
 
   unit.gps_sharing_disabled = !req.body.enabled;
-  emitDispatch('unit:updated', { ...unit, password_hash: undefined });
+  emitDispatch('unit:updated', sanitizeUnit(unit));
   res.json({ ok: true, gps_sharing_disabled: unit.gps_sharing_disabled });
 });
 
@@ -2255,6 +2271,7 @@ app.post('/api/crew/push-token', verifyToken, async (req, res) => {
       u.push_status = null;
       u.push_error = null;
       persist(saveUnit(u), 'unit ' + u.id);
+      emitDispatch('unit:updated', sanitizeUnit(u));
     }
   });
   unit.push_token = pushToken;
@@ -2263,7 +2280,7 @@ app.post('/api/crew/push-token', verifyToken, async (req, res) => {
   unit.push_error = null;
   console.log(`[push] ${unit.unit_number} registered (${platform})`);
   persist(saveUnit(unit), 'unit ' + unit.id);
-  emitDispatch('unit:updated', { ...unit, password_hash: undefined });
+  emitDispatch('unit:updated', sanitizeUnit(unit));
   res.json({ ok: true });
 });
 
@@ -2280,7 +2297,7 @@ app.post('/api/crew/push-status', verifyToken, (req, res) => {
   unit.push_status = status;
   unit.push_error = error ? String(error).slice(0, 300) : null;
   console.log(`[push] ${unit.unit_number} reported ${status}${unit.push_error ? ': ' + unit.push_error : ''}`);
-  emitDispatch('unit:updated', { ...unit, password_hash: undefined });
+  emitDispatch('unit:updated', sanitizeUnit(unit));
   res.json({ ok: true });
 });
 
@@ -2300,7 +2317,7 @@ app.delete('/api/crew/push-token', verifyToken, (req, res) => {
     unit.last_gps_post_at = null;
     console.log(`[push] ${unit.unit_number} unregistered (crew logout)`);
     persist(saveUnit(unit), 'unit ' + unit.id);
-    emitDispatch('unit:updated', { ...unit, password_hash: undefined });
+    emitDispatch('unit:updated', sanitizeUnit(unit));
   }
   res.json({ ok: true });
 });
@@ -2721,7 +2738,7 @@ io.on('connection', (socket) => {
       socket.emit('error:auth', { message: 'Unauthorized' });
       return;
     }
-    const sanitizedUnits = units.map(u => ({ ...u, password_hash: undefined }));
+    const sanitizedUnits = units.map(u => sanitizeUnit(u));
     // Display board gets its own room and a sanitized call feed (no chat/narrative/
     // disposition/close-notes) — it's PIN-gated, not per-user authenticated, and was
     // previously lumped into the 'dispatchers' room getting the identical PHI-adjacent

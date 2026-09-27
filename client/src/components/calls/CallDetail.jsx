@@ -87,6 +87,12 @@ export default function CallDetail({
   const [detailComplaint, setDetailComplaint] = useState('');
   const [editingUnitStatusId, setEditingUnitStatusId] = useState(null);
   const [removingUnitId,  setRemovingUnitId]  = useState(null);
+  // Save failures for the inline editors below -- previously swallowed, so a
+  // rejected save just silently kept the old value (or, for the narrative,
+  // left text on screen that never reached the incident record).
+  const [narrativeError,  setNarrativeError]  = useState('');
+  const [detailsError,    setDetailsError]    = useState('');
+  const [locationError,   setLocationError]   = useState('');
   const clock = LiveClock();
 
   // Reset to detail tab when selected call changes
@@ -113,11 +119,19 @@ export default function CallDetail({
     setEditingDetails(false);
     setEditingUnitStatusId(null);
     setRemovingUnitId(null);
+    setNarrativeError('');
+    setDetailsError('');
+    setLocationError('');
   }, [call.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleNarrativeBlur = useCallback(() => {
     lastPushedNarrativeRef.current = narrative;
-    updateCallNarrative(call.id, narrative).catch(() => {});
+    setNarrativeError('');
+    updateCallNarrative(call.id, narrative).catch((err) => {
+      setNarrativeError(err?.response?.data?.error
+        ? `Narrative not saved: ${err.response.data.error}`
+        : 'Narrative not saved — click back into the box and out again to retry');
+    });
   }, [call.id, narrative]);
 
   // Resync local narrative when call.narrative changes from an external
@@ -382,20 +396,26 @@ export default function CallDetail({
                   <div className="flex gap-2">
                     <button
                       onClick={async () => {
-                        await updateCallDetails(call.id, { call_type: detailType, chief_complaint: detailComplaint }).catch(() => {});
-                        setEditingDetails(false);
+                        setDetailsError('');
+                        try {
+                          await updateCallDetails(call.id, { call_type: detailType, chief_complaint: detailComplaint });
+                          setEditingDetails(false);
+                        } catch (err) {
+                          setDetailsError(err?.response?.data?.error || 'Did not save — try again');
+                        }
                       }}
                       className="flex-1 py-1.5 bg-blue-700 hover:bg-blue-600 text-white text-xs font-bold rounded-lg transition-colors"
                     >
                       Save
                     </button>
                     <button
-                      onClick={() => setEditingDetails(false)}
+                      onClick={() => { setEditingDetails(false); setDetailsError(''); }}
                       className="flex-1 py-1.5 bg-gray-600 hover:bg-gray-500 text-gray-300 text-xs rounded-lg transition-colors"
                     >
                       Cancel
                     </button>
                   </div>
+                  {detailsError && <p className="text-red-400 text-xs">⚠ {detailsError}</p>}
                 </div>
               ) : (
                 <div className="flex items-start justify-between">
@@ -427,20 +447,26 @@ export default function CallDetail({
                   <div className="flex gap-2">
                     <button
                       onClick={async () => {
-                        await updateCallLocation(call.id, { location_name: locName }).catch(() => {});
-                        setEditingLocation(false);
+                        setLocationError('');
+                        try {
+                          await updateCallLocation(call.id, { location_name: locName });
+                          setEditingLocation(false);
+                        } catch (err) {
+                          setLocationError(err?.response?.data?.error || 'Did not save — try again');
+                        }
                       }}
                       className="flex-1 py-1.5 bg-blue-700 hover:bg-blue-600 text-white text-xs font-bold rounded-lg transition-colors"
                     >
                       Save
                     </button>
                     <button
-                      onClick={() => setEditingLocation(false)}
+                      onClick={() => { setEditingLocation(false); setLocationError(''); }}
                       className="flex-1 py-1.5 bg-gray-600 hover:bg-gray-500 text-gray-300 text-xs rounded-lg transition-colors"
                     >
                       Cancel
                     </button>
                   </div>
+                  {locationError && <p className="text-red-400 text-xs">⚠ {locationError}</p>}
                 </div>
               ) : (
                 <div className="flex items-center justify-between">
@@ -698,7 +724,9 @@ export default function CallDetail({
                 rows={4}
                 className="w-full bg-gray-600 text-gray-100 text-sm rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500 resize-none"
               />
-              <p className="text-gray-600 text-xs">Auto-saves when you click away</p>
+              {narrativeError
+                ? <p className="text-red-400 text-xs">⚠ {narrativeError}</p>
+                : <p className="text-gray-600 text-xs">Auto-saves when you click away</p>}
             </div>
 
             {/* Mutual Aid */}
