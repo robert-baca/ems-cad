@@ -5,13 +5,11 @@ import { makeProjector, nearestOnSegmentFromOrigin } from './snapToPath';
 // into a routable graph, so a crew member's route to a call can follow the
 // trail network instead of a straight line.
 //
-// v1 scope limit: two paths that physically cross mid-segment without
-// sharing an endpoint are NOT auto-spliced into a junction — only vertices
-// that are already close together get merged into a shared node. If an
-// admin notices two trails cross, drawing a short connector between them
-// with the existing "Draw New Path" tool creates a real shared vertex and
-// routes through it normally. Detecting true geometric intersections and
-// splicing the graph at them is real complexity this tool doesn't need yet.
+// Junctions: nodePaths() splices paths together where they cross
+// mid-segment and where a path's end stops against the side of another
+// (T_JUNCTION_DIST_FT). Before that existed, only vertices that happened to
+// land close together were joined, which left the published network in
+// disconnected pieces and made many routes fall back to a straight line.
 
 // Cross-path vertex merge tolerance. Tighter than snapToPath.js's
 // MAX_SNAP_DIST_FT (40ft), which exists to absorb raw GPS/satellite noise —
@@ -59,7 +57,7 @@ export class UnionFind {
 // separately-drawn paths that happen to share both endpoints) are fine —
 // Dijkstra doesn't care.
 export function buildRouteGraph(paths, { mergeDistFt = NODE_MERGE_DIST_FT } = {}) {
-  const validPaths = (paths || []).filter(isRoutablePath);
+  const { paths: validPaths, connectors } = nodePaths((paths || []).filter(isRoutablePath));
 
   // Flatten every vertex of every path, remembering each path's slice.
   const verts = [];
@@ -120,7 +118,133 @@ export function buildRouteGraph(paths, { mergeDistFt = NODE_MERGE_DIST_FT } = {}
     }
   });
 
+  // T-junction connectors from nodePaths(): a path's loose end to the point
+  // added on the neighbouring path. Only needed when the gap was too big for
+  // the vertex merge above to have joined them already.
+  const vertexNode = new Map(); // "lng,lat" -> nodeId (first vertex seen at that exact spot)
+  verts.forEach((v, i) => {
+    const key = `${v.lng},${v.lat}`;
+    if (!vertexNode.has(key)) vertexNode.set(key, rootToNodeId.get(uf.find(i)));
+  });
+  connectors.forEach(([[lngA, latA], [lngB, latB]]) => {
+    const nodeA = vertexNode.get(`${lngA},${latA}`);
+    const nodeB = vertexNode.get(`${lngB},${latB}`);
+    if (!nodeA || !nodeB || nodeA === nodeB) return;
+    const distFt = getDistanceFt(latA, lngA, latB, lngB);
+    const id = `c${edgeSeq++}`;
+    ensure(nodeA).push({ id, to: nodeB, distFt, geometry: [[lngA, latA], [lngB, latB]] });
+    ensure(nodeB).push({ id, to: nodeA, distFt, geometry: [[lngB, latB], [lngA, latA]] });
+  });
+
   return { nodes, adjacency };
+}
+
+// How close a path's loose end has to be to the side of another path to be
+// treated as joining it (a T-junction). Hand-traced paths routinely stop a
+// little short of, or overshoot, the walkway they meet.
+export const T_JUNCTION_DIST_FT = 40;
+
+// Paths are traced independently, so where two walkways cross mid-segment,
+// or one ends against the side of another, they share no vertex -- and the
+// vertex merge in buildRouteGraph can't join them. Left alone, that split
+// the published network into disconnected islands, so many routes silently
+// fell back to a straight line. This "nodes" the network first:
+//  - every crossing between segments of different paths gets a vertex
+//    inserted at the exact same spot on both (the merge then joins them)
+//  - every path end within T_JUNCTION_DIST_FT of another path's segment
+//    gets a vertex inserted on that segment, plus a connector edge to it
+// Returns new path objects (inputs untouched) and the connector list.
+function nodePaths(paths) {
+  if (!paths.length) return { paths, connectors: [] };
+  const lat0 = paths[0].coordinates[0][1];
+  const lng0 = paths[0].coordinates[0][0];
+  const FT_PER_DEG = 111320 * 3.28084;
+  const kx = Math.cos(lat0 * Math.PI / 180) * FT_PER_DEG;
+  const toXY = ([lng, lat]) => [(lng - lng0) * kx, (lat - lat0) * FT_PER_DEG];
+  const toLngLat = ([x, y]) => [lng0 + x / kx, lat0 + y / FT_PER_DEG];
+
+  const segs = []; // { p, k, a:[x,y], b:[x,y], minX.. }
+  paths.forEach((path, p) => {
+    const c = path.coordinates;
+    for (let k = 0; k < c.length - 1; k++) {
+      const a = toXY(c[k]), b = toXY(c[k + 1]);
+      segs.push({ p, k, a, b,
+        minX: Math.min(a[0], b[0]), maxX: Math.max(a[0], b[0]),
+        minY: Math.min(a[1], b[1]), maxY: Math.max(a[1], b[1]) });
+    }
+  });
+
+  // splits[p][k] = [{ t, xy }] -- points to insert inside segment k of path p
+  const splits = paths.map(path => path.coordinates.map(() => []));
+  const addSplit = (s, t, xy) => splits[s.p][s.k].push({ t, xy });
+  const EPS = 1e-6;
+
+  // 1. Crossings between different paths.
+  for (let i = 0; i < segs.length; i++) {
+    const s = segs[i];
+    for (let j = i + 1; j < segs.length; j++) {
+      const u = segs[j];
+      if (u.p === s.p) continue;
+      if (u.minX > s.maxX || u.maxX < s.minX || u.minY > s.maxY || u.maxY < s.minY) continue;
+      const rx = s.b[0] - s.a[0], ry = s.b[1] - s.a[1];
+      const qx = u.b[0] - u.a[0], qy = u.b[1] - u.a[1];
+      const den = rx * qy - ry * qx;
+      if (Math.abs(den) < 1e-9) continue; // parallel
+      const dx = u.a[0] - s.a[0], dy = u.a[1] - s.a[1];
+      const t = (dx * qy - dy * qx) / den;
+      const v = (dx * ry - dy * rx) / den;
+      if (t <= EPS || t >= 1 - EPS || v <= EPS || v >= 1 - EPS) continue; // endpoints handled by merge/T-junctions
+      const xy = [s.a[0] + t * rx, s.a[1] + t * ry];
+      addSplit(s, t, xy);
+      addSplit(u, v, xy);
+    }
+  }
+
+  // 2. T-junctions: each path end to the nearest segment of another path.
+  const connectors = [];
+  paths.forEach((path, p) => {
+    const c = path.coordinates;
+    [0, c.length - 1].forEach(idx => {
+      const pt = toXY(c[idx]);
+      let best = null;
+      for (const s of segs) {
+        if (s.p === p) continue;
+        if (pt[0] < s.minX - T_JUNCTION_DIST_FT || pt[0] > s.maxX + T_JUNCTION_DIST_FT ||
+            pt[1] < s.minY - T_JUNCTION_DIST_FT || pt[1] > s.maxY + T_JUNCTION_DIST_FT) continue;
+        const rx = s.b[0] - s.a[0], ry = s.b[1] - s.a[1];
+        const len2 = rx * rx + ry * ry;
+        if (!len2) continue;
+        const t = Math.max(0, Math.min(1, ((pt[0] - s.a[0]) * rx + (pt[1] - s.a[1]) * ry) / len2));
+        const x = s.a[0] + t * rx, y = s.a[1] + t * ry;
+        const d = Math.hypot(pt[0] - x, pt[1] - y);
+        if (d <= T_JUNCTION_DIST_FT && (!best || d < best.d)) best = { s, t, xy: [x, y], d };
+      }
+      if (!best) return;
+      let target;
+      if (best.t <= EPS) target = paths[best.s.p].coordinates[best.s.k];
+      else if (best.t >= 1 - EPS) target = paths[best.s.p].coordinates[best.s.k + 1];
+      else { addSplit(best.s, best.t, best.xy); target = toLngLat(best.xy); }
+      connectors.push([c[idx], target]);
+    });
+  });
+
+  // 3. Rebuild each path with its inserted vertices, in order along it.
+  // Inserted points use the same toLngLat() of the same xy on both paths,
+  // so a crossing lands on bit-identical coordinates and merges.
+  const out = paths.map((path, p) => {
+    const c = path.coordinates;
+    const coords = [];
+    for (let k = 0; k < c.length; k++) {
+      coords.push(c[k]);
+      if (k < c.length - 1) {
+        splits[p][k].sort((m, n) => m.t - n.t).forEach(({ xy }) => coords.push(toLngLat(xy)));
+      }
+    }
+    return { ...path, coordinates: coords };
+  });
+  // Connector targets that were inserted points must match the rebuilt
+  // coordinates exactly -- they do, since both came from toLngLat(xy).
+  return { paths: out, connectors };
 }
 
 // Snaps an arbitrary [lng,lat] point (crew position, call location) onto the

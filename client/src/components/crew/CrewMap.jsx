@@ -148,11 +148,19 @@ export default function CrewMap({ call, myUnit, locations = [] }) {
         map.fitBounds(bounds, { padding: 48, maxZoom: 18, animate: false });
       }
 
-      // Dashed line from crew to the call — updated as GPS comes in below
+      // Line from crew to the call — updated as GPS comes in below. When a
+      // walking route exists it's drawn bold (white casing + blue) so it's
+      // the one thing that stands out; with no route it's a thin dashed
+      // straight line (see the route-style effect further down).
       map.addSource('crew-line', { type: 'geojson', data: EMPTY_LINE });
       map.addLayer({
+        id: 'crew-line-casing', type: 'line', source: 'crew-line',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': '#ffffff', 'line-width': 9, 'line-opacity': 0 }
+      });
+      map.addLayer({
         id: 'crew-line', type: 'line', source: 'crew-line',
-        layout: { 'line-cap': 'round' },
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
         paint: { 'line-color': '#facc15', 'line-width': 2.5, 'line-dasharray': [2, 1.5], 'line-opacity': 0.85 }
       });
 
@@ -162,8 +170,8 @@ export default function CrewMap({ call, myUnit, locations = [] }) {
       map.addLayer({
         id: 'park-paths-line', type: 'line', source: 'park-paths',
         layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: { 'line-color': '#22c55e', 'line-width': 3, 'line-opacity': 0.75 }
-      }, 'crew-line');
+        paint: { 'line-color': '#22c55e', 'line-width': 2, 'line-opacity': 0.35 }
+      }, 'crew-line-casing');
 
       setMapLoaded(true); // triggers the locations effect if data arrived before map loaded
     });
@@ -288,6 +296,31 @@ export default function CrewMap({ call, myUnit, locations = [] }) {
       : [];
     map.getSource('park-paths')?.setData({ type: 'FeatureCollection', features });
   }, [paths, pathsEnabled, mapLoaded]);
+
+  // A route is the thing to follow: bold blue with a white edge, and the
+  // rest of the walkway network faded right back so it doesn't compete.
+  // No route: the old thin dashed straight line, network a bit more visible
+  // so the crew can still pick their own way.
+  const hasRoute = !!(route?.points?.length >= 2);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReadyRef.current || !map.getLayer('crew-line')) return;
+    if (hasRoute) {
+      map.setPaintProperty('crew-line', 'line-color', '#2563eb');
+      map.setPaintProperty('crew-line', 'line-width', 6);
+      map.setPaintProperty('crew-line', 'line-dasharray', [1, 0]);
+      map.setPaintProperty('crew-line', 'line-opacity', 1);
+      map.setPaintProperty('crew-line-casing', 'line-opacity', 0.9);
+      map.setPaintProperty('park-paths-line', 'line-opacity', 0.18);
+    } else {
+      map.setPaintProperty('crew-line', 'line-color', '#facc15');
+      map.setPaintProperty('crew-line', 'line-width', 2.5);
+      map.setPaintProperty('crew-line', 'line-dasharray', [2, 1.5]);
+      map.setPaintProperty('crew-line', 'line-opacity', 0.85);
+      map.setPaintProperty('crew-line-casing', 'line-opacity', 0);
+      map.setPaintProperty('park-paths-line', 'line-opacity', 0.35);
+    }
+  }, [hasRoute, mapLoaded]);
 
   const distFt = route
     ? route.distFt
