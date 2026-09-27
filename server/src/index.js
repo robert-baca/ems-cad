@@ -104,6 +104,15 @@ function emitDispatch(event, payload) {
 // dispatcher/display/crew socket events). Strips the password hash, the
 // phone's raw push token (dispatch only needs to know one exists), and
 // server-internal bookkeeping fields (leading underscore).
+// A backup unit that finished early and released itself from a still-open
+// call (POST /api/calls/:id/release). It stays in additional_unit_ids so the
+// call's record and timeline still show it was there, but it no longer counts
+// as working the call: it's free for new dispatches and stops getting this
+// call's status syncs, updates and pushes.
+function isReleased(call, unitId) {
+  return (call?.released_unit_ids || []).includes(unitId);
+}
+
 function isCartUnit(u) {
   return u?.unit_type === 'Cart';
 }
@@ -341,6 +350,7 @@ async function initDb() {
 
   await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS narrative TEXT`);
   await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS additional_unit_ids JSONB DEFAULT '[]'`);
+  await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS released_unit_ids JSONB DEFAULT '[]'`);
   await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS response_mode TEXT`);
   await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS parent_call_id TEXT`);
   await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS mutual_aid_agencies JSONB DEFAULT '[]'`);
@@ -470,6 +480,7 @@ async function initDb() {
     ...r,
     comments:            r.comments            || [],
     additional_unit_ids: r.additional_unit_ids || [],
+    released_unit_ids:   r.released_unit_ids   || [],
     mutual_aid_agencies: r.mutual_aid_agencies || [],
     co_unit_ids:         r.co_unit_ids         || [],
     additional_units_added_at:   r.additional_units_added_at   || {},
@@ -531,8 +542,8 @@ async function saveCall(call) {
       cleared_at, available_at, closed_at,
       disposition, close_notes, comments, narrative, additional_unit_ids, response_mode,
       parent_call_id, mutual_aid_agencies, co_unit_ids, additional_units_added_at,
-      chief_complaint, notes, additional_unit_timestamps)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35)
+      chief_complaint, notes, additional_unit_timestamps, released_unit_ids)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36)
     ON CONFLICT (id) DO UPDATE SET
       status=EXCLUDED.status, call_type=EXCLUDED.call_type, priority=EXCLUDED.priority,
       location_name=EXCLUDED.location_name, park_zone=EXCLUDED.park_zone,
@@ -549,7 +560,8 @@ async function saveCall(call) {
       parent_call_id=EXCLUDED.parent_call_id, mutual_aid_agencies=EXCLUDED.mutual_aid_agencies,
       co_unit_ids=EXCLUDED.co_unit_ids, additional_units_added_at=EXCLUDED.additional_units_added_at,
       chief_complaint=EXCLUDED.chief_complaint, notes=EXCLUDED.notes,
-      additional_unit_timestamps=EXCLUDED.additional_unit_timestamps
+      additional_unit_timestamps=EXCLUDED.additional_unit_timestamps,
+      released_unit_ids=EXCLUDED.released_unit_ids
   `, [call.id, call.call_number, call.status, call.call_type, call.priority,
       call.location_name, call.park_zone || null,
       call.location_lat, call.location_lng, call.assigned_unit_id,
@@ -564,7 +576,8 @@ async function saveCall(call) {
       JSON.stringify(call.co_unit_ids || []),
       JSON.stringify(call.additional_units_added_at || {}),
       call.chief_complaint || null, call.notes || null,
-      JSON.stringify(call.additional_unit_timestamps || {})]);
+      JSON.stringify(call.additional_unit_timestamps || {}),
+      JSON.stringify(call.released_unit_ids || [])]);
 }
 
 async function saveLocation(loc) {
@@ -959,7 +972,7 @@ function isForwardStatusChange(fromStatus, toStatus) {
 // every unit actually tied to the call, matching the pattern already used
 // for status changes and comments.
 function notifyCallCrew(call, changes) {
-  const unitIds = [...new Set([call.assigned_unit_id, ...(call.co_unit_ids || []), ...(call.additional_unit_ids || [])])].filter(Boolean);
+  const unitIds = [...new Set([call.assigned_unit_id, ...(call.co_unit_ids || []), ...(call.additional_unit_ids || [])])].filter(id => id && !isReleased(call, id));
   unitIds.forEach(uid => io.to(`crew:${uid}`).emit('call:updated', { call_id: call.id, changes }));
 }
 
@@ -1033,7 +1046,7 @@ app.patch('/api/units/:id/status', verifyToken, async (req, res) => {
   if (tsField) {
     const activeCall = calls.find(c =>
       c.assigned_unit_id !== unit.id &&
-      (c.additional_unit_ids || []).includes(unit.id) &&
+      (c.additional_unit_ids || []).includes(unit.id) && !isReleased(c, unit.id) &&
       c.status !== 'closed'
     );
     if (activeCall) {
@@ -1301,7 +1314,8 @@ app.get('/api/calls', verifyToken, (req, res) => {
   if (req.user.role === 'crew') {
     const mine = calls.filter(c =>
       c.status !== 'closed' &&
-      (c.assigned_unit_id === req.user.unit_id || (c.additional_unit_ids || []).includes(req.user.unit_id))
+      (c.assigned_unit_id === req.user.unit_id || (c.additional_unit_ids || []).includes(req.user.unit_id)) &&
+      !isReleased(c, req.user.unit_id)
     );
     return res.json(mine);
   }
@@ -1550,6 +1564,8 @@ app.post('/api/calls/:id/add-unit', verifyToken, async (req, res) => {
   if (conflict) return res.status(409).json({ error: `Unit already on call #${conflict.call_number}` });
 
   if (!call.additional_unit_ids) call.additional_unit_ids = [];
+  // Re-adding a unit that released itself earlier puts it back on the call.
+  if (isReleased(call, unit_id)) call.released_unit_ids = call.released_unit_ids.filter(id => id !== unit_id);
   if (!call.additional_unit_ids.includes(unit_id) && call.assigned_unit_id !== unit_id) {
     call.additional_unit_ids.push(unit_id);
     if (!call.additional_units_added_at) call.additional_units_added_at = {};
@@ -1566,7 +1582,7 @@ app.post('/api/calls/:id/add-unit', verifyToken, async (req, res) => {
   persist(saveCall(call), 'call ' + call.id);
   emitDispatch('call:updated', {
     call_id: call.id,
-    changes: { additional_unit_ids: call.additional_unit_ids, additional_units_added_at: call.additional_units_added_at }
+    changes: { additional_unit_ids: call.additional_unit_ids, additional_units_added_at: call.additional_units_added_at, released_unit_ids: call.released_unit_ids || [] }
   });
   res.json(call);
 });
@@ -1601,19 +1617,63 @@ app.delete('/api/calls/:id/units/:unit_id', verifyToken, async (req, res) => {
   res.json(call);
 });
 
+// A backup unit done with a call the primary is still working (e.g. the
+// primary is transporting) puts itself back in service. Unlike the
+// dispatcher's remove-unit, the unit stays on the call's record.
+app.post('/api/calls/:id/release', verifyToken, async (req, res) => {
+  if (req.user.role !== 'crew') return res.status(403).json({ error: 'Forbidden' });
+  const call = calls.find(c => c.id === req.params.id);
+  if (!call) return res.status(404).json({ error: 'Not found' });
+  const unitId = req.user.unit_id;
+  if (call.status === 'closed') return res.status(409).json({ error: 'Call is already closed' });
+  if (call.assigned_unit_id === unitId)
+    return res.status(400).json({ error: 'The primary unit closes the call instead' });
+  if (!(call.additional_unit_ids || []).includes(unitId))
+    return res.status(403).json({ error: 'Not on this call' });
+  if (!isReleased(call, unitId)) {
+    const now = new Date().toISOString();
+    call.released_unit_ids = [...(call.released_unit_ids || []), unitId];
+    call.co_unit_ids = (call.co_unit_ids || []).filter(id => id !== unitId);
+    if (!call.additional_unit_timestamps) call.additional_unit_timestamps = {};
+    call.additional_unit_timestamps[unitId] = { ...(call.additional_unit_timestamps[unitId] || {}), available_at: now };
+    persist(saveCall(call), 'call ' + call.id);
+    emitDispatch('call:updated', {
+      call_id: call.id,
+      changes: {
+        released_unit_ids: call.released_unit_ids,
+        co_unit_ids: call.co_unit_ids,
+        additional_unit_timestamps: call.additional_unit_timestamps
+      }
+    });
+    const unit = units.find(u => u.id === unitId);
+    if (unit) {
+      unit.status = 'available';
+      persist(saveUnit(unit), 'unit ' + unit.id);
+      emitDispatch('unit:status_change', { unit_id: unit.id, status: 'available' });
+      io.to(`crew:${unit.id}`).emit('unit:status_change', { unit_id: unit.id, status: 'available' });
+    }
+  }
+  res.json({ ok: true });
+});
+
 app.patch('/api/calls/:id/status', verifyToken, async (req, res) => {
   const call = calls.find(c => c.id === req.params.id);
   if (!call) return res.status(404).json({ error: 'Not found' });
   if (req.user.role === 'overwatch') return res.status(403).json({ error: 'Forbidden' });
 
   if (req.user.role === 'crew') {
-    const allIds = [call.assigned_unit_id, ...(call.additional_unit_ids || [])];
+    const allIds = [call.assigned_unit_id, ...(call.additional_unit_ids || [])].filter(id => !isReleased(call, id));
     if (!allIds.includes(req.user.unit_id))
       return res.status(403).json({ error: 'Forbidden' });
     const CREW_ALLOWED = ['acknowledged','en_route','on_scene','patient_contact','transporting','cleared','available'];
     const closingWithDisposition = req.body.status === 'closed' && req.body.disposition;
     if (!CREW_ALLOWED.includes(req.body.status) && !closingWithDisposition)
       return res.status(403).json({ error: 'Forbidden' });
+    // Closing ends the call for every unit on it, so only the primary can
+    // do it from the crew app -- a backup finishing early releases itself
+    // instead (POST /api/calls/:id/release).
+    if (closingWithDisposition && req.user.unit_id !== call.assigned_unit_id)
+      return res.status(403).json({ error: 'Only the primary unit can close this call — use Back to Available instead' });
   } else if (!VALID_CALL_STATUSES.has(req.body.status)) {
     return res.status(400).json({ error: 'Invalid status' });
   }
@@ -1671,7 +1731,7 @@ app.patch('/api/calls/:id/status', verifyToken, async (req, res) => {
   // not the unit being left out of the sync entirely.
   const unitIdsToUpdate = isClose
     ? [call.assigned_unit_id, ...(call.additional_unit_ids || [])].filter(Boolean)
-    : [...new Set([call.assigned_unit_id, ...(call.co_unit_ids || []), ...(call.additional_unit_ids || [])])].filter(Boolean);
+    : [...new Set([call.assigned_unit_id, ...(call.co_unit_ids || []), ...(call.additional_unit_ids || [])])].filter(id => id && !isReleased(call, id));
 
   // Also collected so the dispatcher-facing call:status_change broadcast below
   // can carry every affected unit's new status in the same, single event, in
@@ -1704,7 +1764,7 @@ app.patch('/api/calls/:id/status', verifyToken, async (req, res) => {
   io.to(`crew:${call.assigned_unit_id}`).emit('call:updated', { call_id: call.id, changes: { status: call.status } });
 
   // Notify all associated crew phones of the call status update (so their call card stays in sync)
-  [...new Set([...(call.co_unit_ids || []), ...(call.additional_unit_ids || [])])].forEach(uid => {
+  [...new Set([...(call.co_unit_ids || []), ...(call.additional_unit_ids || [])])].filter(uid => !isReleased(call, uid)).forEach(uid => {
     io.to(`crew:${uid}`).emit('call:updated', { call_id: call.id, changes: { status: call.status } });
   });
 
@@ -1735,7 +1795,7 @@ app.post('/api/calls/:id/comments', verifyToken, async (req, res) => {
   // backup/additional units' chat pane never sees dispatch's replies, the
   // primary unit's messages, or even their own sent message (the client has
   // no optimistic local update and relies entirely on this echo).
-  const commentUnitIds = [call.assigned_unit_id, ...(call.additional_unit_ids || [])].filter(Boolean);
+  const commentUnitIds = [call.assigned_unit_id, ...(call.additional_unit_ids || [])].filter(id => id && !isReleased(call, id));
   commentUnitIds.forEach(uid => {
     io.to(`crew:${uid}`).emit('call:comment_added', { call_id: call.id, comment });
     // Real push backup for the same reason as notifyUnitAssigned — this
@@ -1921,7 +1981,7 @@ app.post('/api/shift/end', verifyToken, async (req, res) => {
   const busyUnitIds = new Set();
   openCalls.forEach(c => {
     if (c.assigned_unit_id) busyUnitIds.add(c.assigned_unit_id);
-    (c.additional_unit_ids || []).forEach(id => busyUnitIds.add(id));
+    (c.additional_unit_ids || []).forEach(id => { if (!isReleased(c, id)) busyUnitIds.add(id); });
   });
   calls = openCalls;
   directMessages = [];
@@ -1997,7 +2057,8 @@ function getUnitActiveCall(unitId, excludeCallId = null) {
   return calls.find(c =>
     c.id !== excludeCallId &&
     c.status !== 'closed' &&
-    (c.assigned_unit_id === unitId || (c.additional_unit_ids || []).includes(unitId))
+    (c.assigned_unit_id === unitId || (c.additional_unit_ids || []).includes(unitId)) &&
+    !isReleased(c, unitId)
   ) || null;
 }
 
@@ -2030,7 +2091,7 @@ function checkStaleCalls() {
     call._staleNudgedStatus = call.status;
 
     const ageMin = Math.round(ageMs / 60000);
-    const unitIds = [call.assigned_unit_id, ...(call.additional_unit_ids || [])].filter(Boolean);
+    const unitIds = [call.assigned_unit_id, ...(call.additional_unit_ids || [])].filter(id => id && !isReleased(call, id));
     unitIds.forEach(uid => {
       const unit = units.find(u => u.id === uid);
       if (!unit) return;
@@ -2101,6 +2162,7 @@ function getUnitOverlappingCall(unitId, excludeCallId, start, end) {
   return calls.find(c => {
     if (c.id === excludeCallId) return false;
     if (c.assigned_unit_id !== unitId && !(c.additional_unit_ids || []).includes(unitId)) return false;
+    if (isReleased(c, unitId)) return false;
     const w = getCallWindow(c);
     if (!w.start) return false;
     return windowsOverlap(start, end, w.start, w.end);
@@ -2711,7 +2773,7 @@ app.patch('/api/calls/:id/timestamps', verifyToken, async (req, res) => {
   // rejected edit leaves it untouched instead of partially applied.
   const merged = { ...call, ...pendingChanges };
   const { start: mergedStart, end: mergedEnd } = getCallWindow(merged);
-  const unitIds = [call.assigned_unit_id, ...(call.additional_unit_ids || [])].filter(Boolean);
+  const unitIds = [call.assigned_unit_id, ...(call.additional_unit_ids || [])].filter(id => id && !isReleased(call, id));
   for (const uid of unitIds) {
     const conflict = getUnitOverlappingCall(uid, call.id, mergedStart, mergedEnd);
     if (conflict) {
@@ -2743,7 +2805,7 @@ app.patch('/api/calls/:id/timestamps', verifyToken, async (req, res) => {
       const newUnitStatus = isClose ? 'available' : newStatus;
       const unitIdsToUpdate = isClose
         ? [call.assigned_unit_id, ...(call.additional_unit_ids || [])].filter(Boolean)
-        : [...new Set([call.assigned_unit_id, ...(call.co_unit_ids || []), ...(call.additional_unit_ids || [])])].filter(Boolean);
+        : [...new Set([call.assigned_unit_id, ...(call.co_unit_ids || []), ...(call.additional_unit_ids || [])])].filter(id => id && !isReleased(call, id));
       unitIdsToUpdate.forEach(uid => {
         const unit = units.find(u => u.id === uid);
         if (!unit) return;

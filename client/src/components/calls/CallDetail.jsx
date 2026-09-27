@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import CallTimeline from './CallTimeline';
 import CallComments from './CallComments';
 import CloseCallModal from './CloseCallModal';
+import { isOnCall, isReleased } from '../../lib/callUnits';
 import CallReport from './CallReport';
 import GpsTrackTab from './GpsTrackTab';
 import { STATUS_COLORS, STATUS_LABELS, VALID_UNIT_STATUSES, CALL_TYPES } from '../../data/mockData';
@@ -162,10 +163,11 @@ export default function CallDetail({
     .map(id => units.find(u => u.id === id))
     .filter(Boolean);
 
+  // A backup that released itself can be added back onto the call.
   const availableUnits = units.filter(u =>
     (u.status === 'available' || u.status === 'cleared') &&
     u.id !== call.assigned_unit_id &&
-    !(call.additional_unit_ids || []).includes(u.id)
+    !isOnCall(call, u.id)
   );
   const handleAssign = async () => {
     if (!selectedUnitId || assignSubmitting) return;
@@ -606,6 +608,16 @@ export default function CallDetail({
                           )}
                         </div>
                         <div className="flex items-center gap-2">
+                          {isReleased(call, u.id) ? (
+                            <span
+                              className="text-xs font-medium px-2 py-0.5 rounded-full bg-gray-600/40 text-gray-400"
+                              title="This unit finished and put itself back in service while the call stayed open"
+                            >
+                              Released{call.additional_unit_timestamps?.[u.id]?.available_at
+                                ? ' ' + new Date(call.additional_unit_timestamps[u.id].available_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+                                : ''}
+                            </span>
+                          ) : (
                           <button
                             onClick={() => setEditingUnitStatusId(editingUnitStatusId === u.id ? null : u.id)}
                             title="Click to change this unit's status"
@@ -614,6 +626,7 @@ export default function CallDetail({
                           >
                             {STATUS_LABELS[u.status]}
                           </button>
+                          )}
                           {removingUnitId === u.id ? (
                             <div className="flex items-center gap-1">
                               <span className="text-red-400 text-xs">Remove?</span>

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { apiBase } from '../lib/native';
 import CloseCallModal from '../components/calls/CloseCallModal';
+import { isOnCall } from '../lib/callUnits';
 
 const TYPE_ICONS  = { ALS: '🚑', BLS: '🚐', Cart: '🛺' };
 const TYPE_ORDER  = { ALS: 0, BLS: 1, Cart: 2 };
@@ -55,7 +56,7 @@ export default function ShiftSetup({ token, onShiftStarted, onViewHistory }) {
   }, [token]);
 
   const unitOpenCall = (unit_id) => openCalls.find(c =>
-    c.assigned_unit_id === unit_id || (c.additional_unit_ids || []).includes(unit_id));
+    isOnCall(c, unit_id));
 
   const handleCloseCall = async (callId, disposition, close_notes) => {
     const res = await fetch(`${apiBase()}/calls/${callId}/status`, {

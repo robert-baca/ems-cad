@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef } from 'react';
+import { isReleased } from '../lib/callUnits';
 import { createCall, updateCallStatus, assignCall, closeCall as apiCloseCall, updateCallTimestamps, updateCallNarrative, updateCallLocation, addUnitToCall as apiAddUnitToCall, removeUnitFromCall as apiRemoveUnitFromCall, updateCallPriority as apiUpdatePriority, addMutualAid as apiAddMutualAid, removeMutualAid as apiRemoveMutualAid, addCallComment as apiAddComment } from '../services/api';
 
 const STATUS_TS_MAP = {
@@ -79,7 +80,8 @@ export function useCalls(setUnits) {
   // of leaving the optimistic guess stranded — see revertUnits/logTimeNow.
   const syncUnitsForward = useCallback((call, newStatus) => {
     if (!setUnits || !call) return null;
-    const unitIds = [...new Set([call.assigned_unit_id, ...(call.co_unit_ids || []), ...(call.additional_unit_ids || [])])].filter(Boolean);
+    const unitIds = [...new Set([call.assigned_unit_id, ...(call.co_unit_ids || []), ...(call.additional_unit_ids || [])])]
+      .filter(id => id && !isReleased(call, id));
     if (!unitIds.length) return null;
     // Filled in by the updater whenever React runs it; returned by reference
     // so it's populated by the time a failed request needs to revert it.

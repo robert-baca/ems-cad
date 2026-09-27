@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { STATUS_COLORS, STATUS_LABELS } from '../../data/mockData';
 import EditUnitModal from './EditUnitModal';
+import { isOnCall } from '../../lib/callUnits';
 import AddUnitModal from './AddUnitModal';
 
 const TYPE_ICONS = { ALS: '🚑', BLS: '🚐', Cart: '🛺', Bike: '🚴' };
@@ -317,8 +318,7 @@ export default function UnitPanel({ units, calls, selectedUnitId, onSelectUnit, 
         <div className="flex-1 overflow-y-auto p-2">
           {sortUnits(units).map(unit => {
             const activeCall = calls?.find(c =>
-              (c.assigned_unit_id === unit.id || (c.additional_unit_ids || []).includes(unit.id)) &&
-              ON_CALL_STATUSES.has(c.status)
+              isOnCall(c, unit.id) && ON_CALL_STATUSES.has(c.status)
             );
             return (
               <UnitCard

@@ -58,6 +58,7 @@ export const assignCall = (callId, unitId, initialStatus, additionalUnitIds) =>
   api.patch(`/calls/${callId}/assign`, { unit_id: unitId, initial_status: initialStatus, additional_unit_ids: additionalUnitIds });
 export const updateCallStatus = (callId, status, config) =>
   api.patch(`/calls/${callId}/status`, { status }, config);
+export const releaseFromCall = (callId) => api.post(`/calls/${callId}/release`);
 export const closeCall = (callId, disposition, close_notes, config) =>
   api.patch(`/calls/${callId}/status`, { status: 'closed', disposition, close_notes }, config);
 export const updateCallTimestamps = (callId, fields) =>

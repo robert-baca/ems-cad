@@ -16,25 +16,23 @@ import CallSummaryModal from '../components/calls/CallSummaryModal';
 import NativeSetupModal from '../components/crew/NativeSetupModal';
 import BeaconMode from '../components/crew/BeaconMode';
 import CrewRoster from '../components/crew/CrewRoster';
-import { setCrewGpsSharing, getCrewMessages, sendCrewMessage, getBroadcasts, markBroadcastRead } from '../services/api';
+import { setCrewGpsSharing, getCrewMessages, sendCrewMessage, getBroadcasts, markBroadcastRead, releaseFromCall } from '../services/api';
 import CrewBroadcasts from '../components/crew/CrewBroadcasts';
 import { isNative as isNativePlatform, nativeCall } from '../lib/native';
 import { enqueueOfflineAction, subscribeOfflineQueue } from '../lib/offlineActionQueue';
 import { STATUS_COLORS, STATUS_LABELS } from '../data/mockData';
+import { DISPOSITIONS } from '../data/dispositions';
+import { isOnCall } from '../lib/callUnits';
 
-const NON_TRANSPORT_DISPOSITIONS = [
-  { id: 'treated_refused', label: 'Treated / Refused Transport', icon: '🩺' },
-  { id: 'refused_care',    label: 'Patient Refused Care',         icon: '🚫' },
-  { id: 'no_patient',      label: 'No Patient Found (UTL)',       icon: '🔍' },
-  { id: 'cancelled',       label: 'Cancelled / False Alarm',      icon: '❌' },
-  { id: 'standby',         label: 'No Treatment Needed',          icon: '✅' },
-  { id: 'doa',             label: 'Patient DOA',                  icon: '🕯️' },
-];
-
+// Close-out sheet for the primary unit. Transport outcomes are listed first
+// -- crews used to only get the non-transport ones here, so a transport
+// (e.g. to Station 7) couldn't be closed from the app at all and the unit
+// sat at Cleared until dispatch closed it.
 function CrewDisposition({ call, onClose, onConfirm }) {
   const [chosen, setChosen] = useState('');
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const transported = !!call.transporting_at;
 
   const submit = async () => {
     if (!chosen) return;
@@ -42,30 +40,43 @@ function CrewDisposition({ call, onClose, onConfirm }) {
     try { await onConfirm(call.id, chosen, notes.trim()); } finally { setSubmitting(false); }
   };
 
+  const groups = [
+    { title: 'Transport', items: DISPOSITIONS.filter(d => d.transport) },
+    { title: 'No transport', items: DISPOSITIONS.filter(d => !d.transport) },
+  ];
+  // If they logged Transporting, the transport outcomes are what they want.
+  if (!transported) groups.reverse();
+
   return (
     <div className="fixed inset-0 bg-black/70 z-50 flex items-end" onClick={onClose}>
       <div
-        className="w-full bg-gray-800 rounded-t-2xl p-4 space-y-3 max-h-[80vh] overflow-y-auto"
+        className="w-full bg-gray-800 rounded-t-2xl p-4 space-y-3 max-h-[85vh] overflow-y-auto"
         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-1">
-          <div className="text-white font-bold text-base">Non-Transport Disposition</div>
+          <div>
+            <div className="text-white font-bold text-base">Close Call #{call.call_number}</div>
+            <div className="text-gray-400 text-xs">Pick how it ended — all units on the call go back to Available</div>
+          </div>
           <button onClick={onClose} className="text-gray-400 hover:text-white text-2xl w-11 h-11 flex items-center justify-center leading-none">×</button>
         </div>
 
-        <div className="space-y-2">
-          {NON_TRANSPORT_DISPOSITIONS.map(d => (
-            <button
-              key={d.id}
-              onClick={() => setChosen(d.id)}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left text-sm font-medium transition-colors
-                ${chosen === d.id ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-200 active:bg-gray-600'}`}
-            >
-              <span className="text-lg">{d.icon}</span>
-              <span>{d.label}</span>
-            </button>
-          ))}
-        </div>
+        {groups.map(g => (
+          <div key={g.title} className="space-y-2">
+            <div className="text-gray-500 text-xs uppercase tracking-wider pt-1">{g.title}</div>
+            {g.items.map(d => (
+              <button
+                key={d.id}
+                onClick={() => setChosen(d.id)}
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left text-sm font-medium transition-colors
+                  ${chosen === d.id ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-200 active:bg-gray-600'}`}
+              >
+                <span className="text-lg">{d.icon}</span>
+                <span>{d.label}</span>
+              </button>
+            ))}
+          </div>
+        ))}
 
         <textarea
           value={notes}
@@ -293,8 +304,8 @@ export default function CrewMobile() {
   const myActiveCall = calls.find(c => {
     if (c.status === 'closed') return false;
     if (!myUnit) return false;
-    return c.assigned_unit_id === myUnit.id ||
-      (c.additional_unit_ids || []).includes(myUnit.id);
+    // A backup that released itself ("Back to Available") is done with it.
+    return isOnCall(c, myUnit.id);
   }) || null;
 
   // Track the last active call ID so we can still show info after dispatch closes it
@@ -556,6 +567,25 @@ export default function CrewMobile() {
       // stays accurate -- better a second tap than a silent "unread".
       setBroadcasts(prev => prev.map(b => b.id === id ? { ...b, read: false } : b));
       setStatusError('Could not mark broadcast as read — tap Got it again');
+    }
+  };
+
+  const handleReleaseFromCall = async () => {
+    if (!myActiveCall || !myUnit) return;
+    setStatusLoading(true);
+    setStatusError(null);
+    try {
+      await releaseFromCall(myActiveCall.id);
+      // Reflect it right away; the server's own call:updated/status events
+      // confirm it moments later.
+      setCalls(prev => prev.map(c => c.id === myActiveCall.id
+        ? { ...c, released_unit_ids: [...new Set([...(c.released_unit_ids || []), myUnit.id])] }
+        : c));
+      setUnits(prev => prev.map(u => u.id === myUnit.id ? { ...u, status: 'available' } : u));
+    } catch (err) {
+      setStatusError(err?.response?.data?.error || 'Could not go back to Available — try again');
+    } finally {
+      setStatusLoading(false);
     }
   };
 
@@ -908,12 +938,37 @@ export default function CrewMobile() {
           </ErrorBoundary>
         )}
 
-        {myActiveCall && (
+        {/* Closing out. The primary unit closes the call (any disposition,
+            transport included) -- made prominent once they're transporting
+            or cleared, since that's when it's needed. A backup unit can't
+            close the whole call; once it's Cleared it puts itself back in
+            service instead, rather than sitting at Cleared until the
+            primary or dispatch closes the call. */}
+        {myActiveCall && myUnit && myActiveCall.assigned_unit_id === myUnit.id && (
+          ['transporting', 'cleared'].includes(myUnit.status) ? (
+            <button
+              onClick={() => setShowDisposition(true)}
+              className="w-full py-4 rounded-2xl bg-red-700 active:bg-red-800 text-white text-base font-bold transition-colors flex items-center justify-center gap-2"
+            >
+              📋 Close Call — pick disposition
+            </button>
+          ) : (
+            <button
+              onClick={() => setShowDisposition(true)}
+              className="w-full py-3 rounded-2xl bg-gray-800 border border-gray-700 text-gray-400 active:bg-gray-700 text-sm font-medium transition-colors flex items-center justify-center gap-2"
+            >
+              📋 Close Call / Disposition
+            </button>
+          )
+        )}
+        {myActiveCall && myUnit && myActiveCall.assigned_unit_id !== myUnit.id && myUnit.status === 'cleared' && (
           <button
-            onClick={() => setShowDisposition(true)}
-            className="w-full py-3 rounded-2xl bg-gray-800 border border-gray-700 text-gray-400 active:bg-gray-700 text-sm font-medium transition-colors flex items-center justify-center gap-2"
+            onClick={handleReleaseFromCall}
+            disabled={statusLoading}
+            className="w-full py-4 rounded-2xl bg-green-700 active:bg-green-800 disabled:opacity-50 text-white text-base font-bold transition-colors flex items-center justify-center gap-2"
           >
-            📋 Non-Transport Disposition
+            ✅ Back to Available
+            <span className="text-green-200 text-xs font-normal">({myActiveCall.call_number} stays with the primary)</span>
           </button>
         )}
 

@@ -1,16 +1,6 @@
+import { DISPOSITIONS } from '../../data/dispositions';
 import { useState } from 'react';
 
-const DISPOSITIONS = [
-  { id: 'transported_station7', label: 'Transported to Station 7',      icon: '🏥' },
-  { id: 'handover_ems',         label: 'Hand over to EMS Transport',     icon: '🚑' },
-  { id: 'treated_refused',      label: 'Treated / Refused Transport',    icon: '🩺' },
-  { id: 'refused_care',         label: 'Patient Refused Care',           icon: '🚫' },
-  { id: 'no_patient',           label: 'No Patient Found',               icon: '🔍' },
-  { id: 'cancelled',            label: 'Cancelled / False Alarm',        icon: '❌' },
-  { id: 'standby',              label: 'Standby / No Treatment Needed',  icon: '✅' },
-  { id: 'doa',                  label: 'Patient DOA',                    icon: '🕯️' },
-  { id: 'transferred',          label: 'Transferred to Other Agency',    icon: '🔄' },
-];
 
 export default function CloseCallModal({ call, onConfirm, onClose }) {
   const [disposition, setDisposition] = useState('');
