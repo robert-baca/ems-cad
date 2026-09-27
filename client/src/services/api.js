@@ -35,6 +35,7 @@ export const clearUnitGps = (unitId) => api.delete(`/units/${unitId}/gps`);
 export const pingUnit = (unitId) => api.post(`/units/${unitId}/ping`);
 export const sendBroadcast = (message) => api.post('/broadcast', { message });
 export const getBroadcasts = () => api.get('/broadcasts');
+export const getBroadcastHistory = () => api.get('/broadcasts/history');
 export const markBroadcastRead = (id) => api.post(`/broadcasts/${id}/read`);
 export const setCrewGpsSharing = (enabled) => api.patch('/crew/gps-sharing', { enabled });
 export const registerPushToken = (pushToken, platform) => api.post('/crew/push-token', { pushToken, platform });

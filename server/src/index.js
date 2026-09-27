@@ -1243,12 +1243,26 @@ app.get('/api/broadcasts', verifyToken, (req, res) => {
   res.json(broadcasts);
 });
 
+// Broadcast history across shifts, for the dispatcher's History tab.
+app.get('/api/broadcasts/history', verifyToken, async (req, res) => {
+  if (!['dispatcher', 'overwatch'].includes(req.user.role)) return res.status(403).json({ error: 'Forbidden' });
+  try {
+    const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+    const r = await pool.query('SELECT * FROM broadcasts WHERE sent_at > $1 ORDER BY sent_at DESC', [cutoff]);
+    res.json(r.rows.map(b => ({ ...b, target_unit_ids: b.target_unit_ids || [], reads: b.reads || {} })));
+  } catch (err) {
+    console.error('[broadcasts] history query error:', err.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
 app.post('/api/broadcasts/:id/read', verifyToken, async (req, res) => {
   if (req.user.role !== 'crew') return res.status(403).json({ error: 'Forbidden' });
   const b = broadcasts.find(x => x.id === req.params.id);
   if (!b) return res.status(404).json({ error: 'Not found' });
   const unit = units.find(u => u.id === req.user.unit_id);
   if (!unit) return res.status(404).json({ error: 'Unit not found' });
+  if (isCartUnit(unit)) return res.status(403).json({ error: 'Carts do not receive broadcasts' });
   if (!b.reads[unit.id]) {
     const read = { at: new Date().toISOString(), unit_number: unit.unit_number };
     b.reads[unit.id] = read;

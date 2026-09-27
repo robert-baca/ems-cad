@@ -19,7 +19,7 @@ import ShiftSetup from './ShiftSetup';
 import ShiftSummaryModal from '../components/shift/ShiftSummaryModal';
 import OptionsModal from '../components/settings/OptionsModal';
 import CallSummaryModal from '../components/calls/CallSummaryModal';
-import BroadcastModal from '../components/calls/BroadcastModal';
+import BroadcastModal, { receiptStats } from '../components/calls/BroadcastModal';
 import { sendBroadcast, getBroadcasts } from '../services/api';
 
 // Reconstructs which calls have an unanswered backup request, from comment
@@ -90,7 +90,7 @@ export default function DispatcherDashboard() {
   const [flyToTarget,       setFlyToTarget]         = useState(null);
   const [splitParentId,     setSplitParentId]       = useState(null);
   const [showOptions,       setShowOptions]          = useState(false);
-  const [showBroadcast,     setShowBroadcast]        = useState(false);
+  const [showBroadcast,     setShowBroadcast]        = useState(false); // false | 'send' | 'history'
   // This shift's broadcasts with per-unit read receipts (see BroadcastModal).
   const [broadcasts,        setBroadcasts]           = useState([]);
   const [overwatchCallId,   setOverwatchCallId]      = useState(null);
@@ -435,11 +435,28 @@ export default function DispatcherDashboard() {
                 ⚙ Options
               </button>
               <button
-                onClick={() => setShowBroadcast(true)}
+                onClick={() => setShowBroadcast('send')}
                 className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium transition-colors bg-purple-900/60 border border-purple-700 text-purple-300 hover:bg-purple-800"
                 title="Send a park-wide alert to every crew member"
               >
                 📢 Broadcast
+                {(() => {
+                  // This shift's broadcasts some unit still hasn't read.
+                  const pending = broadcasts.filter(b => !receiptStats(b, units).allRead).length;
+                  return pending > 0 && (
+                    <span className="ml-0.5 px-1.5 rounded-full bg-amber-500 text-black text-[10px] font-bold"
+                      title={`${pending} broadcast${pending === 1 ? '' : 's'} not read by every unit yet`}>
+                      {pending}
+                    </span>
+                  );
+                })()}
+              </button>
+              <button
+                onClick={() => setShowBroadcast('history')}
+                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium transition-colors bg-gray-800 border border-gray-600 text-gray-300 hover:bg-gray-700"
+                title="Broadcasts sent this shift and earlier, with who read them"
+              >
+                📜 Broadcast History
               </button>
               {currentShift && (
                 <button
@@ -657,6 +674,7 @@ export default function DispatcherDashboard() {
           onSend={async (message) => (await sendBroadcast(message)).data}
           broadcasts={broadcasts}
           units={units}
+          initialTab={showBroadcast}
           onClose={() => setShowBroadcast(false)}
         />
       )}

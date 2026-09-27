@@ -192,7 +192,7 @@ function UnitCard({ unit, activeCall, isSelected, onClick, onHistory, onEdit, on
             <button
               onClick={(e) => { e.stopPropagation(); onToggleOos(unit); }}
               className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-colors
-                ${unit.status === 'out_of_service'
+                ${unit.status === 'out_of_service' || unit.status === 'cleared'
                   ? 'bg-green-800 hover:bg-green-700 text-green-300'
                   : ON_CALL_STATUSES.has(unit.status)
                     ? 'bg-gray-700 hover:bg-green-900 text-gray-400 hover:text-green-300'
@@ -200,7 +200,9 @@ function UnitCard({ unit, activeCall, isSelected, onClick, onHistory, onEdit, on
             >
               {unit.status === 'out_of_service'
                 ? '✓ Back In Service'
-                : ON_CALL_STATUSES.has(unit.status)
+                : unit.status === 'cleared'
+                  ? '✓ Available'
+                  : ON_CALL_STATUSES.has(unit.status)
                   ? 'Force Available'
                   : 'Mark OOS'}
             </button>
@@ -328,7 +330,10 @@ export default function UnitPanel({ units, calls, selectedUnitId, onSelectUnit, 
                 onHistory={onUnitHistory}
                 onEdit={setEditingUnit}
                 onToggleOos={(u) => {
-                  const goAvailable = u.status === 'out_of_service' || ON_CALL_STATUSES.has(u.status);
+                  // 'cleared' has to be included here: it isn't an on-call
+                  // status, so it used to fall through to "Mark OOS" and a
+                  // cleared unit had no way back to Available from dispatch.
+                  const goAvailable = u.status === 'out_of_service' || u.status === 'cleared' || ON_CALL_STATUSES.has(u.status);
                   onStatusChange?.(u.id, goAvailable ? 'available' : 'out_of_service');
                 }}
                 onFlyTo={(u) => onFlyTo?.(u)}
