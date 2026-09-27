@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import CallTimeline from './CallTimeline';
 import CallComments from './CallComments';
 import CloseCallModal from './CloseCallModal';
+import SpinWheel from './SpinWheel';
 import { isOnCall, isReleased } from '../../lib/callUnits';
 import CallReport from './CallReport';
 import GpsTrackTab from './GpsTrackTab';
@@ -54,6 +55,7 @@ export default function CallDetail({
   const [tab, setTab]                   = useState('detail');
   const [assigningUnit, setAssigningUnit] = useState(false);
   const [addingUnit,    setAddingUnit]    = useState(false);
+  const [showSpin,      setShowSpin]      = useState(false);
   const [selectedUnitId, setSelectedUnitId] = useState('');
   // Extra units picked alongside selectedUnitId when dispatching a still-pending
   // call — selectedUnitId is always the primary/lead, these ride along as
@@ -120,6 +122,7 @@ export default function CallDetail({
     setEditingDetails(false);
     setEditingUnitStatusId(null);
     setRemovingUnitId(null);
+    setShowSpin(false);
     setNarrativeError('');
     setDetailsError('');
     setLocationError('');
@@ -212,6 +215,16 @@ export default function CallDetail({
       setAdditionalSelectedIds(prev => [...prev, id]);
     }
   };
+
+  // The wheel: available medics only (carts can't lead a call and aren't
+  // who you're volunteering). First winner on an unassigned call becomes the
+  // lead unit; every one after that is added as dispatched.
+  const spinCandidates = availableUnits.filter(u => u.unit_type !== 'Cart');
+  const pickFromWheel = async (u) => (
+    isPending
+      ? await onAssignUnit?.(call.id, u.id, undefined, [])
+      : await onAddUnit?.(call.id, u.id, 'dispatched')
+  ) || null;
 
   const handleAddUnit = async () => {
     if (!addUnitId || addUnitSubmitting) return;
@@ -331,12 +344,21 @@ export default function CallDetail({
               {assignError && <p className="text-red-400 text-xs">{assignError}</p>}
             </div>
           ) : (
-            <button
-              onClick={() => setAssigningUnit(true)}
-              className="w-full py-2 bg-indigo-700 hover:bg-indigo-600 text-white text-sm font-bold rounded-lg transition-colors"
-            >
-              Assign Unit →
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setAssigningUnit(true)}
+                className="flex-1 py-2 bg-indigo-700 hover:bg-indigo-600 text-white text-sm font-bold rounded-lg transition-colors"
+              >
+                Assign Unit →
+              </button>
+              <button
+                onClick={() => setShowSpin(true)}
+                title="Nobody volunteering? Spin the wheel of available medics"
+                className="px-3 py-2 bg-gradient-to-r from-pink-600 to-purple-600 hover:brightness-110 text-white text-sm font-bold rounded-lg"
+              >
+                🎡 Spin
+              </button>
+            </div>
           )}
         </div>
       )}
@@ -677,10 +699,17 @@ export default function CallDetail({
 
             {/* Add Unit button / form */}
             {!addingUnit ? (
-              <button onClick={() => setAddingUnit(true)}
-                className="w-full py-2 bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white text-xs font-semibold rounded-lg transition-colors border border-gray-600 border-dashed">
-                + Add Unit to Call
-              </button>
+              <div className="flex gap-2">
+                <button onClick={() => setAddingUnit(true)}
+                  className="flex-1 py-2 bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white text-xs font-semibold rounded-lg transition-colors border border-gray-600 border-dashed">
+                  + Add Unit to Call
+                </button>
+                <button onClick={() => setShowSpin(true)}
+                  title="Nobody volunteering? Spin the wheel of available medics"
+                  className="px-3 py-2 bg-gradient-to-r from-pink-600 to-purple-600 hover:brightness-110 text-white text-xs font-bold rounded-lg">
+                  🎡 Spin
+                </button>
+              </div>
             ) : (
               <div className="bg-gray-700 rounded-xl p-3 space-y-2">
                 <div className="flex items-center justify-between">
@@ -859,6 +888,16 @@ export default function CallDetail({
           Close Case
         </button>
       </div>
+
+      {showSpin && (
+        <SpinWheel
+          candidates={spinCandidates}
+          callNumber={call.call_number}
+          mode={isPending ? 'assign' : 'add'}
+          onPick={pickFromWheel}
+          onClose={() => setShowSpin(false)}
+        />
+      )}
 
       {showCloseModal && (
         <CloseCallModal
