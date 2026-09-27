@@ -423,7 +423,8 @@ function Compass({ target, onBack, units }) {
 // that could be hours old.
 function Finder({ myUnit, units, onSelect, onClose }) {
   useTicker(10000);
-  const others = units.filter(u => u.id !== myUnit?.id);
+  // Carts aren't something crew navigate to -- left out entirely.
+  const others = units.filter(u => u.id !== myUnit?.id && u.unit_type !== 'Cart');
   const hasMe = myUnit?.last_lat && myUnit?.last_lng;
   const distTo = (u) => (hasMe && u.last_lat && u.last_lng)
     ? getDistanceFt(parseFloat(myUnit.last_lat), parseFloat(myUnit.last_lng), parseFloat(u.last_lat), parseFloat(u.last_lng))
