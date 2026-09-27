@@ -8,8 +8,20 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 const COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899', '#14b8a6', '#f43f5e', '#84cc16', '#a855f7'];
 const SPIN_MS = 5200;
 const MINI_SPIN_MS = 3800;
-const SIZE = 320;           // px, main wheel diameter
-const MINI_SIZE = 190;      // px, the mini wheel
+const SIZE = 480;           // px, main wheel diameter (largest it gets)
+const MINI_SIZE = 320;      // px, the mini wheel
+
+// Wheels shrink to fit narrower screens instead of overflowing the popup.
+function useFitSize(max) {
+  const calc = () => Math.max(220, Math.min(max, window.innerWidth - 72, window.innerHeight - 330));
+  const [size, setSize] = useState(calc);
+  useEffect(() => {
+    const onResize = () => setSize(calc());
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  return size;
+}
 
 // The special slice on the main wheel: land on it and a tiny second wheel
 // with the same names pops up to decide.
@@ -30,13 +42,14 @@ function Wheel({ entries, rotation, spinning, size = SIZE, spinMs = SPIN_MS }) {
   const SIZE = size;
   const R = size / 2;
   const n = entries.length;
-  const small = size < 250;
-  const fontSize = (n <= 6 ? 15 : n <= 10 ? 13 : 11) - (small ? 4 : 0);
+  const k = size / 320; // everything below was tuned at 320 px
+  const fontSize = Math.round((n <= 6 ? 15 : n <= 10 ? 13 : 11) * k);
+  const tip = Math.round(14 * Math.max(1, k));
   return (
     <div className="relative" style={{ width: SIZE, height: SIZE }}>
       {/* Pointer at the top */}
       <div className="absolute left-1/2 -top-3 -translate-x-1/2 z-10"
-        style={{ width: 0, height: 0, borderLeft: '14px solid transparent', borderRight: '14px solid transparent', borderTop: '26px solid #ffffff', filter: 'drop-shadow(0 2px 3px rgba(0,0,0,.6))' }} />
+        style={{ width: 0, height: 0, borderLeft: `${tip}px solid transparent`, borderRight: `${tip}px solid transparent`, borderTop: `${Math.round(tip * 1.85)}px solid #ffffff`, filter: 'drop-shadow(0 2px 3px rgba(0,0,0,.6))' }} />
       <svg width={SIZE} height={SIZE}
         style={{
           transform: `rotate(${rotation}deg)`,
@@ -63,7 +76,7 @@ function Wheel({ entries, rotation, spinning, size = SIZE, spinMs = SPIN_MS }) {
             </g>
           );
         })}
-        <circle cx={R} cy={R} r={small ? 14 : 22} fill="#111827" stroke="#ffffff" strokeWidth="3" />
+        <circle cx={R} cy={R} r={Math.round(22 * k)} fill="#111827" stroke="#ffffff" strokeWidth="3" />
       </svg>
     </div>
   );
@@ -72,6 +85,8 @@ function Wheel({ entries, rotation, spinning, size = SIZE, spinMs = SPIN_MS }) {
 // candidates: available, non-cart units. calls: open calls the winner could
 // be sent to (may be empty). onPick(call, unit) -> error string or null.
 export default function SpinWheel({ candidates, calls = [], onPick, onClose }) {
+  const mainSize = useFitSize(SIZE);
+  const miniSize = Math.round(mainSize * (MINI_SIZE / SIZE));
   const [excluded, setExcluded] = useState(() => new Set());
   const [rotation, setRotation] = useState(0);
   const [miniRotation, setMiniRotation] = useState(0);
@@ -153,7 +168,7 @@ export default function SpinWheel({ candidates, calls = [], onPick, onClose }) {
 
   return (
     <div className="fixed inset-0 z-[60] bg-black/80 flex items-center justify-center p-4" onClick={() => !spinning && onClose()}>
-      <div className="bg-gray-900 border border-gray-700 rounded-2xl w-full max-w-lg max-h-[95vh] overflow-y-auto p-5"
+      <div className="bg-gray-900 border border-gray-700 rounded-2xl w-full max-w-2xl max-h-[96vh] overflow-y-auto p-5"
         onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-3">
           <div>
@@ -171,11 +186,11 @@ export default function SpinWheel({ candidates, calls = [], onPick, onClose }) {
         ) : stage === 'mini' ? (
           <div className="flex flex-col items-center py-3 gap-3">
             <div className="text-yellow-300 font-black text-2xl tracking-wide animate-bounce">🎡 MINI WHEEL!</div>
-            <Wheel entries={frozenMini || live} rotation={miniRotation} spinning={spinning} size={MINI_SIZE} spinMs={MINI_SPIN_MS} />
+            <Wheel entries={frozenMini || live} rotation={miniRotation} spinning={spinning} size={miniSize} spinMs={MINI_SPIN_MS} />
           </div>
         ) : (
           <div className="flex justify-center py-3">
-            <Wheel entries={entries} rotation={rotation} spinning={spinning} />
+            <Wheel entries={entries} rotation={rotation} spinning={spinning} size={mainSize} />
           </div>
         )}
 
