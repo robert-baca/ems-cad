@@ -3,6 +3,7 @@ import mapboxgl from 'mapbox-gl';
 import { getBearing, getDistanceFt, getCardinal } from '../../lib/geo';
 import { getParkPaths, getWayfindingSettings } from '../../services/api';
 import { useRoute } from '../../hooks/useRoute';
+import { nextManeuver, routeHeading, ARRIVE_FT } from '../../lib/navGuide';
 
 mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN;
 
@@ -52,6 +53,26 @@ function nextWaypointBearing(points, fromLat, fromLng) {
   return getBearing(fromLat, fromLng, lat, lng);
 }
 
+// Heading from a deviceorientation event, true-north where the phone gives
+// it (iOS webkitCompassHeading, Android absolute alpha), corrected for the
+// screen being turned sideways. Same approach as BeaconMode's compass.
+function eventHeading(e) {
+  let h = null;
+  if (e.webkitCompassHeading != null) h = e.webkitCompassHeading;
+  else if (e.absolute && e.alpha != null) h = (360 - e.alpha) % 360;
+  if (h == null) return null;
+  const screenAngle = Number(window.screen?.orientation?.angle ?? window.orientation ?? 0) || 0;
+  return (h + screenAngle + 360) % 360;
+}
+
+function smoothAngle(prev, next, alpha = 0.25) {
+  if (prev == null) return next;
+  let d = next - prev;
+  if (d > 180) d -= 360;
+  if (d < -180) d += 360;
+  return (prev + alpha * d + 360) % 360;
+}
+
 export default function CrewMap({ call, myUnit, locations = [] }) {
   const containerRef       = useRef(null);
   const mapRef              = useRef(null);
@@ -64,7 +85,19 @@ export default function CrewMap({ call, myUnit, locations = [] }) {
   const [expanded,  setExpanded]  = useState(false);
 
   const hasCall = !!(call?.location_lat && call?.location_lng);
-  const hasCrewPos = !!(myUnit?.last_lat && myUnit?.last_lng);
+  // Navigation view (▶ Start): full-screen, tilted, heading-up camera that
+  // follows the medic along the route. It reads the phone's OWN live GPS
+  // (~1/s, unfiltered) instead of the server copy, which only updates every
+  // ~5s and holds still until you've moved ~25 m -- far too jumpy to follow.
+  const [navMode,    setNavMode]    = useState(false);
+  const [navPos,     setNavPos]     = useState(null); // { lat, lng, course, speed }
+  const [navHeading, setNavHeading] = useState(null); // compass, degrees
+  const navHeadingRef = useRef(null);
+  const lastCamRef    = useRef(0);
+
+  const crewLat = navMode && navPos ? navPos.lat : (myUnit?.last_lat ?? null);
+  const crewLng = navMode && navPos ? navPos.lng : (myUnit?.last_lng ?? null);
+  const hasCrewPos = !!(crewLat && crewLng);
   const [mapFailed, setMapFailed] = useState(false);
 
   const [paths, setPaths] = useState([]);
@@ -85,7 +118,7 @@ export default function CrewMap({ call, myUnit, locations = [] }) {
   // back to a straight line exactly as it did before this existed.
   const { route, why: routeWhy } = useRoute(
     paths, pathsEnabled,
-    hasCrewPos ? [myUnit.last_lng, myUnit.last_lat] : null,
+    hasCrewPos ? [crewLng, crewLat] : null,
     hasCall ? [call.location_lng, call.location_lat] : null
   );
 
@@ -134,17 +167,17 @@ export default function CrewMap({ call, myUnit, locations = [] }) {
       }
 
       // Crew GPS dot (may not exist yet)
-      if (myUnit?.last_lat && myUnit?.last_lng) {
+      if (crewLat && crewLng) {
         crewMarkerRef.current = new mapboxgl.Marker({ element: makeCrewEl(), anchor: 'center' })
-          .setLngLat([myUnit.last_lng, myUnit.last_lat])
+          .setLngLat([crewLng, crewLat])
           .addTo(map);
       }
 
       // Fit to show both points when both known
-      if (hasCall && myUnit?.last_lat && myUnit?.last_lng) {
+      if (hasCall && crewLat && crewLng) {
         const bounds = new mapboxgl.LngLatBounds()
           .extend([call.location_lng, call.location_lat])
-          .extend([myUnit.last_lng, myUnit.last_lat]);
+          .extend([crewLng, crewLat]);
         map.fitBounds(bounds, { padding: 48, maxZoom: 18, animate: false });
       }
 
@@ -199,21 +232,21 @@ export default function CrewMap({ call, myUnit, locations = [] }) {
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReadyRef.current) return;
-    if (expanded && !navControlRef.current) {
+    if (expanded && !navMode && !navControlRef.current) {
       // bottom-right, not top-right — top-right is where the "✕ Close" button
       // sits, and Mapbox's own control there was rendering right on top of it.
       navControlRef.current = new mapboxgl.NavigationControl();
       map.addControl(navControlRef.current, 'bottom-right');
-    } else if (!expanded && navControlRef.current) {
+    } else if ((!expanded || navMode) && navControlRef.current) {
       map.removeControl(navControlRef.current);
       navControlRef.current = null;
     }
-  }, [expanded, mapLoaded]);
+  }, [expanded, navMode, mapLoaded]);
 
   // Update crew dot + the line to the call as GPS comes in
   useEffect(() => {
-    if (!mapReadyRef.current || !myUnit?.last_lat || !myUnit?.last_lng) return;
-    const lngLat = [myUnit.last_lng, myUnit.last_lat];
+    if (!mapReadyRef.current || !crewLat || !crewLng) return;
+    const lngLat = [crewLng, crewLat];
 
     if (crewMarkerRef.current) {
       crewMarkerRef.current.setLngLat(lngLat);
@@ -233,7 +266,7 @@ export default function CrewMap({ call, myUnit, locations = [] }) {
         lineSource.setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: [lngLat, [call.location_lng, call.location_lat]] } });
       }
     }
-  }, [myUnit?.last_lat, myUnit?.last_lng, hasCall, call?.location_lng, call?.location_lat, route]);
+  }, [crewLat, crewLng, hasCall, call?.location_lng, call?.location_lat, route]);
 
   // A dispatcher can reposition a call's pin mid-call (see CallDetail's
   // "reposition pin" action) — keep the marker in sync instead of only
@@ -322,12 +355,96 @@ export default function CrewMap({ call, myUnit, locations = [] }) {
     }
   }, [hasRoute, mapLoaded]);
 
+  // Live GPS + compass while navigating.
+  useEffect(() => {
+    if (!navMode) return;
+    let watchId = null;
+    if (navigator.geolocation) {
+      watchId = navigator.geolocation.watchPosition(
+        pos => setNavPos({ lat: pos.coords.latitude, lng: pos.coords.longitude, course: pos.coords.heading, speed: pos.coords.speed }),
+        () => {},
+        { enableHighAccuracy: true, maximumAge: 1000, timeout: 15000 }
+      );
+    }
+    const onOrient = (e) => {
+      const h = eventHeading(e);
+      if (h == null) return;
+      navHeadingRef.current = smoothAngle(navHeadingRef.current, h);
+      setNavHeading(navHeadingRef.current);
+    };
+    window.addEventListener('deviceorientationabsolute', onOrient, true);
+    window.addEventListener('deviceorientation', onOrient, true);
+    // Keep the screen on while navigating, where the phone allows it.
+    let wakeLock = null;
+    navigator.wakeLock?.request?.('screen').then(l => { wakeLock = l; }).catch(() => {});
+    return () => {
+      if (watchId != null) navigator.geolocation.clearWatch(watchId);
+      window.removeEventListener('deviceorientationabsolute', onOrient, true);
+      window.removeEventListener('deviceorientation', onOrient, true);
+      wakeLock?.release?.().catch(() => {});
+      navHeadingRef.current = null;
+      setNavHeading(null);
+      setNavPos(null);
+    };
+  }, [navMode]);
+
+  // Which way the camera faces: compass if the phone has one, else the
+  // direction of travel from GPS while walking, else along the route.
+  const camHeading = navMode
+    ? (navHeading ?? ((navPos?.speed ?? 0) > 0.7 && navPos?.course != null && !isNaN(navPos.course)
+        ? navPos.course
+        : routeHeading(route?.points, hasCrewPos ? { lat: Number(crewLat), lng: Number(crewLng) } : null)))
+    : null;
+
+  // Third-person follow camera: tilted, heading-up, medic in the lower part
+  // of the screen so the route ahead fills the view. Throttled so compass
+  // jitter doesn't make it swim.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!navMode || !map || !mapReadyRef.current || !hasCrewPos) return;
+    const now = Date.now();
+    if (now - lastCamRef.current < 250) return;
+    lastCamRef.current = now;
+    const h = map.getContainer().clientHeight || 600;
+    map.easeTo({
+      center: [Number(crewLng), Number(crewLat)],
+      bearing: camHeading ?? map.getBearing(),
+      pitch: 60,
+      zoom: 19,
+      padding: { top: Math.round(h * 0.45), bottom: 0, left: 0, right: 0 },
+      duration: 400,
+      essential: true,
+    });
+  }, [navMode, crewLat, crewLng, camHeading, hasCrewPos]);
+
+  const startNav = async () => {
+    // iOS only allows compass access from a tap -- this is that tap.
+    try {
+      if (typeof DeviceOrientationEvent?.requestPermission === 'function') await DeviceOrientationEvent.requestPermission();
+    } catch { /* no compass: camera falls back to walking direction */ }
+    setExpanded(true);
+    setNavMode(true);
+  };
+
+  const endNav = () => {
+    setNavMode(false);
+    const map = mapRef.current;
+    if (map) map.easeTo({ pitch: 0, bearing: 0, zoom: 17, padding: { top: 0, bottom: 0, left: 0, right: 0 }, duration: 600 });
+  };
+
+  const maneuver = navMode && route?.points && hasCrewPos
+    ? nextManeuver(route.points, { lat: Number(crewLat), lng: Number(crewLng) })
+    : null;
+  const straightFt = navMode && hasCrewPos && hasCall
+    ? getDistanceFt(Number(crewLat), Number(crewLng), call.location_lat, call.location_lng) : null;
+  const arrived = navMode && (maneuver?.arrived || (straightFt != null && straightFt <= ARRIVE_FT));
+
   const distFt = route
     ? route.distFt
-    : (hasCall && hasCrewPos ? getDistanceFt(myUnit.last_lat, myUnit.last_lng, call.location_lat, call.location_lng) : null);
+    : (hasCall && hasCrewPos ? getDistanceFt(crewLat, crewLng, call.location_lat, call.location_lng) : null);
   const bearing = route
-    ? (hasCrewPos ? nextWaypointBearing(route.points, myUnit.last_lat, myUnit.last_lng) : null)
-    : (hasCall && hasCrewPos ? getBearing(myUnit.last_lat, myUnit.last_lng, call.location_lat, call.location_lng) : null);
+    ? (hasCrewPos ? nextWaypointBearing(route.points, crewLat, crewLng) : null)
+    : (hasCall && hasCrewPos ? getBearing(crewLat, crewLng, call.location_lat, call.location_lng) : null);
 
   return (
     <div
@@ -344,7 +461,50 @@ export default function CrewMap({ call, myUnit, locations = [] }) {
         <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
       )}
 
-      {distFt != null && (
+      {navMode && (
+        <div className="absolute left-2 right-2 top-[calc(0.5rem+env(safe-area-inset-top))] rounded-2xl bg-green-700/95 text-white px-4 py-3 shadow-xl pointer-events-none">
+          {arrived ? (
+            <div className="text-lg font-black">🏁 You've arrived — look for the call</div>
+          ) : maneuver?.next ? (
+            <div className="flex items-center gap-3">
+              <span className="text-4xl leading-none">{maneuver.next.arrow}</span>
+              <div>
+                <div className="text-lg font-black leading-tight">{maneuver.next.text}</div>
+                <div className="text-green-100 text-sm">in {maneuver.next.distFt} ft</div>
+              </div>
+            </div>
+          ) : (
+            <div className="text-base font-bold">
+              {hasCrewPos ? '↑ Head toward the pin — no walking route here' : 'Finding your location…'}
+            </div>
+          )}
+        </div>
+      )}
+
+      {navMode && (
+        <div className="absolute left-2 right-2 bottom-[calc(0.5rem+env(safe-area-inset-bottom))] flex items-center gap-2">
+          <div className="flex-1 bg-black/75 backdrop-blur-sm text-white text-sm font-semibold px-3 py-2.5 rounded-xl">
+            {(maneuver?.remainingFt ?? distFt) != null
+              ? `${maneuver?.remainingFt ?? distFt} ft to go`
+              : 'Locating…'}
+          </div>
+          <button onClick={endNav}
+            className="bg-red-700 active:bg-red-800 text-white text-sm font-bold px-4 py-2.5 rounded-xl">
+            ✕ End
+          </button>
+        </div>
+      )}
+
+      {!navMode && hasCall && (
+        <button
+          onClick={startNav}
+          className="absolute top-[calc(0.5rem+env(safe-area-inset-top))] left-2 bg-green-600 active:bg-green-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow-lg"
+        >
+          ▶ Start
+        </button>
+      )}
+
+      {!navMode && distFt != null && (
         <div className="absolute bottom-2 left-2 max-w-[85%] bg-black/70 backdrop-blur-sm text-white text-xs font-semibold px-2.5 py-1 rounded-2xl pointer-events-none select-none">
           <div>{route ? '🥾' : '🚩'} {distFt < 1000 ? `${distFt} ft` : `${(distFt / 5280).toFixed(2)} mi`} · {getCardinal(bearing)}</div>
           {/* Why there's only a straight line -- so it can be fixed (trace a
@@ -363,14 +523,14 @@ export default function CrewMap({ call, myUnit, locations = [] }) {
         </div>
       )}
 
-      <button
+      {!navMode && <button
         onClick={() => setExpanded(e => !e)}
         className={expanded
           ? 'absolute right-2 top-[calc(0.5rem+env(safe-area-inset-top))] bg-black/70 hover:bg-black/85 backdrop-blur-sm text-white text-xs font-semibold px-2.5 py-1.5 rounded-lg transition-colors'
           : 'absolute top-2 right-2 bg-black/70 hover:bg-black/85 backdrop-blur-sm text-white text-xs font-semibold px-2.5 py-1.5 rounded-lg transition-colors'}
       >
         {expanded ? '✕ Close' : '⛶ Expand'}
-      </button>
+      </button>}
     </div>
   );
 }
