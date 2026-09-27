@@ -16,7 +16,7 @@ import CallSummaryModal from '../components/calls/CallSummaryModal';
 import NativeSetupModal from '../components/crew/NativeSetupModal';
 import BeaconMode from '../components/crew/BeaconMode';
 import CrewRoster from '../components/crew/CrewRoster';
-import { setCrewGpsSharing, getCrewMessages, sendCrewMessage, getBroadcasts, markBroadcastRead, releaseFromCall, getPtNotes } from '../services/api';
+import { setCrewGpsSharing, getCrewMessages, sendCrewMessage, getBroadcasts, markBroadcastRead, releaseFromCall, getPtNotes, getCurrentShift } from '../services/api';
 import CrewBroadcasts from '../components/crew/CrewBroadcasts';
 import PtNotes from '../components/crew/PtNotes';
 import { isNative as isNativePlatform, nativeCall } from '../lib/native';
@@ -200,6 +200,10 @@ export default function CrewMobile() {
 
   const [statusLoading,    setStatusLoading]    = useState(false);
   const [statusError,      setStatusError]      = useState(null);
+  // Whether a shift is actually running (null = not checked yet). Units
+  // persist between shifts, so finding this crew's unit isn't enough --
+  // reopening the app after End Shift used to restart GPS tracking.
+  const [shiftActive,      setShiftActive]      = useState(null);
   // This shift's park-wide broadcasts, each with this unit's read flag.
   const [broadcasts,       setBroadcasts]       = useState([]);
   const [backupSubmitting, setBackupSubmitting] = useState(false);
@@ -422,8 +426,28 @@ export default function CrewMobile() {
   const { bgPermNeeded, openGpsSettings, gpsStatus } = useCrewGps({
     token: user?.token,
     unit: myUnit,
-    enabled: !!myUnit && !showNativeSetup && gpsSharingEnabled,
+    enabled: !!myUnit && !showNativeSetup && gpsSharingEnabled && shiftActive !== false,
   });
+
+  // Check with the server whether a shift is running: on open, whenever the
+  // app comes back to the foreground, and every couple of minutes. When
+  // there isn't one, stop the background GPS tracker -- End Shift only
+  // reaches phones whose app is open at that moment.
+  useEffect(() => {
+    if (!user?.token) return;
+    const check = () => getCurrentShift()
+      .then(res => setShiftActive(!!(res.data && !res.data.ended_at)))
+      .catch(() => {});
+    check();
+    const onVisible = () => { if (document.visibilityState === 'visible') check(); };
+    document.addEventListener('visibilitychange', onVisible);
+    const id = setInterval(check, 2 * 60 * 1000);
+    return () => { document.removeEventListener('visibilitychange', onVisible); clearInterval(id); };
+  }, [user?.token]);
+
+  useEffect(() => {
+    if (shiftActive === false) stopCrewGpsTracking();
+  }, [shiftActive]);
 
   // Same one-time-setup-screen deferral as useCrewGps above — the native
   // setup flow already drives permission prompts one at a time; racing this
@@ -548,7 +572,7 @@ export default function CrewMobile() {
         );
       }
     },
-    'shift:ended':         () => { setUnits([]); setCalls([]); setBroadcasts([]); setPtNotes([]); setShiftEnded(true); },
+    'shift:ended':         () => { stopCrewGpsTracking(); setShiftActive(false); setUnits([]); setCalls([]); setBroadcasts([]); setPtNotes([]); setShiftEnded(true); },
     // Full note arrives only on this unit's own socket room. The local
     // notification says who it's from, never any patient details.
     'pt_note:received':    (note) => {
@@ -736,7 +760,7 @@ export default function CrewMobile() {
 
   const unitColor = STATUS_COLORS[myUnit?.status] || '#9ca3af';
 
-  if (!myUnit) {
+  if (!myUnit || shiftActive === false) {
     return (
       <div className="min-h-screen bg-gray-900 text-white flex flex-col items-center justify-center p-6 text-center max-w-md mx-auto">
         <div className="text-5xl mb-4">{shiftEnded ? '🏁' : '🚑'}</div>
@@ -748,6 +772,7 @@ export default function CrewMobile() {
             ? 'Dispatch has ended the shift. Sign out and back in when the next shift begins.'
             : 'Waiting for dispatch to start the shift. Check back soon.'}
         </div>
+        <div className="text-green-400 text-sm mb-6">📍 Location sharing is off — you're not being tracked.</div>
         <div className="text-gray-600 text-xs mb-8">Logged in as {user?.unit_number}</div>
         <button
           onClick={async () => { stopCrewGpsTracking(); await unregisterPush(); logout(); navigate('/login'); }}

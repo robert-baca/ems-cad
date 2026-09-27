@@ -2553,6 +2553,15 @@ app.post('/api/crew/gps', verifyToken, gpsRateLimit, (req, res) => {
   if (req.user.role !== 'crew') return res.status(403).json({ error: 'Forbidden' });
   const unit = units.find(u => u.id === req.user.unit_id);
   if (!unit) return res.status(404).json({ error: 'Not found' });
+  // Off duty = not tracked. Phones can keep posting after the shift ends
+  // (the background tracker runs until End Tracking / sign out), which
+  // used to store and share crews' positions on the way home. Drop them:
+  // nothing stored, shown or shared. Answered 200 on purpose -- the
+  // native trackers queue failed posts and replay them later, which
+  // would feed stale off-shift points into the next shift.
+  if (!currentShift || currentShift.ended_at || unit.status === 'out_of_service') {
+    return res.json({ ok: true, ignored: true, reason: !currentShift || currentShift.ended_at ? 'no_active_shift' : 'out_of_service' });
+  }
   const lat = parseFloat(req.body.lat);
   const lng = parseFloat(req.body.lng);
   // !lat/!lng treated a legitimate coordinate of exactly 0 as missing —

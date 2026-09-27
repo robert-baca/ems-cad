@@ -56,6 +56,7 @@ export const getCall = (id) => api.get(`/calls/${id}`);
 export const getCallHistory = () => api.get('/calls/history');
 export const getMyCallHistory = () => api.get('/crew/calls/history');
 export const getShifts = () => api.get('/shifts');
+export const getCurrentShift = () => api.get('/shift/current');
 export const createCall = (data) => api.post('/calls', data);
 export const assignCall = (callId, unitId, initialStatus, additionalUnitIds) =>
   api.patch(`/calls/${callId}/assign`, { unit_id: unitId, initial_status: initialStatus, additional_unit_ids: additionalUnitIds });
