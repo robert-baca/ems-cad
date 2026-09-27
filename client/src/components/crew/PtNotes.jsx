@@ -5,7 +5,7 @@ import LicenseScanner from './LicenseScanner';
 // Patient handoff notes between medics. This is protected health
 // information: it's only ever held in memory here (never localStorage or
 // the offline queue), and the server limits it to the sending and
-// receiving unit and deletes it 48h after sending.
+// receiving unit and deletes it 8h after sending.
 
 const FIELDS = [
   { key: 'name',        label: 'Name',            placeholder: 'Last, First' },
@@ -148,7 +148,7 @@ function Compose({ myUnit, units, myActiveCall, onSent, onCancel }) {
         </div>
 
         <p className="text-gray-500 text-[11px]">
-          Patient info — only you and the medic you send it to can see it. Deleted automatically after 48 hours. Don't screenshot it.
+          Patient info — only you and the medic you send it to can see it. Deleted automatically after 8 hours. Don't screenshot it.
         </p>
         {error && <p className="text-red-400 text-sm">{error}</p>}
       </div>
@@ -188,7 +188,7 @@ function NoteView({ note, myUnit, onBack, onViewed }) {
             <div className="text-white text-base whitespace-pre-wrap break-words select-text">{note.fields[f.key]}</div>
           </div>
         ))}
-        <p className="text-gray-500 text-[11px] pt-2">Deleted automatically 48 hours after it was sent.</p>
+        <p className="text-gray-500 text-[11px] pt-2">Deleted automatically 8 hours after it was sent.</p>
       </div>
     </>
   );

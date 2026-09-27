@@ -1298,7 +1298,7 @@ app.get('/api/broadcasts', verifyToken, (req, res) => {
 //    the lock screen) -- the push only says who it's from
 //  - deleted PT_NOTE_RETENTION_MS after sending; the access log (who
 //    created/viewed which note id, when) is kept and holds no patient data
-const PT_NOTE_RETENTION_MS = 48 * 60 * 60 * 1000;
+const PT_NOTE_RETENTION_MS = 8 * 60 * 60 * 1000;
 const PT_NOTE_FIELDS = ['name', 'dob', 'age', 'sex', 'address', 'phone', 'medical_hx', 'allergies', 'medications', 'notes'];
 
 function logPtNoteAccess(noteId, action, user) {
@@ -3122,7 +3122,7 @@ initDb()
     setInterval(checkStaleCalls, STALE_CHECK_INTERVAL_MS);
     setInterval(checkSilentGps, GPS_WATCHDOG_INTERVAL_MS);
     purgeOldPtNotes();
-    setInterval(purgeOldPtNotes, 60 * 60 * 1000);
+    setInterval(purgeOldPtNotes, 10 * 60 * 1000);
   })
   .catch(err => {
     console.error('[db] Failed to connect to database:', err.message);
