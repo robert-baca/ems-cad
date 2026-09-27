@@ -429,11 +429,12 @@ export default function CrewMobile() {
   // otherwise step back through WebView history. A ref (kept fresh every
   // render) avoids the native call reading stale state.
   const closeTopOverlayRef = useRef(null);
+  const beaconBackRef = useRef(null);
   closeTopOverlayRef.current = () => {
     if (showDisposition)  { setShowDisposition(false); return true; }
     if (showCaseSummary)  { setShowCaseSummary(false); return true; }
     if (showCaseHistory)  { setShowCaseHistory(false); return true; }
-    if (showBeacon)       { setShowBeacon(false); return true; }
+    if (showBeacon)       { if (beaconBackRef.current?.()) return true; setShowBeacon(false); return true; }
     if (showRoster)       { setShowRoster(false); return true; }
     return false;
   };
@@ -976,6 +977,7 @@ export default function CrewMobile() {
             myUnit={myUnit}
             units={units}
             onClose={() => setShowBeacon(false)}
+            backRef={beaconBackRef}
           />
         </ErrorBoundary>
       )}

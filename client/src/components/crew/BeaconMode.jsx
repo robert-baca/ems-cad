@@ -1,5 +1,46 @@
 import { useState, useEffect, useRef } from 'react';
 import { getBearing, getDistanceFt, getCardinal } from '../../lib/geo';
+import { STATUS_COLORS, STATUS_LABELS } from '../../data/mockData';
+
+// A unit whose last position is older than this isn't shown as findable --
+// e.g. a phone left at the station keeps an old pin that would send someone
+// to the wrong place.
+const FRESH_MS = 10 * 60 * 1000;
+
+function gpsAgeMs(u) {
+  return u?.last_gps_at ? Date.now() - new Date(u.last_gps_at).getTime() : Infinity;
+}
+
+function fmtAge(ms) {
+  if (!isFinite(ms)) return 'no location yet';
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `updated ${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `updated ${m}m ago`;
+  return `updated ${Math.floor(m / 60)}h ago`;
+}
+
+function fmtDist(ft) {
+  if (ft == null) return null;
+  return ft < 1000 ? `${ft} ft` : `${(ft / 5280).toFixed(2)} mi`;
+}
+
+// Rotation of the screen relative to the phone's natural (portrait) top.
+// Compass headings are measured off the top of the device, so in landscape
+// the arrow was off by 90° without this.
+function getScreenAngle() {
+  const a = window.screen?.orientation?.angle ?? window.orientation ?? 0;
+  return ((Number(a) || 0) + 360) % 360;
+}
+
+// Re-renders every few seconds so "updated Xs ago" labels stay current.
+function useTicker(ms) {
+  const [, setN] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setN(n => n + 1), ms);
+    return () => clearInterval(id);
+  }, [ms]);
+}
 
 // EMA with wrap-around — alpha=0.2 balances smoothness vs responsiveness
 function smoothAngle(prev, next, alpha = 0.2) {
@@ -109,6 +150,21 @@ function Compass({ target, onBack, units }) {
   const watchRef   = useRef(null);
   const headingRef = useRef(null);
   const staleRef   = useRef(null);
+  // Unwrapped arrow angle actually rendered (can go past 360 / below 0), so
+  // crossing north animates the few degrees it really moved instead of
+  // CSS spinning the arrow the long way round (359° -> 1° = -358°).
+  const displayAngleRef = useRef(null);
+  const [screenAngle, setScreenAngle] = useState(getScreenAngle);
+
+  useEffect(() => {
+    const update = () => setScreenAngle(getScreenAngle());
+    window.screen?.orientation?.addEventListener?.('change', update);
+    window.addEventListener('orientationchange', update);
+    return () => {
+      window.screen?.orientation?.removeEventListener?.('change', update);
+      window.removeEventListener('orientationchange', update);
+    };
+  }, []);
 
   // Own GPS via browser Geolocation
   useEffect(() => {
@@ -217,7 +273,20 @@ function Compass({ target, onBack, units }) {
   const distFt   = hasPos ? getDistanceFt(myPos.lat, myPos.lng, targetPos.lat, targetPos.lng) : null;
   const cardinal = bearing != null ? getCardinal(bearing) : null;
 
-  const arrowAngle    = (bearing != null && heading != null) ? (bearing - heading + 360) % 360 : null;
+  const facing        = heading != null ? (heading + screenAngle) % 360 : null;
+  const arrowAngle    = (bearing != null && facing != null) ? (bearing - facing + 360) % 360 : null;
+  if (arrowAngle != null) {
+    const prev = displayAngleRef.current;
+    if (prev == null) {
+      displayAngleRef.current = arrowAngle;
+    } else {
+      const prevNorm = ((prev % 360) + 360) % 360;
+      const delta = ((arrowAngle - prevNorm + 540) % 360) - 180;
+      displayAngleRef.current = prev + delta;
+    }
+  }
+  const live          = units.find(u => u.id === target.id) || target;
+  const liveStatus    = live.status;
   const compassActive = arrowAngle != null && !noCompass;
   const isClose       = distFt != null && distFt <= CLOSE_FT;
 
@@ -227,8 +296,11 @@ function Compass({ target, onBack, units }) {
       <div className="w-full flex items-center justify-between px-4 pt-[calc(1.5rem+env(safe-area-inset-top))] pb-4 border-b border-gray-800 flex-shrink-0">
         <button onClick={onBack} className="text-gray-400 hover:text-white p-2 -ml-2 text-lg">← Back</button>
         <div className="text-center">
-          <div className="text-white font-bold text-lg">{target.unit_number}</div>
-          <div className="text-gray-500 text-xs">{target.crew || 'Locating…'}</div>
+          <div className="text-white font-bold text-lg">{live.unit_number}</div>
+          <div className="text-xs">
+            {live.crew && <span className="text-gray-400">{live.crew} · </span>}
+            <span style={{ color: STATUS_COLORS[liveStatus] || '#9ca3af' }}>{STATUS_LABELS[liveStatus] || liveStatus}</span>
+          </div>
         </div>
         <div className="w-16" />
       </div>
@@ -305,7 +377,7 @@ function Compass({ target, onBack, units }) {
               className={`absolute rounded-full ${compassActive ? 'bg-green-500/10' : 'bg-gray-700/15'}`}
               style={{ width: 280, height: 280 }}
             />
-            <Arrow angle={arrowAngle ?? 0} active={compassActive} />
+            <Arrow angle={displayAngleRef.current ?? 0} active={compassActive} />
           </div>
         )}
 
@@ -344,8 +416,50 @@ function Compass({ target, onBack, units }) {
 // shows up immediately with no re-fetch needed. Every other unit is
 // selectable here with no opt-in from them — see GET /api/units on the
 // server, which no longer masks crew-to-crew positions.
+//
+// Units with a recent position come first, nearest first. Out-of-service
+// units and ones with no position in the last 10 min go in a dimmed "not
+// currently trackable" section -- they used to read "GPS active" off a pin
+// that could be hours old.
 function Finder({ myUnit, units, onSelect, onClose }) {
+  useTicker(10000);
   const others = units.filter(u => u.id !== myUnit?.id);
+  const hasMe = myUnit?.last_lat && myUnit?.last_lng;
+  const distTo = (u) => (hasMe && u.last_lat && u.last_lng)
+    ? getDistanceFt(parseFloat(myUnit.last_lat), parseFloat(myUnit.last_lng), parseFloat(u.last_lat), parseFloat(u.last_lng))
+    : null;
+
+  const rows = others.map(u => ({ u, age: gpsAgeMs(u), dist: distTo(u) }));
+  const findable = rows
+    .filter(r => r.u.status !== 'out_of_service' && r.age < FRESH_MS)
+    .sort((a, b) => (a.dist ?? Infinity) - (b.dist ?? Infinity));
+  const others2 = rows
+    .filter(r => !findable.includes(r))
+    .sort((a, b) => a.u.unit_number.localeCompare(b.u.unit_number, undefined, { numeric: true }));
+
+  const Row = ({ u, age, dist, dim }) => (
+    <button key={u.id} onClick={() => onSelect(u)}
+      className={`w-full flex items-center gap-4 rounded-2xl px-4 py-3.5 text-left transition-all group border ${
+        dim ? 'bg-gray-900 border-gray-800 opacity-60' : 'bg-gray-800 border-green-800/60 hover:border-green-600'}`}>
+      <div className={`w-10 h-10 rounded-full flex items-center justify-center border ${
+        dim ? 'bg-gray-800 border-gray-700' : 'bg-green-900/60 border-green-700'}`}>
+        <span className="text-lg">{dim ? '📍' : '📡'}</span>
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2">
+          <span className="text-white font-bold">{u.unit_number}</span>
+          <span className="text-xs font-medium" style={{ color: STATUS_COLORS[u.status] || '#9ca3af' }}>
+            {STATUS_LABELS[u.status] || u.status}
+          </span>
+        </div>
+        {u.crew && <div className="text-gray-400 text-xs mt-0.5 truncate">{u.crew}</div>}
+        <div className={`text-xs mt-0.5 ${dim ? 'text-gray-500' : 'text-green-500'}`}>
+          {!dim && dist != null ? `${fmtDist(dist)} · ` : ''}{fmtAge(age)}
+        </div>
+      </div>
+      <span className="text-gray-600 group-hover:text-green-400 text-xl transition-colors">›</span>
+    </button>
+  );
 
   return (
     <div className="fixed inset-0 z-50 bg-gray-950 flex flex-col">
@@ -356,30 +470,21 @@ function Finder({ myUnit, units, onSelect, onClose }) {
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
-        {others.length === 0 ? (
-          <div className="text-center py-16 text-gray-500 text-sm">
+        {findable.length === 0 && (
+          <div className="text-center py-10 text-gray-500 text-sm">
             <div className="text-4xl mb-3">📡</div>
-            No other units on shift right now.
+            No other units with a current location right now.
           </div>
-        ) : (
-          others.map(u => (
-            <button key={u.id} onClick={() => onSelect(u)}
-              className="w-full flex items-center gap-4 bg-gray-800 border border-green-800/60 hover:border-green-600 rounded-2xl px-4 py-4 text-left transition-all group">
-              <div className="w-10 h-10 rounded-full bg-green-900/60 border border-green-700 flex items-center justify-center">
-                <span className="text-green-400 text-lg">📡</span>
-              </div>
-              <div className="flex-1">
-                <div className="text-white font-bold">{u.unit_number}</div>
-                {u.crew && <div className="text-gray-400 text-xs mt-0.5">{u.crew}</div>}
-                {(u.last_lat && u.last_lng) ? (
-                  <div className="text-green-500 text-xs mt-0.5">GPS active</div>
-                ) : (
-                  <div className="text-amber-500 text-xs mt-0.5">Waiting for GPS…</div>
-                )}
-              </div>
-              <span className="text-gray-600 group-hover:text-green-400 text-xl transition-colors">›</span>
-            </button>
-          ))
+        )}
+        {findable.map(r => <Row key={r.u.id} {...r} dim={false} />)}
+
+        {others2.length > 0 && (
+          <>
+            <div className="text-gray-500 text-xs uppercase tracking-wider pt-3">
+              Not currently trackable · out of service or no location in 10+ min
+            </div>
+            {others2.map(r => <Row key={r.u.id} {...r} dim />)}
+          </>
         )}
       </div>
     </div>
@@ -387,9 +492,20 @@ function Finder({ myUnit, units, onSelect, onClose }) {
 }
 
 // ── Main export ───────────────────────────────────────────────────────
-export default function BeaconMode({ myUnit, units, onClose }) {
+// backRef lets CrewMobile's hardware/native back button step compass ->
+// unit list first, instead of closing Find a Medic outright.
+export default function BeaconMode({ myUnit, units, onClose, backRef }) {
   const [view,   setView]   = useState('finder');
   const [target, setTarget] = useState(null);
+
+  useEffect(() => {
+    if (!backRef) return;
+    backRef.current = () => {
+      if (view === 'compass') { setView('finder'); return true; }
+      return false;
+    };
+    return () => { backRef.current = null; };
+  }, [backRef, view]);
 
   if (view === 'compass' && target) {
     return (
