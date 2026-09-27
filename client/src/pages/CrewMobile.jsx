@@ -16,7 +16,8 @@ import CallSummaryModal from '../components/calls/CallSummaryModal';
 import NativeSetupModal from '../components/crew/NativeSetupModal';
 import BeaconMode from '../components/crew/BeaconMode';
 import CrewRoster from '../components/crew/CrewRoster';
-import { setCrewGpsSharing, getCrewMessages, sendCrewMessage } from '../services/api';
+import { setCrewGpsSharing, getCrewMessages, sendCrewMessage, getBroadcasts, markBroadcastRead } from '../services/api';
+import CrewBroadcasts from '../components/crew/CrewBroadcasts';
 import { isNative as isNativePlatform, nativeCall } from '../lib/native';
 import { enqueueOfflineAction, subscribeOfflineQueue } from '../lib/offlineActionQueue';
 import { STATUS_COLORS, STATUS_LABELS } from '../data/mockData';
@@ -187,6 +188,8 @@ export default function CrewMobile() {
 
   const [statusLoading,    setStatusLoading]    = useState(false);
   const [statusError,      setStatusError]      = useState(null);
+  // This shift's park-wide broadcasts, each with this unit's read flag.
+  const [broadcasts,       setBroadcasts]       = useState([]);
   const [backupSubmitting, setBackupSubmitting] = useState(false);
   const [backupError,      setBackupError]      = useState('');
   const [lastActiveCallId, setLastActiveCallId] = useState(null);
@@ -502,6 +505,11 @@ export default function CrewMobile() {
     // broadcast (severe weather, evacuation) is exactly the kind of thing
     // that shouldn't wait for someone to happen to glance at their phone.
     'crew:broadcast': (payload) => {
+      if (payload?.id) {
+        setBroadcasts(prev => prev.some(b => b.id === payload.id)
+          ? prev
+          : [...prev, { id: payload.id, from: payload.from, message: payload.message, sent_at: payload.sent_at, read: false }]);
+      }
       scheduleNotif(`📢 ${payload?.from || 'Dispatch'}`, payload?.message || '');
       if (isNative) {
         nativeCall('Haptics', 'impact', { style: 'HEAVY' }).catch(() => {});
@@ -520,8 +528,35 @@ export default function CrewMobile() {
         );
       }
     },
-    'shift:ended':         () => { setUnits([]); setCalls([]); setShiftEnded(true); }
+    'shift:ended':         () => { setUnits([]); setCalls([]); setBroadcasts([]); setShiftEnded(true); }
   });
+
+  // Load this shift's broadcasts on login, and again whenever the app comes
+  // back to the foreground -- the live socket event is missed entirely while
+  // the app is closed, which is exactly when a broadcast is most likely to
+  // have been missed.
+  useEffect(() => {
+    if (!myUnit?.id) return;
+    const load = () => getBroadcasts()
+      .then(res => { if (Array.isArray(res.data)) setBroadcasts(res.data); })
+      .catch(() => {});
+    load();
+    const onVisible = () => { if (document.visibilityState === 'visible') load(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [myUnit?.id]);
+
+  const handleAckBroadcast = async (id) => {
+    setBroadcasts(prev => prev.map(b => b.id === id ? { ...b, read: true } : b));
+    try {
+      await markBroadcastRead(id);
+    } catch {
+      // Put it back so it stays in front of them and dispatch's read count
+      // stays accurate -- better a second tap than a silent "unread".
+      setBroadcasts(prev => prev.map(b => b.id === id ? { ...b, read: false } : b));
+      setStatusError('Could not mark broadcast as read — tap Got it again');
+    }
+  };
 
   const handleStatusTap = async (status) => {
     if (!myUnit) return;
@@ -818,6 +853,8 @@ export default function CrewMobile() {
 
       {/* Body */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        <CrewBroadcasts broadcasts={broadcasts} onAck={handleAckBroadcast} />
+
         {statusError && (
           <div className="px-3 py-2 rounded-xl bg-red-900/60 border border-red-700 text-red-200 text-sm flex items-center gap-2">
             <span>⚠️</span>

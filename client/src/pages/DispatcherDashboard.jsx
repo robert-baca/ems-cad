@@ -20,7 +20,7 @@ import ShiftSummaryModal from '../components/shift/ShiftSummaryModal';
 import OptionsModal from '../components/settings/OptionsModal';
 import CallSummaryModal from '../components/calls/CallSummaryModal';
 import BroadcastModal from '../components/calls/BroadcastModal';
-import { sendBroadcast } from '../services/api';
+import { sendBroadcast, getBroadcasts } from '../services/api';
 
 // Reconstructs which calls have an unanswered backup request, from comment
 // history alone — sosAlerts otherwise only ever grows/shrinks from live
@@ -91,6 +91,8 @@ export default function DispatcherDashboard() {
   const [splitParentId,     setSplitParentId]       = useState(null);
   const [showOptions,       setShowOptions]          = useState(false);
   const [showBroadcast,     setShowBroadcast]        = useState(false);
+  // This shift's broadcasts with per-unit read receipts (see BroadcastModal).
+  const [broadcasts,        setBroadcasts]           = useState([]);
   const [overwatchCallId,   setOverwatchCallId]      = useState(null);
   const [repositioningCallId, setRepositioningCallId] = useState(null);
   const [leftOpen,          setLeftOpen]             = useState(true);
@@ -102,6 +104,12 @@ export default function DispatcherDashboard() {
   // the moment the crew responds -- and an old alert can't resurface when
   // the same unit is later dispatched to a different call.
   const [unackAlerts,       setUnackAlerts]          = useState({});
+
+  // This shift's broadcasts (read receipts arrive live via socket after this).
+  useEffect(() => {
+    if (isOverwatch) return;
+    getBroadcasts().then(res => { if (Array.isArray(res.data)) setBroadcasts(res.data); }).catch(() => {});
+  }, [isOverwatch]);
 
   // Load current shift on mount
   useEffect(() => {
@@ -163,6 +171,9 @@ export default function DispatcherDashboard() {
     'unit:status_change':  handleStatusChange,
     'unit:profile_update': handleProfileUpdate,
     'unit:updated':        handleUnitUpdated,
+    'broadcast:created':   (b) => setBroadcasts(prev => prev.some(x => x.id === b.id) ? prev : [...prev, b]),
+    'broadcast:read':      ({ id, unit_id, at, unit_number }) =>
+      setBroadcasts(prev => prev.map(b => b.id === id ? { ...b, reads: { ...b.reads, [unit_id]: { at, unit_number } } } : b)),
     'unit:unacknowledged': (a) => setUnackAlerts(prev => ({ ...prev, [a.unit_id]: a })),
     'unit:removed':        handleUnitRemoved,
     'location:added':      addRemoteLocation,
@@ -184,7 +195,7 @@ export default function DispatcherDashboard() {
       }
     },
     'shift:started':       ({ shift, units: u }) => { setCurrentShift(shift); if (setUnits) setUnits(u); },
-    'shift:ended':         ({ units: u, open_calls, ...summary }) => { setShiftSummary(summary); setCurrentShift(null); setCalls(open_calls || []); setSelectedCallId(null); if (u) setUnits(u); clearShiftLocations(); },
+    'shift:ended':         ({ units: u, open_calls, ...summary }) => { setShiftSummary(summary); setCurrentShift(null); setCalls(open_calls || []); setSelectedCallId(null); setBroadcasts([]); if (u) setUnits(u); clearShiftLocations(); },
     'server:persist_error': ({ label, message }) => {
       setPersistErrors(prev => [...prev, { id: `${Date.now()}-${Math.random()}`, label, message }]);
     }
@@ -644,6 +655,8 @@ export default function DispatcherDashboard() {
       {!isOverwatch && showBroadcast && (
         <BroadcastModal
           onSend={async (message) => (await sendBroadcast(message)).data}
+          broadcasts={broadcasts}
+          units={units}
           onClose={() => setShowBroadcast(false)}
         />
       )}

@@ -273,6 +273,9 @@ let currentShift = null;
 // these are private between the two medics, not part of the dispatch record.
 // Cleared at shift end same as calls.
 let directMessages = [];
+// Park-wide broadcasts for the current shift (persisted, so a missed one is
+// still there after a server restart). Each tracks which units have read it.
+let broadcasts = [];
 let nextCallNum  = 100;
 const gpsDiscardLastLog  = new Map(); // unit_id → last discard log timestamp
 
@@ -413,6 +416,20 @@ async function initDb() {
     )
   `);
 
+  // Broadcasts used to exist only as a push + socket event, so a crew member
+  // who missed the notification had no way to ever see the message.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS broadcasts (
+      id TEXT PRIMARY KEY,
+      shift_id TEXT,
+      from_name TEXT,
+      message TEXT NOT NULL,
+      sent_at TEXT,
+      target_unit_ids JSONB DEFAULT '[]',
+      reads JSONB DEFAULT '{}'
+    )
+  `);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS dispatchers (
       id TEXT PRIMARY KEY,
@@ -461,6 +478,13 @@ async function initDb() {
   const shiftRes = await pool.query("SELECT * FROM shifts WHERE ended_at IS NULL ORDER BY started_at DESC LIMIT 1");
   currentShift = shiftRes.rows[0] || null;
   if (currentShift) currentShift.unit_staffing = currentShift.unit_staffing || [];
+
+  // This shift's broadcasts -- or, between shifts, any sent in the last 12h.
+  const bcRes = currentShift
+    ? await pool.query('SELECT * FROM broadcasts WHERE shift_id = $1 ORDER BY sent_at', [currentShift.id])
+    : await pool.query('SELECT * FROM broadcasts WHERE shift_id IS NULL AND sent_at > $1 ORDER BY sent_at',
+        [new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString()]);
+  broadcasts = bcRes.rows.map(b => ({ ...b, target_unit_ids: b.target_unit_ids || [], reads: b.reads || {} }));
 
   const locsRes = await pool.query("SELECT * FROM locations ORDER BY name");
   locations = locsRes.rows;
@@ -561,6 +585,15 @@ async function saveParkPath(p) {
 
 async function deleteParkPathFromDb(id) {
   await pool.query('DELETE FROM park_paths WHERE id=$1', [id]);
+}
+
+async function saveBroadcast(b) {
+  await pool.query(
+    `INSERT INTO broadcasts (id, shift_id, from_name, message, sent_at, target_unit_ids, reads)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     ON CONFLICT (id) DO UPDATE SET reads = EXCLUDED.reads`,
+    [b.id, b.shift_id, b.from_name, b.message, b.sent_at, JSON.stringify(b.target_unit_ids), JSON.stringify(b.reads)]
+  );
 }
 
 async function saveShift(shift) {
@@ -1159,13 +1192,61 @@ app.post('/api/broadcast', verifyToken, async (req, res) => {
   const message = req.body.message?.trim();
   if (!message) return res.status(400).json({ error: 'message required' });
   const from = req.user.name || req.user.username || 'Dispatch';
-  io.to('crew_all').emit('crew:broadcast', { from, message });
+  // Kept (not just pushed) so a crew member who missed the notification
+  // still sees it in the app, and dispatch can see who has read it.
+  // "Expected readers" = every unit in service right now.
+  const broadcast = {
+    id: `bc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    shift_id: currentShift && !currentShift.ended_at ? currentShift.id : null,
+    from_name: from,
+    message,
+    sent_at: new Date().toISOString(),
+    target_unit_ids: units.filter(u => u.status !== 'out_of_service').map(u => u.id),
+    reads: {}
+  };
+  try {
+    await saveBroadcast(broadcast);
+  } catch (err) {
+    console.error('[broadcast] failed to save:', err);
+    return res.status(500).json({ error: 'Failed to save broadcast — please try again' });
+  }
+  broadcasts.push(broadcast);
+  io.to('crew_all').emit('crew:broadcast', { id: broadcast.id, from, message, sent_at: broadcast.sent_at });
+  emitDispatch('broadcast:created', broadcast);
   const targets = units.filter(u => u.push_token);
   const results = await Promise.allSettled(
     targets.map(u => sendPushToUnit(u, { title: `📢 ${from}`, body: message }))
   );
   const sent = results.filter(r => r.status === 'fulfilled' && r.value === true).length;
-  res.json({ ok: true, sent, targeted: targets.length });
+  res.json({ ok: true, sent, targeted: targets.length, broadcast });
+});
+
+// Dispatch gets the full read receipts; a crew member gets the list with
+// just their own unit's read flag.
+app.get('/api/broadcasts', verifyToken, (req, res) => {
+  if (req.user.role === 'crew') {
+    return res.json(broadcasts.map(b => ({
+      id: b.id, from: b.from_name, message: b.message, sent_at: b.sent_at,
+      read: !!b.reads[req.user.unit_id]
+    })));
+  }
+  if (!['dispatcher', 'overwatch'].includes(req.user.role)) return res.status(403).json({ error: 'Forbidden' });
+  res.json(broadcasts);
+});
+
+app.post('/api/broadcasts/:id/read', verifyToken, async (req, res) => {
+  if (req.user.role !== 'crew') return res.status(403).json({ error: 'Forbidden' });
+  const b = broadcasts.find(x => x.id === req.params.id);
+  if (!b) return res.status(404).json({ error: 'Not found' });
+  const unit = units.find(u => u.id === req.user.unit_id);
+  if (!unit) return res.status(404).json({ error: 'Unit not found' });
+  if (!b.reads[unit.id]) {
+    const read = { at: new Date().toISOString(), unit_number: unit.unit_number };
+    b.reads[unit.id] = read;
+    persist(saveBroadcast(b), 'broadcast ' + b.id);
+    emitDispatch('broadcast:read', { id: b.id, unit_id: unit.id, ...read });
+  }
+  res.json({ ok: true });
 });
 
 app.delete('/api/units/:id', verifyToken, async (req, res) => {
@@ -1727,6 +1808,8 @@ app.post('/api/shift/start', verifyToken, async (req, res) => {
     return res.status(500).json({ error: 'Failed to start shift — please try again' });
   }
   currentShift = newShift;
+  // Broadcasts sent between shifts belonged to no shift; start clean.
+  broadcasts = [];
 
   unit_staffing.forEach(({ unit_id, crew, unit_type, in_service, station }) => {
     const unit = units.find(u => u.id === unit_id);
@@ -1819,6 +1902,7 @@ app.post('/api/shift/end', verifyToken, async (req, res) => {
   });
   calls = openCalls;
   directMessages = [];
+  broadcasts = [];
   units.forEach(u => {
     if (busyUnitIds.has(u.id)) return;
     u.status  = 'out_of_service';
