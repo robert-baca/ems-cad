@@ -1339,11 +1339,11 @@ app.post('/api/pt-notes', verifyToken, async (req, res) => {
   }
   if (!Object.keys(fields).length) return res.status(400).json({ error: 'Fill in at least one field' });
 
-  const call = req.body.call_id ? calls.find(c => c.id === req.body.call_id) : null;
+  // Deliberately not linked to a case (call_id/call_number stay null).
   const note = {
     id: `pt-${Date.now()}-${randomUUID().slice(0, 8)}`,
-    call_id: call?.id || null,
-    call_number: call?.call_number || null,
+    call_id: null,
+    call_number: null,
     from_unit_id: from.id,
     from_unit_number: from.unit_number,
     from_crew: req.user.name || from.crew || null,
@@ -1369,7 +1369,7 @@ app.post('/api/pt-notes', verifyToken, async (req, res) => {
   io.to(`crew:${to.id}`).emit('pt_note:received', note);
   sendPushToUnit(to, {
     title: `📋 Patient notes from ${from.unit_number}`,
-    body: note.call_number ? `Case #${note.call_number} — open the app to view` : 'Open the app to view'
+    body: 'Open the app to view'
   }).catch(() => {});
   res.status(201).json(note);
 });

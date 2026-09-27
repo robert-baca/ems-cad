@@ -36,7 +36,6 @@ function Header({ title, onBack, backLabel = '← Back' }) {
 function Compose({ myUnit, units, myActiveCall, onSent, onCancel }) {
   const [values, setValues] = useState({});
   const [toId, setToId] = useState('');
-  const [attachCall, setAttachCall] = useState(!!myActiveCall);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
 
@@ -59,7 +58,7 @@ function Compose({ myUnit, units, myActiveCall, onSent, onCancel }) {
     setSending(true);
     setError('');
     try {
-      const res = await sendPtNote({ to_unit_id: toId, call_id: attachCall && myActiveCall ? myActiveCall.id : null, fields: values });
+      const res = await sendPtNote({ to_unit_id: toId, fields: values });
       onSent(res.data);
     } catch (err) {
       setError(err?.response?.data?.error || 'Could not send — check your connection and try again');
@@ -125,13 +124,6 @@ function Compose({ myUnit, units, myActiveCall, onSent, onCancel }) {
           </div>
         </div>
 
-        {myActiveCall && (
-          <label className="flex items-center gap-2 text-gray-300 text-sm pt-1">
-            <input type="checkbox" checked={attachCall} onChange={e => setAttachCall(e.target.checked)} className="w-4 h-4" />
-            Attach to Case #{myActiveCall.call_number}
-          </label>
-        )}
-
         <p className="text-gray-500 text-[11px]">
           Patient info — only you and the medic you send it to can see it. Deleted automatically after 48 hours. Don't screenshot it.
         </p>
@@ -164,7 +156,6 @@ function NoteView({ note, myUnit, onBack, onViewed }) {
         <div className="text-gray-400 text-xs">
           {incoming ? `From ${note.from_unit_number}${note.from_crew ? ` · ${note.from_crew}` : ''}` : `To ${note.to_unit_number}`}
           {' · '}{fmtTime(note.created_at)}
-          {note.call_number ? ` · Case #${note.call_number}` : ''}
           {!incoming && (note.read_at ? ` · ✓ Read ${fmtTime(note.read_at)}` : ' · Not opened yet')}
         </div>
         {viewError && <p className="text-amber-400 text-sm">{viewError}</p>}
@@ -248,7 +239,6 @@ export default function PtNotes({ myUnit, units, myActiveCall, notes, onNoteSent
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-white font-semibold text-sm">
                       {tab === 'inbox' ? `From ${n.from_unit_number}` : `To ${n.to_unit_number}`}
-                      {n.call_number ? <span className="text-gray-400 font-normal"> · Case #{n.call_number}</span> : null}
                     </span>
                     <span className="text-gray-500 text-xs flex-shrink-0">{fmtTime(n.created_at)}</span>
                   </div>
