@@ -26,6 +26,11 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
     private static let defaultsTokenKey = "GpsTrackerToken"
     private static let defaultsUrlKey = "GpsTrackerServerUrl"
     private static let defaultsActiveKey = "GpsTrackerActive"
+    private static let defaultsSessionStartKey = "GpsTrackerSessionStartedAt"
+    // Safety net: no tracking session runs longer than this, whatever else
+    // happens (app swiped away, End Shift never reached the phone, server
+    // unreachable). Longer than any real shift.
+    private static let maxSessionS: TimeInterval = 14 * 60 * 60
 
     private let locationManager = CLLocationManager()
     private var token: String?
@@ -126,7 +131,11 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
         let defaults = UserDefaults.standard
         let wasActive = defaults.bool(forKey: GpsTrackerPlugin.defaultsActiveKey)
         GpsTrackerPlugin.log("load(): persisted active=\(wasActive), authStatus=\(GpsTrackerPlugin.authStatusString(locationManager.authorizationStatus))")
-        if wasActive,
+        if wasActive, GpsTrackerPlugin.sessionExpired() {
+            GpsTrackerPlugin.log("load(): session past 14h, not resuming")
+            defaults.set(false, forKey: GpsTrackerPlugin.defaultsActiveKey)
+            defaults.removeObject(forKey: GpsTrackerPlugin.defaultsSessionStartKey)
+        } else if wasActive,
             let savedToken = defaults.string(forKey: GpsTrackerPlugin.defaultsTokenKey),
             let savedUrl = defaults.string(forKey: GpsTrackerPlugin.defaultsUrlKey) {
             token = savedToken
@@ -146,6 +155,12 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
         serverUrl = newServerUrl
 
         let defaults = UserDefaults.standard
+        // A new session (not the ~30-min token-refresh repeat call) records its
+        // start time for the 14-hour cutoff.
+        if !defaults.bool(forKey: GpsTrackerPlugin.defaultsActiveKey)
+            || defaults.object(forKey: GpsTrackerPlugin.defaultsSessionStartKey) == nil {
+            defaults.set(Date().timeIntervalSince1970, forKey: GpsTrackerPlugin.defaultsSessionStartKey)
+        }
         defaults.set(newToken, forKey: GpsTrackerPlugin.defaultsTokenKey)
         defaults.set(newServerUrl, forKey: GpsTrackerPlugin.defaultsUrlKey)
         defaults.set(true, forKey: GpsTrackerPlugin.defaultsActiveKey)
@@ -158,8 +173,26 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
 
     @objc func stopTracking(_ call: CAPPluginCall) {
         GpsTrackerPlugin.log("stopTracking() called")
+        haltTracking()
+        call.resolve()
+    }
+
+    private static func sessionExpired() -> Bool {
+        let started = UserDefaults.standard.double(forKey: defaultsSessionStartKey)
+        return started > 0 && Date().timeIntervalSince1970 - started > maxSessionS
+    }
+
+    // Shared by stopTracking() and the tracker turning itself off (shift
+    // over, or past maxSessionS): flag cleared so load() won't resume it,
+    // location updates stopped, queued points dropped so none get replayed
+    // into the next shift. Safe to call more than once, from any thread.
+    private func haltTracking() {
         UserDefaults.standard.set(false, forKey: GpsTrackerPlugin.defaultsActiveKey)
+        UserDefaults.standard.removeObject(forKey: GpsTrackerPlugin.defaultsSessionStartKey)
         isTracking = false
+        offlineQueueLock.lock()
+        offlineQueue.removeAll()
+        offlineQueueLock.unlock()
         // A deliberate stop (logout, end of shift) shouldn't leave a stale-
         // warning notification pending -- if the process is instead killed
         // outright (app update, crash), this line never runs, and the
@@ -180,7 +213,6 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
             self.locationManager.stopUpdatingLocation()
             self.locationManager.stopMonitoringSignificantLocationChanges()
         }
-        call.resolve()
     }
 
     @objc func getStatus(_ call: CAPPluginCall) {
@@ -248,6 +280,11 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
     public func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let loc = locations.last else { return }
         lastLocationReceived = Date()
+        if isTracking && GpsTrackerPlugin.sessionExpired() {
+            GpsTrackerPlugin.log("14-hour limit reached, stopping tracking")
+            haltTracking()
+            return
+        }
         GpsTrackerPlugin.log("didUpdateLocations: acc=\(Int(loc.horizontalAccuracy))m age=\(String(format: "%.1f", -loc.timestamp.timeIntervalSinceNow))s")
 
         let now = Date()
@@ -482,13 +519,20 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
         do {
-            let (_, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await URLSession.shared.data(for: request)
             guard let httpResponse = response as? HTTPURLResponse else {
                 GpsTrackerPlugin.log("sendPoint: no HTTPURLResponse")
                 return false
             }
             let ok = (200...299).contains(httpResponse.statusCode)
             if !ok { GpsTrackerPlugin.log("sendPoint: server returned \(httpResponse.statusCode)") }
+            // The server answers "no_active_shift" once dispatch has ended the
+            // shift -- the signal to shut off, even if the app itself was
+            // swiped away and never heard about it.
+            if ok, let text = String(data: data, encoding: .utf8), text.contains("no_active_shift") {
+                GpsTrackerPlugin.log("sendPoint: no active shift, stopping tracking")
+                haltTracking()
+            }
             return ok
         } catch {
             GpsTrackerPlugin.log("sendPoint: network error: \(error.localizedDescription)")

@@ -19,9 +19,15 @@ public class GpsTrackerPlugin extends Plugin {
         String token     = call.getString("token", "");
         String serverUrl = call.getString("serverUrl", "");
 
-        // Persist so BootReceiver can restart the service after a reboot
-        getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .edit()
+        // Persist so BootReceiver can restart the service after a reboot.
+        // A new session (not the ~30-min token-refresh repeat call) also
+        // records its start time for GpsTrackerService's 14-hour cutoff.
+        SharedPreferences prefs = getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        SharedPreferences.Editor editor = prefs.edit();
+        if (!prefs.getBoolean("active", false) || prefs.getLong("sessionStartedAt", 0) == 0) {
+            editor.putLong("sessionStartedAt", System.currentTimeMillis());
+        }
+        editor
                 .putString("token", token)
                 .putString("serverUrl", serverUrl)
                 .putBoolean("active", true)
@@ -40,6 +46,7 @@ public class GpsTrackerPlugin extends Plugin {
         getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .edit()
                 .putBoolean("active", false)
+                .remove("sessionStartedAt")
                 .apply();
 
         getContext().stopService(new Intent(getContext(), GpsTrackerService.class));

@@ -42,6 +42,10 @@ public class GpsTrackerService extends Service {
     // server doesn't push anything itself — it just waits for the phone's next post.
     private static final long  HEARTBEAT_MS    = 5_000L;
     private static final int   MAX_QUEUE       = 100; // ~100 seconds of offline points
+    // Safety net: no tracking session runs longer than this, whatever else
+    // happens (app swiped away, End Shift never reached the phone, server
+    // unreachable). Longer than any real shift.
+    private static final long  MAX_SESSION_MS  = 14L * 60 * 60 * 1000;
     // Raw GPS near rides/structures can report a low-accuracy fix that barely
     // moves fix-to-fix even while someone's actually walking — this drops
     // those instead of posting a "position" that isn't trustworthy.
@@ -301,6 +305,12 @@ public class GpsTrackerService extends Service {
         // checks.
         lastLocationReceivedMs = now;
 
+        long startedAt = getSharedPreferences("GpsTracker", MODE_PRIVATE).getLong("sessionStartedAt", 0);
+        if (startedAt != 0 && now - startedAt > MAX_SESSION_MS) {
+            stopTrackingFromService("14-hour limit reached");
+            return;
+        }
+
         // Crew phones are personally owned, not managed/kiosk devices — unlike
         // a fleet phone, one of these can have Developer Options enabled with
         // a leftover mock-location app still set as the active provider (games,
@@ -441,11 +451,43 @@ public class GpsTrackerService extends Service {
                 os.write(body.getBytes(StandardCharsets.UTF_8));
             }
             int code = conn.getResponseCode();
+            boolean ok = code >= 200 && code < 300;
+            if (ok) {
+                // The server answers "no_active_shift" once dispatch has ended
+                // the shift -- the signal for this tracker to shut itself off,
+                // even if the app itself was swiped away and never heard.
+                StringBuilder resp = new StringBuilder();
+                try (java.io.BufferedReader r = new java.io.BufferedReader(
+                        new java.io.InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
+                    String line;
+                    while ((line = r.readLine()) != null && resp.length() < 2000) resp.append(line);
+                } catch (Exception ignored) {}
+                if (resp.indexOf("no_active_shift") >= 0) stopTrackingFromService("shift ended");
+            }
             conn.disconnect();
-            return code >= 200 && code < 300;
+            return ok;
         } catch (Exception e) {
             return false;
         }
+    }
+
+    // The tracker turning itself off (shift over, or past MAX_SESSION_MS) --
+    // same end state as GpsTrackerPlugin.stopTracking(): flag cleared (so
+    // BootReceiver / a START_STICKY restart won't bring it back), foreground
+    // notification removed, service stopped. Any queued points are dropped
+    // so none get replayed into the next shift. Safe to call from the
+    // network thread and more than once.
+    private void stopTrackingFromService(String why) {
+        android.util.Log.i("GpsTracker", "Stopping tracking: " + why);
+        getSharedPreferences("GpsTracker", MODE_PRIVATE).edit()
+                .putBoolean("active", false)
+                .remove("sessionStartedAt")
+                .apply();
+        synchronized (offlineQueue) { offlineQueue.clear(); }
+        new Handler(Looper.getMainLooper()).post(() -> {
+            stopForeground(STOP_FOREGROUND_REMOVE);
+            stopSelf();
+        });
     }
 
     @Override
