@@ -390,7 +390,14 @@ export default function CrewMap({ call, myUnit, locations = [] }) {
     let watchId = null;
     if (navigator.geolocation) {
       watchId = navigator.geolocation.watchPosition(
-        pos => setNavPos({ lat: pos.coords.latitude, lng: pos.coords.longitude, course: pos.coords.heading, speed: pos.coords.speed }),
+        pos => {
+          // A phone's first fixes are often coarse (100 m+ from wifi/cell);
+          // following one would fling the camera across the park. Use a
+          // rough fix only while there's nothing better yet.
+          const acc = pos.coords.accuracy ?? 0;
+          const next = { lat: pos.coords.latitude, lng: pos.coords.longitude, course: pos.coords.heading, speed: pos.coords.speed, acc };
+          setNavPos(prev => (acc > 50 && prev && (prev.acc ?? 0) <= 50) ? prev : next);
+        },
         () => {},
         { enableHighAccuracy: true, maximumAge: 1000, timeout: 15000 }
       );
@@ -465,6 +472,21 @@ export default function CrewMap({ call, myUnit, locations = [] }) {
     setExpanded(true);
     setNavMode(true);
   };
+
+  // Android back / iOS ‹ while the map is full screen: end navigation,
+  // then collapse the map -- instead of falling through to WebView history
+  // and leaving the crew page mid-navigation. CrewMobile's back handler
+  // checks window.__crewMapBack before anything else.
+  useEffect(() => {
+    if (!expanded && !navMode) return;
+    const handler = () => {
+      if (navMode) endNav();
+      else setExpanded(false);
+      return true;
+    };
+    window.__crewMapBack = handler;
+    return () => { if (window.__crewMapBack === handler) delete window.__crewMapBack; };
+  });
 
   const endNav = () => {
     setNavMode(false);

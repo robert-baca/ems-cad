@@ -447,6 +447,8 @@ export default function CrewMobile() {
   const beaconBackRef = useRef(null);
   const ptNotesBackRef = useRef(null);
   closeTopOverlayRef.current = () => {
+    // A full-screen call map (or its navigation view) sits above everything.
+    if (window.__crewMapBack?.()) return true;
     if (showDisposition)  { setShowDisposition(false); return true; }
     if (showCaseSummary)  { setShowCaseSummary(false); return true; }
     if (showCaseHistory)  { setShowCaseHistory(false); return true; }

@@ -17,6 +17,18 @@ const REROUTE_THRESHOLD_FT = 50;
 // 'off' (wayfinding disabled), 'no-paths', 'no-gps', 'no-pin',
 // 'start-off' / 'pin-off' (more than MAX_ROUTE_SNAP_DIST_FT from any
 // walkway, with the distance in `offFt`), 'disconnected'.
+// Building the graph (incl. splicing crossings/T-junctions) is the heavy
+// step -- up to a second on a phone. Each call map fetches the paths anew,
+// so without this it was redone every time a call arrived, right as the
+// crew app is busiest. Keyed on the paths' ids and vertex counts, which
+// change whenever the published network does.
+let graphCache = { key: null, graph: null };
+function cachedGraph(paths) {
+  const key = (paths || []).map(p => `${p.id}:${p.coordinates?.length || 0}`).join('|');
+  if (graphCache.key !== key) graphCache = { key, graph: buildRouteGraph(paths) };
+  return graphCache.graph;
+}
+
 export function useRoute(paths, pathsEnabled, crewLngLat, callLngLat) {
   // Coerce: a string coordinate would turn later arithmetic into string
   // concatenation and silently kill routing.
@@ -29,7 +41,7 @@ export function useRoute(paths, pathsEnabled, crewLngLat, callLngLat) {
   // The graph only needs rebuilding when the published network changes —
   // it's the relatively expensive step, so it's kept separate from the
   // cheaper per-position snap+Dijkstra below.
-  const graph = useMemo(() => (pathsEnabled ? buildRouteGraph(paths) : null), [paths, pathsEnabled]);
+  const graph = useMemo(() => (pathsEnabled ? cachedGraph(paths) : null), [paths, pathsEnabled]);
 
   const [route, setRoute] = useState(null);
   const [why, setWhy] = useState(null); // { reason, offFt? } when route is null
