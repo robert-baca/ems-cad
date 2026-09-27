@@ -19,6 +19,7 @@ import CrewRoster from '../components/crew/CrewRoster';
 import { setCrewGpsSharing, getCrewMessages, sendCrewMessage, getBroadcasts, markBroadcastRead, releaseFromCall, getPtNotes } from '../services/api';
 import CrewBroadcasts from '../components/crew/CrewBroadcasts';
 import PtNotes from '../components/crew/PtNotes';
+import CrewNavigate from '../components/crew/CrewNavigate';
 import { isNative as isNativePlatform, nativeCall } from '../lib/native';
 import { enqueueOfflineAction, subscribeOfflineQueue } from '../lib/offlineActionQueue';
 import { STATUS_COLORS, STATUS_LABELS } from '../data/mockData';
@@ -212,6 +213,7 @@ export default function CrewMobile() {
   const [showCaseHistory,  setShowCaseHistory]  = useState(false);
   // Patient handoff notes (PHI) -- memory only, never persisted on the device.
   const [showPtNotes,      setShowPtNotes]      = useState(false);
+  const [showNavigate,     setShowNavigate]     = useState(false);
   const [ptNotes,          setPtNotes]          = useState([]);
   const [showBeacon,       setShowBeacon]       = useState(false);
   const [showRoster,       setShowRoster]       = useState(false);
@@ -446,12 +448,14 @@ export default function CrewMobile() {
   const closeTopOverlayRef = useRef(null);
   const beaconBackRef = useRef(null);
   const ptNotesBackRef = useRef(null);
+  const navigateBackRef = useRef(null);
   closeTopOverlayRef.current = () => {
     if (showDisposition)  { setShowDisposition(false); return true; }
     if (showCaseSummary)  { setShowCaseSummary(false); return true; }
     if (showCaseHistory)  { setShowCaseHistory(false); return true; }
     if (showPtNotes)      { if (ptNotesBackRef.current?.()) return true; setShowPtNotes(false); return true; }
     if (showBeacon)       { if (beaconBackRef.current?.()) return true; setShowBeacon(false); return true; }
+    if (showNavigate)     { if (navigateBackRef.current?.()) return true; setShowNavigate(false); return true; }
     if (showRoster)       { setShowRoster(false); return true; }
     return false;
   };
@@ -1012,6 +1016,13 @@ export default function CrewMobile() {
         </button>
 
         <button
+          onClick={() => setShowNavigate(true)}
+          className="w-full py-3 rounded-2xl bg-blue-900/50 border border-blue-700 text-blue-300 hover:bg-blue-800/60 text-sm font-semibold transition-all flex items-center justify-center gap-2"
+        >
+          🗺️ Navigate to…
+        </button>
+
+        <button
           onClick={() => setShowBeacon(true)}
           className="w-full py-3 rounded-2xl bg-blue-900/50 border border-blue-700 text-blue-300 hover:bg-blue-800/60 text-sm font-semibold transition-all flex items-center justify-center gap-2"
         >
@@ -1070,6 +1081,17 @@ export default function CrewMobile() {
           <CrewCaseHistory
             units={units}
             onClose={() => setShowCaseHistory(false)}
+          />
+        </ErrorBoundary>
+      )}
+
+      {showNavigate && (
+        <ErrorBoundary onClose={() => setShowNavigate(false)}>
+          <CrewNavigate
+            myUnit={myUnit}
+            locations={landmarkLocations}
+            onClose={() => setShowNavigate(false)}
+            backRef={navigateBackRef}
           />
         </ErrorBoundary>
       )}

@@ -49,7 +49,16 @@ export function useRoute(paths, pathsEnabled, crewLngLat, callLngLat) {
     if (!endSnap) { setRoute(null); return; }
     const { graph: g2, nodeId: endId } = insertVirtualNode(g1, endSnap);
 
-    setRoute(findRoute(g2, startId, endId));
+    // findRoute only covers path-to-path; add the walk from the crew's real
+    // position onto the network and from the network to the actual pin.
+    // Without these legs (up to MAX_ROUTE_SNAP_DIST_FT each) the distance
+    // could read shorter than the straight line, and the drawn line stopped
+    // short of both the crew dot and the destination.
+    const r = findRoute(g2, startId, endId);
+    setRoute(r ? {
+      points: [[crewLng, crewLat], ...r.points, [callLng, callLat]],
+      distFt: Math.round(r.distFt + startSnap.distFt + endSnap.distFt),
+    } : null);
   }, [graph, crewLng, crewLat, callLng, callLat]);
 
   return route;
