@@ -682,7 +682,6 @@ export default function DispatcherDashboard() {
       {!isOverwatch && showNewCallModal && (
         <NewCallModal
           pin={newCallPin}
-          locations={locations.filter(l => l.locationType === 'permanent')}
           units={units}
           onDispatch={handleDispatch}
           onClose={() => { setShowNewCallModal(false); setNewCallPin(null); setSplitParentId(null); }}

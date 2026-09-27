@@ -4,12 +4,7 @@ import { loadQuickTypes } from '../settings/OptionsModal';
 
 const TYPE_ICONS = { ALS: '🚑', BLS: '🚐', Cart: '🛺' };
 
-// `locations` are the saved named spots (rides, stations…) added via
-// right-click → Add location. Picking one fills in the location name AND
-// drops the pin there, which is what the crew map routes to.
-export default function NewCallModal({ pin, units, onDispatch, onClose, parentCallNumber, locations = [] }) {
-  const [pickedLoc, setPickedLoc] = useState(null); // saved location chosen from the list
-  const [showSuggest, setShowSuggest] = useState(false);
+export default function NewCallModal({ pin, units, onDispatch, onClose, parentCallNumber }) {
   const [quickTypes, setQuickTypes] = useState([]);
 
   useEffect(() => {
@@ -40,15 +35,6 @@ export default function NewCallModal({ pin, units, onDispatch, onClose, parentCa
       prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
     );
   };
-
-  // A picked saved location wins over a map click; otherwise the map pin.
-  const effectivePin = pickedLoc ? { lat: pickedLoc.lat, lng: pickedLoc.lng } : pin;
-  const query = form.location_name.trim().toLowerCase();
-  const suggestions = locations
-    .filter(l => !pickedLoc || l.id !== pickedLoc.id)
-    .filter(l => !query || l.name.toLowerCase().includes(query))
-    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
-    .slice(0, 8);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -84,8 +70,8 @@ export default function NewCallModal({ pin, units, onDispatch, onClose, parentCa
       ...form,
       assigned_unit_id,
       additional_unit_ids,
-      location_lat: effectivePin?.lat,
-      location_lng: effectivePin?.lng,
+      location_lat: pin?.lat,
+      location_lng: pin?.lng,
       priority:     Number(form.priority)
     });
     setLoading(false);
@@ -115,54 +101,26 @@ export default function NewCallModal({ pin, units, onDispatch, onClose, parentCa
           )}
 
           {/* Pin location */}
-          {effectivePin && (
+          {pin && (
             <div className="bg-gray-700 rounded-lg px-3 py-2 flex items-center gap-2">
               <span className="text-yellow-400">📍</span>
-              {pickedLoc ? (
-                <span className="text-white text-xs font-semibold flex-1">Pin at saved location: {pickedLoc.name}</span>
-              ) : (
-                <span className="text-white text-xs font-mono flex-1">
-                  {effectivePin.lat.toFixed(5)}, {effectivePin.lng.toFixed(5)}
-                </span>
-              )}
-              {pickedLoc && (
-                <button type="button" onClick={() => setPickedLoc(null)}
-                  className="text-gray-400 hover:text-white text-xs">{pin ? 'use map click' : 'clear'}</button>
-              )}
+              <span className="text-white text-xs font-mono">
+                {pin.lat.toFixed(5)}, {pin.lng.toFixed(5)}
+              </span>
             </div>
           )}
 
           {/* Location */}
           <div>
             <label className="block text-gray-400 text-xs mb-1">Location</label>
-            <div className="relative">
-              <input
-                type="text"
-                value={form.location_name}
-                onChange={e => { set('location_name', e.target.value); setShowSuggest(true); }}
-                onFocus={() => setShowSuggest(true)}
-                onBlur={() => setTimeout(() => setShowSuggest(false), 150)}
-                placeholder={locations.length ? 'Type a ride or place — e.g. Batman' : 'e.g. Near Titan ride entrance…'}
-                autoFocus
-                autoComplete="off"
-                className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500"
-              />
-              {showSuggest && suggestions.length > 0 && (
-                <div className="absolute z-10 left-0 right-0 mt-1 bg-gray-900 border border-gray-600 rounded-lg shadow-xl max-h-56 overflow-y-auto">
-                  {suggestions.map(l => (
-                    <button key={l.id} type="button"
-                      onMouseDown={e => e.preventDefault()}
-                      onClick={() => { setPickedLoc(l); set('location_name', l.name); setShowSuggest(false); }}
-                      className="w-full text-left px-3 py-2 text-sm text-gray-200 hover:bg-gray-700 flex items-center gap-2">
-                      <span>📌</span><span>{l.name}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-            {!effectivePin && (
-              <p className="text-amber-400/80 text-[11px] mt-1">No map pin — pick a saved location or right-click the map, or crews won't get directions.</p>
-            )}
+            <input
+              type="text"
+              value={form.location_name}
+              onChange={e => set('location_name', e.target.value)}
+              placeholder="e.g. Near Titan ride entrance…"
+              autoFocus
+              className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500"
+            />
           </div>
 
           {/* Call type */}
