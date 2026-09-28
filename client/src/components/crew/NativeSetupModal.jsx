@@ -25,13 +25,52 @@ const ALL_STEPS = [
     button: 'Got it',
     androidOnly: true,
   },
+  // Neither of these can be set by the app itself -- Android only lets the
+  // user grant a channel's DND override, and watch mirroring lives in the
+  // watch's own companion app -- so like battery, instructions only.
+  {
+    key: 'dnd',
+    icon: '🚨',
+    title: 'Alerts Through Do Not Disturb',
+    body: 'Settings → Apps → EMS Crew → Notifications → EMS Call Alerts → turn on "Override Do Not Disturb". (Samsung: Settings → Notifications → Do not disturb → App notifications → add EMS Crew.) Calls, dispatch pings and broadcasts will still come through on silent.',
+    button: 'Got it',
+    androidOnly: true,
+    since: 2,
+  },
+  {
+    key: 'dnd',
+    icon: '🚨',
+    title: 'Alerts Through Focus',
+    body: 'If iPhone asks whether EMS Crew can send Time Sensitive notifications, tap Allow. If you use Focus / Do Not Disturb: Settings → Focus → each mode → Apps → turn on "Time Sensitive Notifications". Calls, dispatch pings and broadcasts will then still come through.',
+    button: 'Got it',
+    iosOnly: true,
+    since: 2,
+  },
+  {
+    key: 'watch',
+    icon: '⌚',
+    title: 'Smartwatch Alerts',
+    body: 'Wear a watch? Apple Watch: Watch app on your iPhone → Notifications → EMS Crew → Mirror my iPhone. Galaxy Watch: Galaxy Wearable app → Watch settings → Notifications → turn on EMS Crew. Pixel Watch: Pixel Watch app → Notifications → EMS Crew on. No watch? Just tap Got it.',
+    button: 'Got it',
+    since: 2,
+  },
 ];
 
-// There's no "Unrestricted Battery" setting on iOS — showing that step there
-// would just be confusing.
-const STEPS = ALL_STEPS.filter(s => !s.androidOnly || Capacitor.getPlatform() === 'android');
+// Bump when adding steps (and tag them `since` the new version): phones that
+// finished an older setup see just the steps added since, once. Stored in
+// native_setup_done -- the original setup saved '1' there.
+export const SETUP_VERSION = 2;
+export const setupDoneVersion = () => parseInt(localStorage.getItem('native_setup_done') || '0', 10) || 0;
+
+// Platform-specific steps (e.g. no "Unrestricted Battery" setting on iOS)
+// would just be confusing on the other platform.
+const platform = Capacitor.getPlatform();
+const PLATFORM_STEPS = ALL_STEPS.filter(s =>
+  !(s.androidOnly && platform !== 'android') && !(s.iosOnly && platform !== 'ios'));
 
 export default function NativeSetupModal({ onDone }) {
+  const [doneBefore] = useState(setupDoneVersion);
+  const STEPS = PLATFORM_STEPS.filter(s => (s.since || 1) > doneBefore);
   const [step, setStep]       = useState(0);
   const [loading, setLoading] = useState(false);
   const [done, setDone]       = useState(false);
@@ -49,7 +88,7 @@ export default function NativeSetupModal({ onDone }) {
       setStep(s => s + 1);
     } else {
       setDone(true);
-      localStorage.setItem('native_setup_done', '1');
+      localStorage.setItem('native_setup_done', String(SETUP_VERSION));
       onDone();
     }
   };
@@ -121,8 +160,12 @@ export default function NativeSetupModal({ onDone }) {
 
         <div className="text-center mb-8">
           <div className="text-5xl mb-3">🚑</div>
-          <div className="text-white font-bold text-xl">One-Time Setup</div>
-          <div className="text-gray-400 text-sm mt-1">Allow these 3 things so GPS tracking works</div>
+          <div className="text-white font-bold text-xl">{doneBefore ? 'New Setup Steps' : 'One-Time Setup'}</div>
+          <div className="text-gray-400 text-sm mt-1">
+            {doneBefore
+              ? `${STEPS.length} quick settings so call alerts always reach you`
+              : `Allow these ${STEPS.length} things so GPS tracking and call alerts work`}
+          </div>
         </div>
 
         <div className="flex justify-center gap-2 mb-8">
@@ -159,7 +202,7 @@ export default function NativeSetupModal({ onDone }) {
 
         {step === STEPS.length - 1 && (
           <button
-            onClick={() => { localStorage.setItem('native_setup_done', '1'); onDone(); }}
+            onClick={() => { localStorage.setItem('native_setup_done', String(SETUP_VERSION)); onDone(); }}
             className="w-full mt-3 py-2.5 text-gray-500 hover:text-gray-300 text-sm transition-colors"
           >
             Skip — I'll set it up later

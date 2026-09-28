@@ -13,7 +13,7 @@ import StatusButtons from '../components/crew/StatusButtons';
 import CrewCaseHistory from '../components/crew/CrewCaseHistory';
 import ErrorBoundary from '../components/ErrorBoundary';
 import CallSummaryModal from '../components/calls/CallSummaryModal';
-import NativeSetupModal from '../components/crew/NativeSetupModal';
+import NativeSetupModal, { SETUP_VERSION, setupDoneVersion } from '../components/crew/NativeSetupModal';
 import BeaconMode from '../components/crew/BeaconMode';
 import CrewRoster from '../components/crew/CrewRoster';
 import { setCrewGpsSharing, getCrewMessages, sendCrewMessage, getBroadcasts, markBroadcastRead, releaseFromCall, getPtNotes, getCurrentShift } from '../services/api';
@@ -228,7 +228,7 @@ export default function CrewMobile() {
   const isNative = isNativePlatform();
   const { scheduleNotif } = useCrewNotifications();
   const [showNativeSetup,  setShowNativeSetup]  = useState(
-    isNative && !localStorage.getItem('native_setup_done')
+    isNative && setupDoneVersion() < SETUP_VERSION
   );
 
   const myUnit = units.find(u =>
