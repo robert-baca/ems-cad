@@ -18,8 +18,52 @@ const FIELDS = [
   { key: 'medical_hx',  label: 'Medical history', placeholder: 'e.g. HTN, DM2, asthma', multiline: true },
   { key: 'allergies',   label: 'Allergies',       placeholder: 'e.g. PCN, latex', multiline: true, quick: 'NKDA' },
   { key: 'medications', label: 'Medications',     placeholder: 'e.g. metformin, lisinopril', multiline: true },
+  // One optional set of vitals, shown as a compact grid (see VitalsGrid) --
+  // the keys must match PT_NOTE_FIELDS on the server.
+  { key: 'vitals_time', label: 'Time taken', placeholder: 'e.g. 14:32', vital: true, now: true },
+  { key: 'bp',          label: 'BP',         placeholder: '120/80',     vital: true },
+  { key: 'hr',          label: 'Pulse',      placeholder: '88',         vital: true, inputMode: 'numeric' },
+  { key: 'rr',          label: 'Resp',       placeholder: '16',         vital: true, inputMode: 'numeric' },
+  { key: 'spo2',        label: 'SpO2 %',     placeholder: '98',         vital: true, inputMode: 'numeric' },
+  { key: 'bgl',         label: 'BGL',        placeholder: '110',        vital: true, inputMode: 'numeric' },
+  { key: 'gcs',         label: 'GCS',        placeholder: '15',         vital: true, inputMode: 'numeric' },
+  { key: 'pain',        label: 'Pain /10',   placeholder: '0–10',       vital: true, inputMode: 'numeric' },
+  { key: 'temp',        label: 'Temp °F',    placeholder: '98.6',       vital: true, inputMode: 'decimal' },
   { key: 'notes',       label: 'Other notes',     placeholder: 'Anything else the receiving medic should know', multiline: true },
 ];
+const VITALS = FIELDS.filter(f => f.vital);
+const FIRST_VITAL = VITALS[0].key;
+
+const nowHHMM = () => new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+
+function VitalsGrid({ values, set }) {
+  return (
+    <div className="bg-gray-800/60 border border-gray-700 rounded-xl p-3">
+      <div className="text-gray-300 text-xs font-semibold mb-2">Vitals <span className="text-gray-500 font-normal">— optional</span></div>
+      <div className="grid grid-cols-3 gap-2">
+        {VITALS.map(f => (
+          <div key={f.key} className={f.now ? 'col-span-3' : ''}>
+            <label className="block text-gray-400 text-[11px] mb-1">{f.label}</label>
+            <div className="flex gap-2">
+              <input
+                value={values[f.key] || ''}
+                onChange={e => set(f.key, e.target.value)}
+                placeholder={f.placeholder}
+                inputMode={f.inputMode}
+                autoComplete="off"
+                className="w-full min-w-0 bg-gray-700 text-white rounded-lg px-2.5 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500"
+              />
+              {f.now && (
+                <button onClick={() => set(f.key, nowHHMM())}
+                  className="px-3 py-2 rounded-lg bg-gray-700 text-gray-300 text-xs font-bold">Now</button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 // One-line summary for the notes list, e.g. "38F at Bugs Bunny Boomtown".
 export function noteSummary(fields = {}) {
@@ -102,7 +146,9 @@ function Compose({ myUnit, units, myActiveCall, onSent, onCancel }) {
         {scannedKeys.length > 0 && (
           <p className="text-green-400 text-xs">✓ Filled from the license — check it matches the patient before sending.</p>
         )}
-        {FIELDS.map(f => (
+        {FIELDS.map(f => f.vital ? (
+          f.key === FIRST_VITAL && <VitalsGrid key="vitals" values={values} set={set} />
+        ) : (
           <div key={f.key}>
             <label className="block text-gray-400 text-xs mb-1">{f.label}</label>
             {f.options ? (
@@ -181,6 +227,8 @@ function NoteView({ note, myUnit, onBack, onViewed }) {
   const saved = note.to_unit_id === myUnit.id && note.from_unit_id === myUnit.id;
   const incoming = note.to_unit_id === myUnit.id && !saved;
   const [viewError, setViewError] = useState('');
+  // Vitals render as one card, placed where the first filled-in vital is.
+  const firstFilledVital = VITALS.find(v => note.fields?.[v.key])?.key;
 
   useEffect(() => {
     viewPtNote(note.id)
@@ -198,7 +246,21 @@ function NoteView({ note, myUnit, onBack, onViewed }) {
           {!incoming && !saved && (note.read_at ? ` · ✓ Read ${fmtTime(note.read_at)}` : ' · Not opened yet')}
         </div>
         {viewError && <p className="text-amber-400 text-sm">{viewError}</p>}
-        {FIELDS.filter(f => note.fields?.[f.key]).map(f => (
+        {FIELDS.filter(f => note.fields?.[f.key] && (!f.vital || f.key === firstFilledVital)).map(f => f.vital ? (
+          <div key="vitals" className="bg-gray-800 rounded-xl px-3 py-2.5 border border-gray-700">
+            <div className="text-gray-400 text-[11px] uppercase tracking-wider">
+              Vitals{note.fields.vitals_time ? ` · ${note.fields.vitals_time}` : ''}
+            </div>
+            <div className="grid grid-cols-3 gap-x-3 gap-y-1.5 mt-1">
+              {VITALS.filter(v => v.key !== 'vitals_time' && note.fields[v.key]).map(v => (
+                <div key={v.key}>
+                  <div className="text-gray-500 text-[11px]">{v.label}</div>
+                  <div className="text-white text-base font-semibold break-words select-text">{note.fields[v.key]}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
           <div key={f.key} className="bg-gray-800 rounded-xl px-3 py-2.5 border border-gray-700">
             <div className="text-gray-400 text-[11px] uppercase tracking-wider">{f.label}</div>
             <div className="text-white text-base whitespace-pre-wrap break-words select-text">{note.fields[f.key]}</div>

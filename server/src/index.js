@@ -1322,7 +1322,9 @@ app.get('/api/broadcasts', verifyToken, (req, res) => {
 //  - deleted PT_NOTE_RETENTION_MS after sending; the access log (who
 //    created/viewed which note id, when) is kept and holds no patient data
 const PT_NOTE_RETENTION_MS = 8 * 60 * 60 * 1000;
-const PT_NOTE_FIELDS = ['name', 'dob', 'age', 'sex', 'location', 'address', 'phone', 'medical_hx', 'allergies', 'medications', 'notes'];
+const PT_NOTE_FIELDS = ['name', 'dob', 'age', 'sex', 'location', 'address', 'phone', 'medical_hx', 'allergies', 'medications', 'notes',
+  // one optional set of vitals
+  'vitals_time', 'bp', 'hr', 'rr', 'spo2', 'bgl', 'gcs', 'pain', 'temp'];
 
 function logPtNoteAccess(noteId, action, user) {
   pool.query(
