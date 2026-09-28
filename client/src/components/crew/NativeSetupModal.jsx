@@ -26,17 +26,19 @@ const ALL_STEPS = [
     androidOnly: true,
   },
   // Watch mirroring lives in the watch's own companion app, which this app
-  // can't change. On iOS, openUrl jumps to Apple's Watch app: Capacitor
-  // hands any non-web top-level navigation to UIApplication.open, so this
-  // works in already-installed builds. Android's watch apps vary by brand,
-  // so there it's instructions only, like battery.
+  // can't change -- `links` just open that app. Capacitor hands any non-web
+  // top-level navigation to the OS (UIApplication.open on iOS, an
+  // ACTION_VIEW intent on Android), so these work in already-installed
+  // builds. iOS opens Apple's Watch app directly; Android can't launch
+  // another app by package that way, so it opens the companion app's Play
+  // Store page, whose Open button gets them there.
   {
     key: 'watch',
     icon: '⌚',
     title: 'Apple Watch Alerts',
     body: 'Tap Set Up to open the Watch app, then go to Notifications → EMS Crew → choose "Mirror my iPhone". Then come back here and tap Done.',
-    button: 'Set Up',
-    openUrl: 'itms-watchs://',
+    links: [{ label: 'Set Up', url: 'itms-watchs://' }],
+    button: 'Done →',
     skipLabel: "I don't have an Apple Watch",
     iosOnly: true,
     since: 4,
@@ -45,18 +47,24 @@ const ALL_STEPS = [
     key: 'watch',
     icon: '⌚',
     title: 'Smartwatch Alerts',
-    body: "This one's in your watch's app, not here. Galaxy Watch: Galaxy Wearable app → Watch settings → Notifications → turn on EMS Crew. Pixel Watch: Pixel Watch app → Notifications → EMS Crew on.",
-    button: "Done / I don't wear a watch",
+    body: "Tap your watch below, then tap Open. Galaxy Wearable: Watch settings → Notifications → turn on EMS Crew, and set \"Show phone notifications on watch\" to Always. Pixel / other watches: Notifications → turn on EMS Crew. Then come back here and tap Done.",
+    links: [
+      { label: 'Galaxy Watch', url: 'market://details?id=com.samsung.android.app.watchmanager' },
+      { label: 'Pixel Watch',  url: 'market://details?id=com.google.android.apps.wear.companion' },
+      { label: 'Other Wear OS watch', url: 'market://details?id=com.google.android.wearable.app' },
+    ],
+    button: 'Done →',
+    skipLabel: "I don't wear a watch",
     androidOnly: true,
-    since: 2,
+    since: 5,
   },
 ];
 
 // Bump when adding steps (and tag them `since` the new version): phones that
 // finished an older setup see just the steps added since, once. Stored in
 // native_setup_done -- the original setup saved '1' there. (3 was used by a
-// since-removed version, hence the jump to 4.)
-export const SETUP_VERSION = 4;
+// since-removed version.)
+export const SETUP_VERSION = 5;
 export const setupDoneVersion = () => parseInt(localStorage.getItem('native_setup_done') || '0', 10) || 0;
 
 // Platform-specific steps (e.g. no "Unrestricted Battery" setting on iOS)
@@ -80,16 +88,18 @@ export default function NativeSetupModal({ onDone }) {
   // an explicit "continue anyway" so a denial is never silently skipped past.
   const [permWarning, setPermWarning] = useState('');
   const [awaitingAck, setAwaitingAck] = useState(false);
-  // For openUrl steps: the first tap opens the other app, the next one
-  // (after they come back) moves on.
-  const [openedUrl, setOpenedUrl] = useState(false);
+  // For `links` steps: the link last opened (the other app), so the main
+  // button can turn into Done once they come back, and "Open it again" knows
+  // where to go.
+  const [openedUrl, setOpenedUrl] = useState(null);
+  const openLink = (url) => { window.location.href = url; setOpenedUrl(url); };
 
   const current = STEPS[step];
 
   const advance = () => {
     setPermWarning('');
     setAwaitingAck(false);
-    setOpenedUrl(false);
+    setOpenedUrl(null);
     if (step < STEPS.length - 1) {
       setStep(s => s + 1);
     } else {
@@ -101,11 +111,6 @@ export default function NativeSetupModal({ onDone }) {
 
   const handleStep = async () => {
     if (awaitingAck) { advance(); return; }
-    if (current.openUrl && !openedUrl) {
-      window.location.href = current.openUrl;
-      setOpenedUrl(true);
-      return;
-    }
     setLoading(true);
     setPermWarning('');
     try {
@@ -203,17 +208,31 @@ export default function NativeSetupModal({ onDone }) {
           </div>
         )}
 
-        <button
-          onClick={handleStep}
-          disabled={loading}
-          className="w-full py-4 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 text-white font-bold text-base rounded-2xl transition-colors"
-        >
-          {loading ? 'Opening…' : awaitingAck ? 'Continue Anyway →' : openedUrl ? 'Done →' : current.button}
-        </button>
+        {current.links && !openedUrl ? (
+          <div className="space-y-3">
+            {current.links.map(l => (
+              <button
+                key={l.url}
+                onClick={() => openLink(l.url)}
+                className="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white font-bold text-base rounded-2xl transition-colors"
+              >
+                {l.label}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <button
+            onClick={handleStep}
+            disabled={loading}
+            className="w-full py-4 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 text-white font-bold text-base rounded-2xl transition-colors"
+          >
+            {loading ? 'Opening…' : awaitingAck ? 'Continue Anyway →' : current.button}
+          </button>
+        )}
 
         {openedUrl && (
           <button
-            onClick={() => { window.location.href = current.openUrl; }}
+            onClick={() => openLink(openedUrl)}
             className="w-full mt-3 py-2.5 text-blue-400 hover:text-blue-300 text-sm transition-colors"
           >
             Open it again
