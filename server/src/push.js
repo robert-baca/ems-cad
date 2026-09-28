@@ -33,6 +33,12 @@ function getFirebaseApp() {
   }
 }
 
+// Must match NOTIF_CHANNEL_ID in the client's useCrewNotifications.js --
+// without it FCM files the push under its default "Miscellaneous" channel,
+// which doesn't get the heads-up banner or strong vibration (and so buzzes
+// a paired watch much more weakly, if at all).
+const ANDROID_CHANNEL_ID = 'ems-cad-headsup-v2';
+
 async function sendAndroid(pushToken, title, body) {
   const app = getFirebaseApp();
   if (!app) {
@@ -47,7 +53,7 @@ async function sendAndroid(pushToken, title, body) {
     await getMessaging(app).send({
       token: pushToken,
       notification: { title, body },
-      android: { priority: 'high' }
+      android: { priority: 'high', notification: { channelId: ANDROID_CHANNEL_ID } }
     });
     return { ok: true };
   } catch (e) {
@@ -79,7 +85,10 @@ function getApnsJwt() {
   return apnsJwt;
 }
 
-function sendIos(pushToken, title, body) {
+// urgent = Time Sensitive: breaks through Focus / Do Not Disturb (and so
+// still reaches a paired Apple Watch). Only takes effect once the installed
+// app build carries the time-sensitive entitlement; older builds ignore it.
+function sendIos(pushToken, title, body, urgent) {
   return new Promise((resolve) => {
     const token = getApnsJwt();
     const bundleId = process.env.APNS_BUNDLE_ID;
@@ -95,7 +104,9 @@ function sendIos(pushToken, title, body) {
       resolve({ ok: false, error: e.message });
     });
 
-    const payload = JSON.stringify({ aps: { alert: { title, body }, sound: 'default' } });
+    const aps = { alert: { title, body }, sound: 'default' };
+    if (urgent) aps['interruption-level'] = 'time-sensitive';
+    const payload = JSON.stringify({ aps });
     const req = client.request({
       ':method': 'POST',
       ':path': `/3/device/${pushToken}`,
@@ -143,9 +154,11 @@ async function sendPushToUnit(unit, message) {
 // Same as sendPushToUnit, but keeps Apple's/Google's actual failure reason
 // (e.g. BadDeviceToken, registration-token-not-registered) -- used by the
 // dispatcher's Test Push button so a failure is diagnosable, not just "no".
-async function sendPushToUnitDetailed(unit, { title, body }) {
+// urgent: reserved for the alerts a crew member must not miss -- new call
+// assignments, dispatch pinging them, and park-wide broadcasts.
+async function sendPushToUnitDetailed(unit, { title, body, urgent = false }) {
   if (!unit?.push_token || !unit?.push_platform) return { ok: false, error: 'No phone registered for push on this unit' };
-  if (unit.push_platform === 'ios') return sendIos(unit.push_token, title, body);
+  if (unit.push_platform === 'ios') return sendIos(unit.push_token, title, body, urgent);
   if (unit.push_platform === 'android') return sendAndroid(unit.push_token, title, body);
   return { ok: false, error: `Unknown platform ${unit.push_platform}` };
 }

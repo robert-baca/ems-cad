@@ -140,7 +140,8 @@ function notifyUnitAssigned(unit, call) {
   io.to(`crew:${unit.id}`).emit('call:assigned_to_me', call);
   sendPushToUnit(unit, {
     title: `📡 New Call — Case #${call.call_number}`,
-    body: `${call.call_type} · ${call.location_name || 'Unknown location'}`
+    body: `${call.call_type} · ${call.location_name || 'Unknown location'}`,
+    urgent: true
   }).catch(() => {});
   scheduleAckEscalation(unit.id, call.id);
 }
@@ -164,7 +165,8 @@ function scheduleAckEscalation(unitId, callId) {
       console.log(`[ack] ${unit.unit_number} has not acknowledged Case #${call.call_number} after ${seconds}s`);
       sendPushToUnit(unit, {
         title: `⚠️ UNACKNOWLEDGED — Case #${call.call_number}`,
-        body: `${call.call_type} · ${call.location_name || 'Unknown location'} — dispatch is waiting on you`
+        body: `${call.call_type} · ${call.location_name || 'Unknown location'} — dispatch is waiting on you`,
+        urgent: true
       }).catch(() => {});
       emitDispatch('unit:unacknowledged', {
         unit_id: unit.id, unit_number: unit.unit_number,
@@ -1236,7 +1238,7 @@ app.post('/api/units/:id/ping', verifyToken, async (req, res) => {
   // app IS running, which a push notification can't do. Fire-and-forget:
   // the response shouldn't wait on an external API call, and a unit with no
   // registered device is an expected no-op, not a failure worth reporting.
-  sendPushToUnit(unit, { title: '🔔 Dispatch needs you', body: `${from} is trying to reach you` }).catch(() => {});
+  sendPushToUnit(unit, { title: '🔔 Dispatch needs you', body: `${from} is trying to reach you`, urgent: true }).catch(() => {});
   res.json({ ok: true });
 });
 
@@ -1288,7 +1290,7 @@ app.post('/api/broadcast', verifyToken, async (req, res) => {
   emitDispatch('broadcast:created', broadcast);
   const targets = recipients.filter(u => u.push_token);
   const results = await Promise.allSettled(
-    targets.map(u => sendPushToUnit(u, { title: `📢 ${from}`, body: message }))
+    targets.map(u => sendPushToUnit(u, { title: `📢 ${from}`, body: message, urgent: true }))
   );
   const sent = results.filter(r => r.status === 'fulfilled' && r.value === true).length;
   res.json({ ok: true, sent, targeted: targets.length, broadcast });
