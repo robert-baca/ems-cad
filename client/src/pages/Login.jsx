@@ -33,8 +33,10 @@ function CrewLogin({ onBack, onSuccess }) {
   const [error,        setError]       = useState('');
   const [loading,      setLoading]     = useState(false);
 
-  const loadShiftUnits = () => {
-    fetchWithTimeout(`${apiBase()}/shift/units`).then(r => r.json()).then(units => {
+  const loadShiftUnits = (token) => {
+    fetchWithTimeout(`${apiBase()}/shift/units`, {
+      headers: { Authorization: `Bearer ${token}` }
+    }).then(r => r.json()).then(units => {
       setShiftUnits(Array.isArray(units) ? units : []);
     }).catch(() => setShiftUnits([]));
   };
@@ -53,7 +55,7 @@ function CrewLogin({ onBack, onSuccess }) {
       if (!res.ok) throw new Error(data.error || 'Login failed');
       setPreAuthToken(data.token);
       setCrewName(data.user.name || crewUsername);
-      loadShiftUnits();
+      loadShiftUnits(data.token);
       setStep('pick');
     } catch (err) { setError(err.message); setCrewPin(''); }
     finally { setLoading(false); }

@@ -86,6 +86,7 @@ export const removeMutualAid = (callId, entryId) =>
 export const addCallComment = (callId, text, author, config) =>
   api.post(`/calls/${callId}/comments`, { text, author }, config);
 export const getCallGpsTrack = (callId) => api.get(`/calls/${callId}/gps-track`);
+export const getCallAuditLog = (callId) => api.get(`/calls/${callId}/audit`);
 
 // ── Wayfinding path curation (admin-only) ────────────────────────────
 export const getWayfindingTraces  = () => api.get('/wayfinding/traces');
@@ -112,7 +113,15 @@ export const changePassword = (currentPassword, newPassword) =>
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
+    // Only a 401 on *this session's* token means this session is over. The
+    // offline queue replays actions under the token they were queued with
+    // (possibly a previous crew member's, since revoked) -- that failing
+    // must just drop the action, not sign out whoever is on the phone now.
+    const sentAuth = error.config?.headers?.Authorization;
+    let currentToken = null;
+    try { currentToken = JSON.parse(localStorage.getItem('cad_user') || 'null')?.token || null; } catch {}
+    const usedCurrentSession = !sentAuth || !currentToken || sentAuth === `Bearer ${currentToken}`;
+    if (error.response?.status === 401 && usedCurrentSession) {
       // An involuntary token invalidation (admin-forced logout, secret
       // rotation, clock skew) must stop the native GPS tracker the same way
       // every other logout path does (see CrewMobile.jsx) — otherwise the

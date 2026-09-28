@@ -55,7 +55,10 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
     // same as Android (~100 points of backlog). Locked since didUpdateLocations
     // can fire again (spawning another Task) before a prior send/drain finishes.
     private let offlineQueueLock = NSLock()
-    private var offlineQueue: [(lat: Double, lng: Double, accuracy: Double)] = []
+    // fixTime = when the phone took the fix (ms since epoch), so the server
+    // can place a queued point correctly in time instead of at arrival.
+    private typealias QueuedPoint = (lat: Double, lng: Double, accuracy: Double, fixTime: Double)
+    private var offlineQueue: [QueuedPoint] = []
     private let maxQueueSize = 100
     // Guards against two location updates arriving close together (only
     // minIntervalS = 0.9s apart) each spawning their own concurrent
@@ -350,10 +353,14 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
             lastLocation = loc
         }
 
-        let lat = postLoc.coordinate.latitude
-        let lng = postLoc.coordinate.longitude
+        let point: QueuedPoint = (
+            lat: postLoc.coordinate.latitude,
+            lng: postLoc.coordinate.longitude,
+            accuracy: accuracy,
+            fixTime: loc.timestamp.timeIntervalSince1970 * 1000
+        )
         Task {
-            await sendOrEnqueue(lat: lat, lng: lng, accuracy: accuracy)
+            await sendOrEnqueue(point)
         }
     }
 
@@ -442,10 +449,10 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
     // running, this fix is just enqueued for that sequence's own drain loop
     // to pick up, rather than starting a second concurrent send/drain that
     // could race the first over the shared queue.
-    private func sendOrEnqueue(lat: Double, lng: Double, accuracy: Double) async {
+    private func sendOrEnqueue(_ point: QueuedPoint) async {
         offlineQueueLock.lock()
         if isSendingOrDraining {
-            offlineQueue.append((lat, lng, accuracy))
+            offlineQueue.append(point)
             while offlineQueue.count > maxQueueSize { offlineQueue.removeFirst() }
             offlineQueueLock.unlock()
             return
@@ -453,12 +460,20 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
         isSendingOrDraining = true
         offlineQueueLock.unlock()
 
-        let ok = await sendPoint(lat: lat, lng: lng, accuracy: accuracy)
-        if ok {
-            scheduleStaleWarning()
-            await drainQueue()
+        // Backlog first, oldest to newest, THEN this fix -- mirrors
+        // GpsTrackerService.java. Sending the newest first and the older
+        // queued points after it made the pin jump back along the dead-zone
+        // path, and the server discarded most of them as "impossible speed".
+        if await drainQueue() {
+            if await sendPoint(point) {
+                scheduleStaleWarning()
+                // Anything queued by overlapping updates while this was sending.
+                _ = await drainQueue()
+            } else {
+                enqueueOffline(point)
+            }
         } else {
-            enqueueOffline(lat: lat, lng: lng, accuracy: accuracy)
+            enqueueOffline(point)
         }
 
         offlineQueueLock.lock()
@@ -466,27 +481,27 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
         offlineQueueLock.unlock()
     }
 
-    private func enqueueOffline(lat: Double, lng: Double, accuracy: Double) {
+    private func enqueueOffline(_ point: QueuedPoint) {
         offlineQueueLock.lock()
-        offlineQueue.append((lat, lng, accuracy))
+        offlineQueue.append(point)
         while offlineQueue.count > maxQueueSize {
             offlineQueue.removeFirst()
         }
         offlineQueueLock.unlock()
     }
 
-    // Flushes queued offline points oldest-first after connectivity returns --
-    // mirrors GpsTrackerService.java's drainQueue(). Stops at the first
-    // still-failing send rather than draining out of order.
-    private func drainQueue() async {
+    // Flushes queued offline points oldest-first -- mirrors
+    // GpsTrackerService.java's drainQueue(). Stops at the first still-failing
+    // send rather than draining out of order; returns false in that case.
+    private func drainQueue() async -> Bool {
         while true {
             offlineQueueLock.lock()
             let next = offlineQueue.first
             offlineQueueLock.unlock()
-            guard let point = next else { return }
+            guard let point = next else { return true }
 
-            let ok = await sendPoint(lat: point.lat, lng: point.lng, accuracy: point.accuracy)
-            if !ok { return }
+            let ok = await sendPoint(point)
+            if !ok { return false }
             scheduleStaleWarning()
 
             offlineQueueLock.lock()
@@ -497,7 +512,8 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
 
     // Returns whether the post actually succeeded (2xx) -- callers use this
     // to decide whether to queue the point for later instead of dropping it.
-    private func sendPoint(lat: Double, lng: Double, accuracy: Double) async -> Bool {
+    private func sendPoint(_ point: QueuedPoint) async -> Bool {
+        let lat = point.lat, lng = point.lng, accuracy = point.accuracy
         guard let token = token, let serverUrl = serverUrl,
             let url = URL(string: serverUrl + "/api/crew/gps") else {
             GpsTrackerPlugin.log("sendPoint: aborted, missing token/serverUrl/valid URL (token set=\(token != nil), serverUrl=\(serverUrl ?? "nil"))")
@@ -514,6 +530,8 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
             "lat": lat,
             "lng": lng,
             "accuracy": accuracy,
+            "ts": point.fixTime,
+            "sentAt": Date().timeIntervalSince1970 * 1000,
             "gpsPermission": GpsTrackerPlugin.authStatusString(locationManager.authorizationStatus),
         ]
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
@@ -526,6 +544,14 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
             }
             let ok = (200...299).contains(httpResponse.statusCode)
             if !ok { GpsTrackerPlugin.log("sendPoint: server returned \(httpResponse.statusCode)") }
+            // Sign-in rejected (signed out elsewhere / revoked): retrying can
+            // never succeed, and it used to keep posting every 5s for up to
+            // 14 hours. The next sign-in starts a fresh session.
+            if httpResponse.statusCode == 401 {
+                GpsTrackerPlugin.log("sendPoint: 401, stopping tracking")
+                haltTracking()
+                return false
+            }
             // The server answers "no_active_shift" once dispatch has ended the
             // shift -- the signal to shut off, even if the app itself was
             // swiped away and never heard about it.

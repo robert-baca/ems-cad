@@ -87,7 +87,9 @@ export default function DisplayBoard() {
     },
     'call:assigned': ({ call_id, unit_id }) => {
       setCalls(prev => prev.map(c =>
-        c.id === call_id ? { ...c, assigned_unit_id: unit_id, status: 'dispatched' } : c
+        // Only a first assignment moves a call to dispatched -- a mid-call
+        // unit swap keeps the call's status (matches the server).
+        c.id === call_id ? { ...c, assigned_unit_id: unit_id, status: c.status === 'pending' ? 'dispatched' : c.status } : c
       ));
     },
     'call:updated': ({ call_id, changes }) => {

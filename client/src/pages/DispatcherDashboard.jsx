@@ -22,6 +22,7 @@ import CallSummaryModal from '../components/calls/CallSummaryModal';
 import BroadcastModal, { receiptStats } from '../components/calls/BroadcastModal';
 import SpinWheel from '../components/calls/SpinWheel';
 import { sendBroadcast, getBroadcasts } from '../services/api';
+import { playAlert } from '../lib/alertSound';
 
 // Reconstructs which calls have an unanswered backup request, from comment
 // history alone — sosAlerts otherwise only ever grows/shrinks from live
@@ -176,7 +177,7 @@ export default function DispatcherDashboard() {
     'broadcast:created':   (b) => setBroadcasts(prev => prev.some(x => x.id === b.id) ? prev : [...prev, b]),
     'broadcast:read':      ({ id, unit_id, at, unit_number }) =>
       setBroadcasts(prev => prev.map(b => b.id === id ? { ...b, reads: { ...b.reads, [unit_id]: { at, unit_number } } } : b)),
-    'unit:unacknowledged': (a) => setUnackAlerts(prev => ({ ...prev, [a.unit_id]: a })),
+    'unit:unacknowledged': (a) => { setUnackAlerts(prev => ({ ...prev, [a.unit_id]: a })); playAlert('warning'); },
     'unit:removed':        handleUnitRemoved,
     'location:added':      addRemoteLocation,
     'location:removed':    ({ id }) => removeRemoteLocation(id),
@@ -187,6 +188,7 @@ export default function DispatcherDashboard() {
     'call:comment_added':  ({ call_id, comment }) => {
       handleCommentAdded({ call_id, comment });
       if (comment.text?.startsWith('🆘 BACKUP REQUESTED')) {
+        playAlert('sos');
         setSosAlerts(prev => prev.some(a => a.call_id === call_id)
           ? prev
           : [...prev, { id: comment.id, call_id, author: comment.author, time: comment.created_at }]
@@ -199,9 +201,18 @@ export default function DispatcherDashboard() {
     'shift:started':       ({ shift, units: u }) => { setCurrentShift(shift); if (setUnits) setUnits(u); },
     'shift:ended':         ({ units: u, open_calls, ...summary }) => { setShiftSummary(summary); setCurrentShift(null); setCalls(open_calls || []); setSelectedCallId(null); setBroadcasts([]); if (u) setUnits(u); clearShiftLocations(); },
     'server:persist_error': ({ label, message }) => {
+      playAlert('info');
       setPersistErrors(prev => [...prev, { id: `${Date.now()}-${Math.random()}`, label, message }]);
     }
   });
+
+  // An open backup request keeps sounding every 15s until someone dismisses
+  // the banner or the crew cancels it -- one siren is easy to talk over.
+  useEffect(() => {
+    if (!sosAlerts.length) return;
+    const t = setInterval(() => playAlert('sos'), 15000);
+    return () => clearInterval(t);
+  }, [sosAlerts.length]);
 
   const handleShiftStarted = (shift, updatedUnits) => {
     setCurrentShift(shift);

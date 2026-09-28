@@ -29,6 +29,9 @@ export function AuthProvider({ children }) {
       localStorage.setItem('cad_user', JSON.stringify(updated));
       return updated;
     });
+    // Lets useSocket reconnect under the new token (e.g. after a password
+    // change, when the server drops sockets still holding the old one).
+    window.dispatchEvent(new Event('cad:token-updated'));
   };
 
   // Proactive token refresh: runs every 30 min, refreshes if < 4h remain.

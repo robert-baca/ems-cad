@@ -92,7 +92,10 @@ public class GpsTrackerService extends Service {
     private double lastLat                = Double.NaN;
     private double lastLng                = Double.NaN;
 
+    // Each entry: {lat, lng, accuracy, fixTimeMillis}
     private final LinkedList<double[]> offlineQueue = new LinkedList<>();
+    private final java.util.concurrent.ExecutorService sendExecutor =
+            java.util.concurrent.Executors.newSingleThreadExecutor();
 
     private PowerManager.WakeLock wakeLock;
     private Handler  watchdogHandler;
@@ -401,32 +404,41 @@ public class GpsTrackerService extends Service {
             lastLng = postLng;
         }
 
-        final double lat = postLat;
-        final double lng = postLng;
-        final float  acc = accuracy;
-        new Thread(() -> {
-            boolean ok = sendPoint(lat, lng, acc);
-            if (ok) {
-                scheduleStaleWarning();
-                drainQueue();
-            } else {
-                synchronized (offlineQueue) {
-                    offlineQueue.addLast(new double[]{lat, lng, acc});
-                    while (offlineQueue.size() > MAX_QUEUE) offlineQueue.removeFirst();
-                }
-            }
-        }).start();
+        // When the phone actually took this fix (not when it gets sent) --
+        // lets the server place offline-queued points correctly in time.
+        final double[] point = {postLat, postLng, accuracy, (double) loc.getTime()};
+        // One worker thread for all posting: a new thread per fix (as this
+        // used to be) let two drains run at once and send the same queued
+        // point twice.
+        if (sendExecutor.isShutdown()) return; // service is stopping
+        sendExecutor.execute(() -> {
+            // Backlog first, oldest to newest, THEN this fix. Sending the
+            // newest point first and the older queued ones after it made the
+            // pin jump back along the dead-zone path, and the server threw
+            // most of the backlog away as "impossible speed".
+            if (!drainQueue()) { enqueue(point); return; }
+            if (sendPoint(point)) scheduleStaleWarning();
+            else enqueue(point);
+        });
     }
 
-    // Flush queued offline points oldest-first after connection is restored
-    private void drainQueue() {
+    private void enqueue(double[] point) {
+        synchronized (offlineQueue) {
+            offlineQueue.addLast(point);
+            while (offlineQueue.size() > MAX_QUEUE) offlineQueue.removeFirst();
+        }
+    }
+
+    // Flush queued offline points oldest-first. Returns false if a send
+    // failed (still offline), leaving the rest in place.
+    private boolean drainQueue() {
         while (true) {
             double[] pt;
             synchronized (offlineQueue) {
                 pt = offlineQueue.peekFirst();
             }
-            if (pt == null) return;
-            if (!sendPoint(pt[0], pt[1], (float) pt[2])) return; // still offline, stop trying
+            if (pt == null) return true;
+            if (!sendPoint(pt)) return false;
             scheduleStaleWarning();
             synchronized (offlineQueue) {
                 offlineQueue.pollFirst();
@@ -434,10 +446,15 @@ public class GpsTrackerService extends Service {
         }
     }
 
-    private boolean sendPoint(double lat, double lng, float accuracy) {
+    private boolean sendPoint(double[] pt) {
         if (token == null || serverUrl == null) return false;
+        final double lat = pt[0], lng = pt[1];
+        final float accuracy = (float) pt[2];
+        final long fixTime = (long) pt[3];
         final String gpsPermission = GpsPermissionStatus.get(getApplicationContext());
-        final String body     = "{\"lat\":" + lat + ",\"lng\":" + lng + ",\"accuracy\":" + accuracy + ",\"gpsPermission\":\"" + gpsPermission + "\"}";
+        final String body     = "{\"lat\":" + lat + ",\"lng\":" + lng + ",\"accuracy\":" + accuracy
+                + ",\"ts\":" + fixTime + ",\"sentAt\":" + System.currentTimeMillis()
+                + ",\"gpsPermission\":\"" + gpsPermission + "\"}";
         final String endpoint = serverUrl + "/api/crew/gps";
         try {
             HttpURLConnection conn = (HttpURLConnection) new URL(endpoint).openConnection();
@@ -452,6 +469,15 @@ public class GpsTrackerService extends Service {
             }
             int code = conn.getResponseCode();
             boolean ok = code >= 200 && code < 300;
+            // The server rejected the sign-in itself (signed out elsewhere,
+            // revoked). Retrying can never succeed -- it used to keep posting
+            // every 5s for up to 14 hours. The app starts a fresh session on
+            // the next sign-in.
+            if (code == 401) {
+                conn.disconnect();
+                stopTrackingFromService("sign-in rejected (401)");
+                return false;
+            }
             if (ok) {
                 // The server answers "no_active_shift" once dispatch has ended
                 // the shift -- the signal for this tracker to shut itself off,
@@ -500,6 +526,7 @@ public class GpsTrackerService extends Service {
         }
         if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
         cancelStaleWarning();
+        sendExecutor.shutdownNow();
         super.onDestroy();
     }
 

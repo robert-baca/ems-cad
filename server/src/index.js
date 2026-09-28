@@ -8,7 +8,7 @@ const bcrypt     = require('bcryptjs');
 const { Pool }   = require('pg');
 const { scrypt, timingSafeEqual, randomUUID } = require('crypto');
 const { promisify } = require('util');
-const { sendPushToUnit, sendPushToUnitDetailed } = require('./push');
+const { sendPushToUnit, sendPushToUnitDetailed, setInvalidTokenHandler } = require('./push');
 require('dotenv').config();
 
 const scryptAsync = promisify(scrypt);
@@ -47,6 +47,11 @@ const io     = new Server(server, {
   cors: { origin: CORS_ORIGIN, methods: ['GET', 'POST', 'PATCH', 'PUT'] }
 });
 
+// Railway terminates connections at its edge proxy, so without this req.ip is
+// the proxy's address for every request -- the per-IP login rate limit was
+// effectively one bucket shared by the whole park (and anyone flooding it
+// could lock every crew member out of signing in).
+app.set('trust proxy', 1);
 app.use(cors({ origin: CORS_ORIGIN }));
 app.use(express.json());
 
@@ -68,11 +73,35 @@ function persist(promise, label) {
   });
 }
 
+// Appends one row per changed field to call_audit_log. Fire-and-forget like
+// persist(): a failed audit write is logged but never blocks the edit itself.
+function auditValue(v) {
+  if (v === undefined || v === null || v === '') return null;
+  return typeof v === 'string' ? v : JSON.stringify(v);
+}
+function auditActor(user) {
+  if (!user) return null;
+  if (user.role === 'crew') return [user.unit_number, user.name].filter(Boolean).join(' · ') || 'Crew';
+  return user.username || user.name || user.role;
+}
+function logCallChanges(call, before, after, user) {
+  for (const field of Object.keys(after)) {
+    const oldV = auditValue(before[field]);
+    const newV = auditValue(after[field]);
+    if (oldV === newV) continue;
+    pool.query(
+      `INSERT INTO call_audit_log (call_id, call_number, field, old_value, new_value, changed_by, role)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [call.id, call.call_number, field, oldV, newV, auditActor(user), user?.role || null]
+    ).catch(err => console.error('[audit] write failed:', err.message));
+  }
+}
+
 // ── Call fields the wall-mounted display board should never receive — it's PIN-gated
 // (default PIN, often posted near the board) rather than individually authenticated,
 // so chat/narrative/disposition content shouldn't reach it even though it needs the
 // same live call/unit positions dispatchers see.
-const CALL_FIELDS_HIDDEN_FROM_DISPLAY = ['comments', 'narrative', 'disposition', 'close_notes'];
+const CALL_FIELDS_HIDDEN_FROM_DISPLAY = ['comments', 'narrative', 'disposition', 'close_notes', 'chief_complaint', 'notes'];
 function sanitizeCallForDisplay(call) {
   const c = { ...call };
   for (const f of CALL_FIELDS_HIDDEN_FROM_DISPLAY) delete c[f];
@@ -113,6 +142,17 @@ function isReleased(call, unitId) {
   return (call?.released_unit_ids || []).includes(unitId);
 }
 
+// Units whose status follows a call-level status change. Released units are
+// always skipped -- including on close: a backup that released itself may
+// already be working a different call, and closing this one used to yank it
+// back to 'available' out from under that other call.
+function unitIdsForCallSync(call, isClose) {
+  const ids = isClose
+    ? [call.assigned_unit_id, ...(call.additional_unit_ids || [])]
+    : [call.assigned_unit_id, ...(call.co_unit_ids || []), ...(call.additional_unit_ids || [])];
+  return [...new Set(ids)].filter(id => id && !isReleased(call, id));
+}
+
 function isCartUnit(u) {
   return u?.unit_type === 'Cart';
 }
@@ -126,6 +166,16 @@ function sanitizeUnit(u) {
   out.has_push = !!u.push_token;
   return out;
 }
+
+setInvalidTokenHandler((unit, reason) => {
+  console.warn(`[push] ${unit.unit_number}: token rejected as dead (${reason}) — clearing it`);
+  unit.push_token = null;
+  unit.push_platform = null;
+  unit.push_status = 'error';
+  unit.push_error = `Phone no longer registered (${reason}) — sign out and back in on the phone`;
+  persist(saveUnit(unit), 'unit ' + unit.id);
+  emitDispatch('unit:updated', sanitizeUnit(unit));
+});
 
 // Every "this unit was just assigned/added to a call" moment shares this so
 // the real push (see push.js) can't drift out of sync with the socket event
@@ -365,16 +415,15 @@ async function initDb() {
   await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS notes TEXT`);
   await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS park_zone TEXT`);
   await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS additional_unit_timestamps JSONB DEFAULT '{}'`);
-  await pool.query(`ALTER TABLE locations ADD COLUMN IF NOT EXISTS location_type TEXT DEFAULT 'permanent'`);
   await pool.query(`ALTER TABLE units ADD COLUMN IF NOT EXISTS last_gps_fix_ts TEXT`);
   await pool.query(`ALTER TABLE units ADD COLUMN IF NOT EXISTS last_gps_accuracy DOUBLE PRECISION`);
   await pool.query(`ALTER TABLE units ADD COLUMN IF NOT EXISTS push_token TEXT`);
   await pool.query(`ALTER TABLE units ADD COLUMN IF NOT EXISTS push_platform TEXT`);
 
-  // Prune calls older than 90 days
-  const pruneDate = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
-  const pruned = await pool.query('DELETE FROM calls WHERE received_at < $1', [pruneDate]);
-  if (pruned.rowCount > 0) console.log(`[db] pruned ${pruned.rowCount} calls older than 90 days`);
+  // Calls used to be deleted after 90 days on every boot. They're the
+  // dispatch record of an incident (liability/state-audit questions can
+  // come up years later), so they're kept indefinitely now; the history
+  // endpoints still only *show* a recent window.
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS locations (
@@ -386,6 +435,10 @@ async function initDb() {
       location_type TEXT DEFAULT 'permanent'
     )
   `);
+  // For databases created before location_type existed. Must run after the
+  // CREATE above -- it used to run before it, so a brand-new database
+  // failed to boot on "relation locations does not exist".
+  await pool.query(`ALTER TABLE locations ADD COLUMN IF NOT EXISTS location_type TEXT DEFAULT 'permanent'`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS shifts (
@@ -413,6 +466,41 @@ async function initDb() {
   await pool.query(`
     CREATE INDEX IF NOT EXISTS gps_history_call_id_idx ON gps_history(call_id)
   `);
+  // Breadcrumbs arrive about once a second per unit on a call, so this table
+  // grows fastest of anything here. A year covers QI review and the
+  // wayfinding tool's trace overlay; older points are dropped.
+  const gpsPruned = await pool.query(`DELETE FROM gps_history WHERE recorded_at < NOW() - INTERVAL '365 days'`);
+  if (gpsPruned.rowCount > 0) console.log(`[db] pruned ${gpsPruned.rowCount} gps_history points older than a year`);
+
+  // Logged-out tokens (see POST /api/auth/logout). Kept in the DB so a
+  // server restart doesn't quietly make every revoked token valid again.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS revoked_tokens (
+      jti TEXT PRIMARY KEY,
+      expires_at TIMESTAMPTZ NOT NULL
+    )
+  `);
+  await pool.query('DELETE FROM revoked_tokens WHERE expires_at < NOW()');
+  const revokedRes = await pool.query('SELECT jti, expires_at FROM revoked_tokens');
+  revokedRes.rows.forEach(r => revokedJtis.set(r.jti, new Date(r.expires_at).getTime()));
+
+  // Who changed what on a call after the fact (timestamps, narrative,
+  // details, location, priority, close-out). Edits used to overwrite the
+  // old value with no trace, which QI and any legal review need.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS call_audit_log (
+      id SERIAL PRIMARY KEY,
+      call_id TEXT NOT NULL,
+      call_number INTEGER,
+      field TEXT NOT NULL,
+      old_value TEXT,
+      new_value TEXT,
+      changed_by TEXT,
+      role TEXT,
+      at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+  await pool.query('CREATE INDEX IF NOT EXISTS call_audit_log_call_id_idx ON call_audit_log(call_id)');
 
   // ── Wayfinding path curation (admin-only tool, fed by real crew GPS history) ──
   await pool.query(`
@@ -692,8 +780,23 @@ async function saveShift(shift) {
 //    the account's current version; changing that account's password bumps
 //    the stored version, which invalidates every token issued before the
 //    change in one shot — without needing to know or blacklist each one.
+// auth_at (seconds) records when the person actually signed in, and survives
+// /api/auth/refresh -- refresh re-signs the old payload, so it carries over.
 function signToken(payload) {
-  return jwt.sign({ ...payload, jti: randomUUID() }, JWT_SECRET, { expiresIn: '30d' });
+  return jwt.sign({ auth_at: Math.floor(Date.now() / 1000), ...payload, jti: randomUUID() }, JWT_SECRET, { expiresIn: '30d' });
+}
+
+// SSO dispatcher/wayfinding tokens carry no token_version (there's no local
+// account to bump), and refresh would otherwise extend them forever -- so
+// losing can_dispatch/admin in the portal never reached the CAD. Capping how
+// long ago the portal sign-in happened makes them come back through SSO,
+// which re-checks those permissions. The display board is exempt: it's a
+// wall-mounted kiosk that shouldn't go dark weekly.
+const SSO_MAX_AGE_S = 7 * 24 * 60 * 60;
+function ssoTooOld(decoded) {
+  if (!decoded.sso || !['dispatcher', 'wayfinding_admin'].includes(decoded.role)) return false;
+  const authAt = decoded.auth_at || decoded.iat;
+  return Math.floor(Date.now() / 1000) - authAt > SSO_MAX_AGE_S;
 }
 
 // jti → expiry (ms since epoch, from the revoked token's own `exp`). Kept
@@ -717,6 +820,17 @@ function isRevoked(decoded) {
   return false;
 }
 
+// A socket that's already connected keeps its room memberships regardless of
+// what happens to its token afterward -- drop the ones that no longer pass.
+function disconnectRevokedSockets() {
+  for (const s of io.sockets.sockets.values()) {
+    if (s.jwtUser && isRevoked(s.jwtUser)) {
+      s.emit('error:auth', { message: 'Signed out' });
+      s.disconnect(true);
+    }
+  }
+}
+
 function verifyToken(req, res, next) {
   const auth = req.headers.authorization;
   // A rejection here used to be completely silent — a unit whose token
@@ -728,18 +842,40 @@ function verifyToken(req, res, next) {
     console.warn(`[auth] ${req.method} ${req.originalUrl} — no token`);
     return res.status(401).json({ error: 'No token' });
   }
-  try {
-    const decoded = jwt.verify(auth.slice(7), JWT_SECRET);
-    if (isRevoked(decoded)) {
-      console.warn(`[auth] ${req.method} ${req.originalUrl} — revoked token, role=${decoded.role} unit=${decoded.unit_id || decoded.unit_number || ''}`);
-      return res.status(401).json({ error: 'Token has been revoked — please sign in again' });
-    }
-    req.user = decoded;
-    next();
-  } catch (err) {
-    console.warn(`[auth] ${req.method} ${req.originalUrl} — invalid/expired token: ${err.message}`);
-    res.status(401).json({ error: 'Invalid token' });
+  const { user, reason, detail } = checkSessionToken(auth.slice(7));
+  if (!user) {
+    console.warn(`[auth] ${req.method} ${req.originalUrl} — ${reason}${detail ? ` ${detail}` : ''}`);
+    return res.status(401).json({ error: reason === 'revoked' ? 'Token has been revoked — please sign in again' : 'Invalid token' });
   }
+  req.user = user;
+  next();
+}
+
+// Shared by the HTTP middleware above and the Socket.IO handshake -- the
+// socket used to only check the signature, so a logged-out or
+// password-changed dispatcher token could still join the live feed.
+function checkSessionToken(raw) {
+  let decoded;
+  try {
+    decoded = jwt.verify(raw, JWT_SECRET);
+  } catch (err) {
+    return { user: null, reason: `invalid/expired token: ${err.message}` };
+  }
+  if (isRevoked(decoded)) {
+    return { user: null, reason: 'revoked', detail: `role=${decoded.role} unit=${decoded.unit_id || ''}` };
+  }
+  // The crew-login / SSO step-1 token is role 'crew' with no unit yet. It's
+  // only meant for picking a unit (verifyPersonnelPreAuth below), not for
+  // acting as a crew member -- several crew checks compare against
+  // req.user.unit_id, and undefined can match an unassigned call's
+  // undefined assigned_unit_id.
+  if (decoded.role === 'crew' && !decoded.unit_id) {
+    return { user: null, reason: 'crew pre-auth token used outside unit selection' };
+  }
+  if (ssoTooOld(decoded)) {
+    return { user: null, reason: 'SSO sign-in older than 7 days' };
+  }
+  return { user: decoded, reason: null };
 }
 
 // Both /api/crew/select-unit and /api/crew/add-unit previously treated this pre-auth
@@ -769,8 +905,14 @@ app.post('/api/auth/login', loginRateLimit, async (req, res) => {
   const { username, password, role } = req.body;
   if (!username || !password) return res.status(400).json({ error: 'Missing credentials' });
 
+  if (typeof username !== 'string' || typeof password !== 'string') return res.status(400).json({ error: 'Missing credentials' });
+
   if (role === 'dispatcher') {
-    const attemptKey = username.toLowerCase();
+    // Keyed by username AND source IP: the dispatch account names are shared
+    // and predictable, so a username-only lockout let anyone lock "dispatch"
+    // out for 15 minutes mid-incident just by typing five wrong passwords.
+    // Guessing is still capped per IP by loginRateLimit and this lockout.
+    const attemptKey = `${username.toLowerCase()}|${req.ip}`;
     const attempt = loginAttempts.get(attemptKey);
     if (attempt?.lockedUntil && attempt.lockedUntil > Date.now()) {
       const mins = Math.ceil((attempt.lockedUntil - Date.now()) / 60000);
@@ -791,6 +933,10 @@ app.post('/api/auth/login', loginRateLimit, async (req, res) => {
     }
 
     const count = (attempt?.count || 0) + 1;
+    // Keyed by IP now, so this map could otherwise grow without bound.
+    if (loginAttempts.size > 5000) {
+      for (const [k, v] of loginAttempts) if (!v.lockedUntil || v.lockedUntil < Date.now()) loginAttempts.delete(k);
+    }
     loginAttempts.set(attemptKey, {
       count,
       lockedUntil: count >= LOGIN_MAX_ATTEMPTS ? Date.now() + LOGIN_LOCKOUT_MS : null
@@ -826,8 +972,10 @@ app.post('/api/auth/change-password', verifyToken, async (req, res) => {
   const accountId = req.user.role === 'overwatch' ? req.user.id : req.user.dispatcher_id;
   const account = dispatcherAccounts.find(a => a.id === accountId);
   if (!account) return res.status(404).json({ error: 'Account not found' });
+  // 400, not 401 -- the client treats any 401 as "session is dead" and signs
+  // the dispatcher out, which is the wrong reaction to a typo here.
   if (!bcrypt.compareSync(currentPassword, account.password_hash)) {
-    return res.status(401).json({ error: 'Current password is incorrect' });
+    return res.status(400).json({ error: 'Current password is incorrect' });
   }
   const newHash = bcrypt.hashSync(newPassword, 8);
   const newVersion = (account.token_version || 0) + 1;
@@ -842,13 +990,36 @@ app.post('/api/auth/change-password', verifyToken, async (req, res) => {
   }
   account.password_hash = newHash;
   account.token_version = newVersion;
-  res.json({ ok: true });
+  // Every other session for this account is now invalid; hand this one a
+  // fresh token at the new version so the person who just changed it isn't
+  // bounced to the login screen on their very next request.
+  const { iat, exp, jti, ...payload } = req.user;
+  const token = signToken({ ...payload, token_version: newVersion });
+  disconnectRevokedSockets();
+  res.json({ ok: true, token });
 });
 
 // ── Crew personal login (EMS credentials) ─────────────────────────
+// Same personnel table and same PINs as the sfotems.com portal, so this must
+// enforce the same lockout (ems-credentials/app/api/login-personnel): before
+// this, a wrong PIN here only bumped failed_attempts and never set
+// locked_until, which made this route a way to guess PINs (as short as 4
+// digits) without ever tripping the portal's lock.
+const CREW_LOCK_THRESHOLD = 10;
+const CREW_LOCK_MINUTES   = 15;
+// Failed attempts are padded to a fixed minimum time, like the portal, so an
+// unknown username can't be told apart from a wrong PIN by timing and each
+// guess costs the guesser real wall-clock time.
+const CREW_FAIL_MIN_MS = 1500;
+const failSlowly = async (startedAt) => {
+  const wait = CREW_FAIL_MIN_MS - (Date.now() - startedAt);
+  if (wait > 0) await new Promise(r => setTimeout(r, wait));
+};
+
 app.post('/api/auth/crew-login', loginRateLimit, async (req, res) => {
+  const startedAt = Date.now();
   const { username, pin } = req.body;
-  if (!username || !pin) return res.status(400).json({ error: 'Username and PIN required' });
+  if (!username || !pin || typeof username !== 'string') return res.status(400).json({ error: 'Username and PIN required' });
   if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
     return res.status(503).json({ error: 'Crew login not configured on server' });
   }
@@ -871,11 +1042,14 @@ app.post('/api/auth/crew-login', loginRateLimit, async (req, res) => {
       return res.status(500).json({ error: 'Server error' });
     }
 
-    if (!person || !person.pin_hash)
+    if (!person || !person.pin_hash) {
+      await failSlowly(startedAt);
       return res.status(401).json({ error: 'Incorrect username or PIN' });
+    }
 
     if (person.locked_until && new Date(person.locked_until) > new Date()) {
       const mins = Math.ceil((new Date(person.locked_until) - Date.now()) / 60000);
+      await failSlowly(startedAt);
       return res.status(401).json({ error: `Account locked. Try again in ${mins} minute${mins !== 1 ? 's' : ''}.` });
     }
 
@@ -885,7 +1059,14 @@ app.post('/api/auth/crew-login', loginRateLimit, async (req, res) => {
       supabase.from('personnel').update(fields).eq('id', person.id);
 
     if (!valid) {
-      await patchPersonnel({ failed_attempts: (person.failed_attempts || 0) + 1 });
+      const failedAttempts = (person.failed_attempts || 0) + 1;
+      const updates = { failed_attempts: failedAttempts };
+      if (failedAttempts >= CREW_LOCK_THRESHOLD) {
+        updates.locked_until = new Date(Date.now() + CREW_LOCK_MINUTES * 60 * 1000).toISOString();
+        console.warn(`[crew-login] ${cleanUsername} locked for ${CREW_LOCK_MINUTES} min after ${failedAttempts} failed PINs`);
+      }
+      await patchPersonnel(updates);
+      await failSlowly(startedAt);
       return res.status(401).json({ error: 'Incorrect username or PIN' });
     }
 
@@ -909,7 +1090,7 @@ app.post('/api/auth/crew-login', loginRateLimit, async (req, res) => {
 // dest=crew: issues pre-auth crew JWT (caller still picks a unit via /crew/select-unit)
 // dest=display: caller should just navigate to /display directly (no server auth needed)
 const EMS_PORTAL = process.env.EMS_PORTAL_URL || 'https://sfotems.com';
-app.post('/api/auth/sso', async (req, res) => {
+app.post('/api/auth/sso', loginRateLimit, async (req, res) => {
   const { token, dest } = req.body;
   if (!token || !dest) return res.status(400).json({ error: 'token and dest required' });
 
@@ -1744,6 +1925,12 @@ app.post('/api/calls/:id/add-unit', verifyToken, async (req, res) => {
 
   const joinStatus = resolveInitialUnitStatus(initial_status);
 
+  // Same checks POST /api/calls already does: a bogus id used to be pushed
+  // into additional_unit_ids with nothing behind it, and adding to a closed
+  // call set the unit to 'dispatched' with no open call to ever clear it.
+  if (call.status === 'closed') return res.status(409).json({ error: 'Call is already closed' });
+  if (!units.some(u => u.id === unit_id)) return res.status(400).json({ error: 'Unit not found' });
+
   const conflict = getUnitActiveCall(unit_id, req.params.id);
   if (conflict) return res.status(409).json({ error: `Unit already on call #${conflict.call_number}` });
 
@@ -1775,6 +1962,11 @@ app.delete('/api/calls/:id/units/:unit_id', verifyToken, async (req, res) => {
   if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
   const call = calls.find(c => c.id === req.params.id);
   if (!call) return res.status(404).json({ error: 'Not found' });
+  // Only backups come off this way -- the primary stays assigned (swap it
+  // with Reassign instead), and must not be flipped to available while the
+  // call still points at it.
+  if (call.assigned_unit_id === req.params.unit_id)
+    return res.status(400).json({ error: 'That is the primary unit — reassign the call instead' });
   call.additional_unit_ids = (call.additional_unit_ids || []).filter(id => id !== req.params.unit_id);
   // Units dispatched together with the primary start out in both arrays (see
   // POST /api/calls) — without also clearing co_unit_ids here, a "removed"
@@ -1843,7 +2035,9 @@ app.post('/api/calls/:id/release', verifyToken, async (req, res) => {
 app.patch('/api/calls/:id/status', verifyToken, async (req, res) => {
   const call = calls.find(c => c.id === req.params.id);
   if (!call) return res.status(404).json({ error: 'Not found' });
-  if (req.user.role === 'overwatch') return res.status(403).json({ error: 'Forbidden' });
+  // Allowlist, not "anyone but overwatch" -- that let a display-board or
+  // wayfinding-admin token advance and close calls.
+  if (req.user.role !== 'dispatcher' && req.user.role !== 'crew') return res.status(403).json({ error: 'Forbidden' });
 
   if (req.user.role === 'crew') {
     const allIds = [call.assigned_unit_id, ...(call.additional_unit_ids || [])].filter(id => !isReleased(call, id));
@@ -1894,6 +2088,12 @@ app.patch('/api/calls/:id/status', verifyToken, async (req, res) => {
   }
 
   const TS_MAP = STATUS_TS_MAP;
+  if (req.body.status === 'closed') {
+    logCallChanges(call,
+      { status: call.status, disposition: call.disposition, close_notes: call.close_notes },
+      { status: 'closed', disposition: req.body.disposition || call.disposition, close_notes: req.body.close_notes || call.close_notes },
+      req.user);
+  }
   call.status = req.body.status;
   if (req.body.disposition) call.disposition = req.body.disposition;
   if (req.body.close_notes)  call.close_notes  = req.body.close_notes;
@@ -1913,9 +2113,7 @@ app.patch('/api/calls/:id/status', verifyToken, async (req, res) => {
   // 'on_scene') until the call's own status catches up to or passes it — the
   // forward-only guard below is what stops it from being yanked backward,
   // not the unit being left out of the sync entirely.
-  const unitIdsToUpdate = isClose
-    ? [call.assigned_unit_id, ...(call.additional_unit_ids || [])].filter(Boolean)
-    : [...new Set([call.assigned_unit_id, ...(call.co_unit_ids || []), ...(call.additional_unit_ids || [])])].filter(id => id && !isReleased(call, id));
+  const unitIdsToUpdate = unitIdsForCallSync(call, isClose);
 
   // Also collected so the dispatcher-facing call:status_change broadcast below
   // can carry every affected unit's new status in the same, single event, in
@@ -1956,7 +2154,7 @@ app.patch('/api/calls/:id/status', verifyToken, async (req, res) => {
 });
 
 app.post('/api/calls/:id/comments', verifyToken, async (req, res) => {
-  if (req.user.role === 'overwatch') return res.status(403).json({ error: 'Forbidden' });
+  if (req.user.role !== 'dispatcher' && req.user.role !== 'crew') return res.status(403).json({ error: 'Forbidden' });
   const call = calls.find(c => c.id === req.params.id);
   if (!call) return res.status(404).json({ error: 'Not found' });
   if (req.user.role === 'crew') {
@@ -2013,8 +2211,9 @@ app.post('/api/crew/select-unit', verifyPersonnelPreAuth, (req, res) => {
 
 // ── Shift ─────────────────────────────────────────────────────────
 
-// Public: crew login picker fetches this before authenticating
-app.get('/api/shift/units', (req, res) => {
+// Crew login picker fetches this after the PIN/SSO step. Used to be fully
+// public, which handed medics' names and posts to anyone who asked.
+app.get('/api/shift/units', verifyPersonnelPreAuth, (req, res) => {
   if (!currentShift || currentShift.ended_at) return res.json([]);
   res.json(units.map(u => ({
     id: u.id, unit_number: u.unit_number, unit_type: u.unit_type,
@@ -2213,7 +2412,13 @@ app.patch('/api/shift/units/:unit_id', verifyToken, async (req, res) => {
   }
   if (currentShift) {
     const s = currentShift.unit_staffing.find(s => s.unit_id === req.params.unit_id);
-    if (s) { Object.assign(s, { crew, unit_type, in_service, station }); }
+    // Only the fields actually sent -- assigning all four copied `undefined`
+    // over the ones left out, e.g. toggling in-service wiped the recorded crew.
+    if (s) {
+      for (const [k, v] of Object.entries({ crew, unit_type, in_service, station })) {
+        if (v !== undefined) s[k] = v;
+      }
+    }
     persist(saveShift(currentShift), 'shift staffing');
   }
   persist(saveUnit(unit), 'unit ' + unit.id);
@@ -2387,6 +2592,28 @@ const DEGRADED_ACCURACY_OVERRIDE_S = 120;
 // accepting a real correction.
 const ACCURACY_CORRECTION_RATIO = 3;
 
+const GPS_PERSIST_INTERVAL_MS = 30 * 1000;
+
+// Newer app builds send `ts`, the moment the phone actually took the fix.
+// Offline-queued points used to be stamped with their arrival time instead,
+// so a backlog draining after a dead zone looked like the unit teleporting
+// (most points then got rejected as impossible speed) and the call's GPS
+// trail lost the whole stretch. The phone also sends `sentAt` (its own clock
+// at send time); only the difference between the two is used -- "this fix is
+// N seconds old" -- so a phone whose clock is off doesn't matter. Returns
+// null for a fix too old to be worth showing (dropped, not shown as current).
+// Old builds send neither and keep the previous receipt-time behavior.
+const GPS_MAX_FIX_AGE_MS = 20 * 60 * 1000;
+function resolveFixTime(rawTs, rawSentAt) {
+  const now = Date.now();
+  const ts = Number(rawTs);
+  const sentAt = Number(rawSentAt);
+  if (!Number.isFinite(ts) || !Number.isFinite(sentAt)) return new Date(now).toISOString();
+  const ageMs = Math.max(0, sentAt - ts);
+  if (ageMs > GPS_MAX_FIX_AGE_MS) return null;
+  return new Date(now - ageMs).toISOString();
+}
+
 // Confirmed live on Medic 8 (2026-09-19): after being corrected away from a
 // bad fix, the phone drifted right back to the *exact same wrong coordinate*
 // later on, this time reporting 53m accuracy -- comfortably under
@@ -2525,13 +2752,19 @@ function applyGpsUpdate(unit, lat, lng, timestamp, accuracy) {
   unit.last_gps_at       = timestamp;
   unit.last_gps_fix_ts   = timestamp;
   unit.last_gps_accuracy = accuracy ?? null;
-  persist(saveUnit(unit), 'unit ' + unit.id);
+  // The live position lives in memory and goes out over the socket; the DB
+  // copy only matters for surviving a restart. Writing the whole unit row on
+  // every fix (up to ~1/s per unit) was the busiest query in the system.
+  if (!unit._gpsSavedAt || Date.now() - unit._gpsSavedAt > GPS_PERSIST_INTERVAL_MS) {
+    unit._gpsSavedAt = Date.now();
+    persist(saveUnit(unit), 'unit ' + unit.id);
+  }
 
   const activeCall = getUnitActiveCall(unit.id);
   if (activeCall) {
     pool.query(
-      'INSERT INTO gps_history (call_id, unit_id, unit_number, lat, lng) VALUES ($1, $2, $3, $4, $5)',
-      [activeCall.id, unit.id, unit.unit_number, lat, lng]
+      'INSERT INTO gps_history (call_id, unit_id, unit_number, lat, lng, recorded_at) VALUES ($1, $2, $3, $4, $5, $6)',
+      [activeCall.id, unit.id, unit.unit_number, lat, lng, timestamp]
     ).catch(console.error);
   }
   const payload = { unit_id: unit.id, unit_number: unit.unit_number, lat, lng, timestamp };
@@ -2593,7 +2826,11 @@ app.post('/api/crew/gps', verifyToken, gpsRateLimit, (req, res) => {
   const accuracy = req.body.accuracy != null ? parseFloat(req.body.accuracy) : null;
   console.log(`[gps:in] ${unit.unit_number} ${lat.toFixed(5)},${lng.toFixed(5)} acc=${accuracy ?? '?'}m onCall=${!!getUnitActiveCall(unit.id)}`);
 
-  applyGpsUpdate(unit, lat, lng, new Date().toISOString(), accuracy);
+  const fixTime = resolveFixTime(req.body.ts, req.body.sentAt);
+  // 200 on purpose, same reasoning as the off-shift case above: a queued
+  // point that's simply too old should be dropped, not retried forever.
+  if (!fixTime) return res.json({ ok: true, ignored: true, reason: 'fix_too_old' });
+  applyGpsUpdate(unit, lat, lng, fixTime, accuracy);
   res.json({ ok: true });
 });
 
@@ -2708,6 +2945,20 @@ app.get('/api/calls/:id/gps-track', verifyToken, async (req, res) => {
     res.json(rows);
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/calls/:id/audit', verifyToken, async (req, res) => {
+  if (!['dispatcher', 'overwatch'].includes(req.user.role)) return res.status(403).json({ error: 'Forbidden' });
+  try {
+    const { rows } = await pool.query(
+      'SELECT field, old_value, new_value, changed_by, role, at FROM call_audit_log WHERE call_id = $1 ORDER BY at ASC, id ASC',
+      [req.params.id]
+    );
+    res.json(rows);
+  } catch (e) {
+    console.error('[audit] read failed:', e.message);
+    res.status(500).json({ error: 'Database error' });
   }
 });
 
@@ -2910,11 +3161,13 @@ app.patch('/api/calls/:id/location', verifyToken, async (req, res) => {
   const call = calls.find(c => c.id === req.params.id);
   if (!call) return res.status(404).json({ error: 'Not found' });
   const { location_name, park_zone, location_lat, location_lng } = req.body;
+  const before = { ...call };
   const changes = {};
   if (location_name !== undefined) { call.location_name = location_name; changes.location_name = location_name; }
   if (park_zone     !== undefined) { call.park_zone     = park_zone;     changes.park_zone     = park_zone;     }
   if (location_lat  !== undefined) { call.location_lat  = location_lat;  changes.location_lat  = location_lat;  }
   if (location_lng  !== undefined) { call.location_lng  = location_lng;  changes.location_lng  = location_lng;  }
+  logCallChanges(call, before, changes, req.user);
   persist(saveCall(call), 'call ' + call.id);
   emitDispatch('call:updated', { call_id: call.id, changes });
   notifyCallCrew(call, changes);
@@ -2926,10 +3179,12 @@ app.patch('/api/calls/:id/details', verifyToken, async (req, res) => {
   const call = calls.find(c => c.id === req.params.id);
   if (!call) return res.status(404).json({ error: 'Not found' });
   const { call_type, chief_complaint, notes } = req.body;
+  const before = { ...call };
   const changes = {};
   if (call_type       !== undefined) { call.call_type       = call_type;       changes.call_type       = call_type; }
   if (chief_complaint !== undefined) { call.chief_complaint = chief_complaint;  changes.chief_complaint = chief_complaint; }
   if (notes           !== undefined) { call.notes           = notes;            changes.notes           = notes; }
+  logCallChanges(call, before, changes, req.user);
   persist(saveCall(call), 'call ' + call.id);
   emitDispatch('call:updated', { call_id: call.id, changes });
   notifyCallCrew(call, changes);
@@ -2942,6 +3197,7 @@ app.patch('/api/calls/:id/priority', verifyToken, async (req, res) => {
   if (!call) return res.status(404).json({ error: 'Not found' });
   const priority = Number(req.body.priority);
   if (![1, 2, 3].includes(priority)) return res.status(400).json({ error: 'Priority must be 1, 2, or 3' });
+  logCallChanges(call, call, { priority }, req.user);
   call.priority = priority;
   persist(saveCall(call), 'call ' + call.id);
   emitDispatch('call:updated', { call_id: call.id, changes: { priority } });
@@ -2984,15 +3240,13 @@ app.delete('/api/calls/:id/mutual-aid/:entryId', verifyToken, async (req, res) =
 
 // ── Call timestamps & narrative ───────────────────────────────────
 app.patch('/api/calls/:id/timestamps', verifyToken, async (req, res) => {
-  if (req.user.role === 'overwatch') return res.status(403).json({ error: 'Forbidden' });
+  // Dispatcher-only. The crew app never calls this (crews move the timeline
+  // with status buttons), and allowing crew let a backup unit close the
+  // whole call by setting closed_at -- skipping both the primary-only close
+  // rule and the disposition.
+  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
   const call = calls.find(c => c.id === req.params.id);
   if (!call) return res.status(404).json({ error: 'Not found' });
-
-  if (req.user.role === 'crew') {
-    const allIds = [call.assigned_unit_id, ...(call.additional_unit_ids || [])];
-    if (!allIds.includes(req.user.unit_id))
-      return res.status(403).json({ error: 'Forbidden' });
-  }
   // A closed call has no live edit path in the dispatcher UI (closed calls
   // aren't selectable outside read-only history) — the only realistic way
   // this fires on one is a stale/offline-queued crew request landing after
@@ -3009,6 +3263,18 @@ app.patch('/api/calls/:id/timestamps', verifyToken, async (req, res) => {
   Object.entries(req.body).forEach(([k, v]) => {
     if (ALLOWED.includes(k)) pendingChanges[k] = v;
   });
+  // The UI validates these, but the server took whatever string arrived --
+  // garbage here breaks every duration/overlap calculation on the call.
+  for (const [k, v] of Object.entries(pendingChanges)) {
+    if (v === null || v === '') { pendingChanges[k] = null; continue; }
+    if (typeof v !== 'string' || isNaN(new Date(v).getTime()))
+      return res.status(400).json({ error: `${k} must be a valid time` });
+    if (new Date(v).getTime() > Date.now() + 5 * 60 * 1000)
+      return res.status(400).json({ error: `${k} can't be in the future` });
+    pendingChanges[k] = new Date(v).toISOString();
+  }
+  if (pendingChanges.received_at === null)
+    return res.status(400).json({ error: 'received_at can\'t be cleared' });
 
   // Validate against the prospective merged state before touching the live call object, so a
   // rejected edit leaves it untouched instead of partially applied.
@@ -3025,6 +3291,7 @@ app.patch('/api/calls/:id/timestamps', verifyToken, async (req, res) => {
     }
   }
 
+  logCallChanges(call, call, pendingChanges, req.user);
   const changes = {};
   Object.entries(pendingChanges).forEach(([k, v]) => { call[k] = v; changes[k] = v; });
 
@@ -3044,9 +3311,7 @@ app.patch('/api/calls/:id/timestamps', verifyToken, async (req, res) => {
       // still being actively synced, goes back to available.
       const isClose = newStatus === 'closed';
       const newUnitStatus = isClose ? 'available' : newStatus;
-      const unitIdsToUpdate = isClose
-        ? [call.assigned_unit_id, ...(call.additional_unit_ids || [])].filter(Boolean)
-        : [...new Set([call.assigned_unit_id, ...(call.co_unit_ids || []), ...(call.additional_unit_ids || [])])].filter(id => id && !isReleased(call, id));
+      const unitIdsToUpdate = unitIdsForCallSync(call, isClose);
       unitIdsToUpdate.forEach(uid => {
         const unit = units.find(u => u.id === uid);
         if (!unit) return;
@@ -3080,7 +3345,7 @@ app.patch('/api/calls/:id/timestamps', verifyToken, async (req, res) => {
 });
 
 app.patch('/api/calls/:id/narrative', verifyToken, async (req, res) => {
-  if (req.user.role === 'overwatch') return res.status(403).json({ error: 'Forbidden' });
+  if (req.user.role !== 'dispatcher' && req.user.role !== 'crew') return res.status(403).json({ error: 'Forbidden' });
   const call = calls.find(c => c.id === req.params.id);
   if (!call) return res.status(404).json({ error: 'Not found' });
 
@@ -3089,6 +3354,7 @@ app.patch('/api/calls/:id/narrative', verifyToken, async (req, res) => {
     if (!allIds.includes(req.user.unit_id))
       return res.status(403).json({ error: 'Forbidden' });
   }
+  logCallChanges(call, call, { narrative: req.body.narrative ?? null }, req.user);
   call.narrative = req.body.narrative ?? null;
   persist(saveCall(call), 'call ' + call.id);
   // Unlike every sibling endpoint (location/details/priority/mutual-aid), this
@@ -3114,14 +3380,27 @@ app.post('/api/auth/logout', verifyToken, (req, res) => {
   sweepRevokedJtis();
   if (req.user.jti && req.user.exp) {
     revokedJtis.set(req.user.jti, req.user.exp * 1000);
+    // Persisted so a restart doesn't un-revoke it (loaded back in initDb()).
+    pool.query(
+      'INSERT INTO revoked_tokens (jti, expires_at) VALUES ($1, $2) ON CONFLICT (jti) DO NOTHING',
+      [req.user.jti, new Date(req.user.exp * 1000).toISOString()]
+    ).catch(err => console.error('[auth] failed to persist revoked token:', err.message));
+    disconnectRevokedSockets();
   }
   res.json({ ok: true });
 });
 
 // ── Display board auth ────────────────────────────────────────────
-app.post('/api/display/auth', (req, res) => {
+// A board signs in rarely, so 10 tries per 15 minutes per IP is plenty for a
+// person and makes guessing a short PIN impractical. This route used to have
+// no limit at all.
+const displayAuthRateLimit = rateLimit(15 * 60 * 1000, 10, req => req.ip);
+app.post('/api/display/auth', displayAuthRateLimit, (req, res) => {
   const correct = process.env.DISPLAY_PIN || '4567';
-  if (String(req.body.pin) !== correct) return res.status(401).json({ error: 'Invalid PIN' });
+  if (String(req.body.pin) !== correct) {
+    console.warn(`[auth] display PIN rejected from ${req.ip}`);
+    return res.status(401).json({ error: 'Invalid PIN' });
+  }
   const token = signToken({ role: 'display' });
   res.json({ token });
 });
@@ -3133,7 +3412,11 @@ app.get('/api/health', (req, res) => res.json({ status: 'ok', ts: new Date().toI
 io.use((socket, next) => {
   const token = socket.handshake.auth?.token;
   if (token) {
-    try { socket.jwtUser = jwt.verify(token, JWT_SECRET); } catch {}
+    // Same checks as HTTP (revocation, password-change version, pre-auth
+    // crew tokens, SSO age) -- this used to be signature-only.
+    const { user, reason } = checkSessionToken(token);
+    if (user) socket.jwtUser = user;
+    else console.warn(`[socket] rejected token: ${reason}`);
   }
   next();
 });

@@ -512,8 +512,19 @@ export default function CrewMobile() {
   // just mirrors the queue's own length into state so the banner below can
   // show it; the queue module owns retrying (on the 'online' event and a
   // 15s interval) independent of this component's lifecycle.
-  const [queuedActionCount, setQueuedActionCount] = useState(0);
-  useEffect(() => subscribeOfflineQueue(q => setQueuedActionCount(q.length)), []);
+  const [offlineQueue, setOfflineQueue] = useState([]);
+  useEffect(() => subscribeOfflineQueue(q => setOfflineQueue(q)), []);
+  const queuedActionCount = offlineQueue.length;
+  // A backup request that's sitting in the retry queue has NOT reached
+  // dispatch. It used to look identical to "never tapped", so a medic in a
+  // dead zone could believe help was coming. Last queued backup comment for
+  // this call wins (request vs. cancel).
+  const backupQueued = useMemo(() => {
+    if (!myActiveCall) return false;
+    const mine = offlineQueue.filter(a => a.type === 'comment' && a.payload?.callId === myActiveCall.id &&
+      (a.payload.text?.startsWith('🆘 BACKUP REQUESTED') || a.payload.text?.startsWith('✅ Backup no longer needed')));
+    return !!mine[mine.length - 1]?.payload.text.startsWith('🆘 BACKUP REQUESTED');
+  }, [offlineQueue, myActiveCall?.id]);
 
   useSocket({
     'unit:gps_update':     handleGpsUpdate,
@@ -1149,9 +1160,15 @@ export default function CrewMobile() {
           {backupError && (
             <div className="text-red-400 text-xs text-center font-medium">{backupError}</div>
           )}
+          {backupQueued && !backupRequested && (
+            <div className="rounded-xl bg-amber-900/70 border border-amber-500 px-3 py-2 text-center">
+              <div className="text-amber-200 font-black text-sm">⚠ BACKUP NOT SENT YET — NO SIGNAL</div>
+              <div className="text-amber-300/90 text-xs">Retrying automatically. Use your radio now.</div>
+            </div>
+          )}
           <button
             onClick={handleRequestBackup}
-            disabled={backupSubmitting}
+            disabled={backupSubmitting || (backupQueued && !backupRequested)}
             className={`w-full py-4 rounded-xl font-black text-base tracking-wide transition-all active:scale-95 disabled:opacity-60
               ${backupRequested
                 ? 'bg-green-800 border border-green-600 text-green-300'

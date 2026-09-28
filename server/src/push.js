@@ -58,8 +58,37 @@ async function sendAndroid(pushToken, title, body) {
     return { ok: true };
   } catch (e) {
     console.error('[push] Android send failed:', e.message);
-    return { ok: false, error: e.code || e.message };
+    return { ok: false, error: e.code || e.message, invalidToken: ANDROID_DEAD_TOKEN_CODES.has(e.code) };
   }
+}
+
+// Google's answer for a token that will never work again (app uninstalled,
+// data cleared, token rotated). Anything else may be transient.
+const ANDROID_DEAD_TOKEN_CODES = new Set([
+  'messaging/registration-token-not-registered',
+  'messaging/invalid-registration-token'
+]);
+// Apple's equivalent. 410 Unregistered = app removed from the device.
+const IOS_DEAD_TOKEN_REASONS = new Set(['BadDeviceToken', 'Unregistered', 'DeviceTokenNotForTopic']);
+
+// One long-lived HTTP/2 connection to APNs, reused for every push (Apple's
+// guidance -- opening a fresh connection per notification, as this used to,
+// is slow and can get throttled as a burst, e.g. a park-wide broadcast).
+// Recreated whenever it closes or errors.
+let apnsSession = null;
+function getApnsSession() {
+  if (apnsSession && !apnsSession.closed && !apnsSession.destroyed) return apnsSession;
+  const session = http2.connect('https://api.push.apple.com:443');
+  session.on('error', (e) => {
+    console.error('[push] iOS connection error:', e.message);
+    if (apnsSession === session) apnsSession = null;
+  });
+  session.on('close', () => { if (apnsSession === session) apnsSession = null; });
+  session.on('goaway', () => { if (apnsSession === session) apnsSession = null; });
+  // Don't keep the process alive just for an idle push connection.
+  session.unref();
+  apnsSession = session;
+  return session;
 }
 
 // APNs wants its auth JWT reused across requests, not regenerated every
@@ -98,11 +127,14 @@ function sendIos(pushToken, title, body, urgent) {
       return;
     }
 
-    const client = http2.connect('https://api.push.apple.com:443');
-    client.on('error', (e) => {
+    let client;
+    try {
+      client = getApnsSession();
+    } catch (e) {
       console.error('[push] iOS connection error:', e.message);
       resolve({ ok: false, error: e.message });
-    });
+      return;
+    }
 
     const aps = { alert: { title, body }, sound: 'default' };
     if (urgent) aps['interruption-level'] = 'time-sensitive';
@@ -121,8 +153,14 @@ function sendIos(pushToken, title, body, urgent) {
     req.on('response', (headers) => { status = headers[':status']; });
     let responseBody = '';
     req.on('data', (chunk) => { responseBody += chunk; });
+    // A request that never gets an answer (half-dead connection) would
+    // otherwise hang this promise forever.
+    req.setTimeout(10000, () => {
+      req.close(http2.constants.NGHTTP2_CANCEL);
+      if (apnsSession === client) { apnsSession = null; client.destroy(); }
+      resolve({ ok: false, error: 'APNs request timed out' });
+    });
     req.on('end', () => {
-      client.close();
       if (status !== 200) {
         console.error(`[push] iOS send failed: status=${status} body=${responseBody}`);
       }
@@ -130,11 +168,12 @@ function sendIos(pushToken, title, body, urgent) {
       // the reason itself so a failed test push says *why*.
       let reason = null;
       try { reason = JSON.parse(responseBody).reason; } catch {}
-      resolve(status === 200 ? { ok: true } : { ok: false, error: reason || `HTTP ${status}` });
+      resolve(status === 200
+        ? { ok: true }
+        : { ok: false, error: reason || `HTTP ${status}`, invalidToken: IOS_DEAD_TOKEN_REASONS.has(reason) });
     });
     req.on('error', (e) => {
       console.error('[push] iOS request error:', e.message);
-      client.close();
       resolve({ ok: false, error: e.message });
     });
 
@@ -158,9 +197,20 @@ async function sendPushToUnit(unit, message) {
 // assignments, dispatch pinging them, and park-wide broadcasts.
 async function sendPushToUnitDetailed(unit, { title, body, urgent = false }) {
   if (!unit?.push_token || !unit?.push_platform) return { ok: false, error: 'No phone registered for push on this unit' };
-  if (unit.push_platform === 'ios') return sendIos(unit.push_token, title, body, urgent);
-  if (unit.push_platform === 'android') return sendAndroid(unit.push_token, title, body);
-  return { ok: false, error: `Unknown platform ${unit.push_platform}` };
+  const token = unit.push_token;
+  let result;
+  if (unit.push_platform === 'ios') result = await sendIos(token, title, body, urgent);
+  else if (unit.push_platform === 'android') result = await sendAndroid(token, title, body);
+  else return { ok: false, error: `Unknown platform ${unit.push_platform}` };
+  // Apple/Google say this token is dead for good -- stop pushing to it (the
+  // phone re-registers on its next login) and let dispatch see why.
+  if (result.invalidToken && unit.push_token === token && onInvalidToken) {
+    try { onInvalidToken(unit, result.error); } catch (e) { console.error('[push] invalid-token handler failed:', e.message); }
+  }
+  return result;
 }
 
-module.exports = { sendPushToUnit, sendPushToUnitDetailed };
+let onInvalidToken = null;
+function setInvalidTokenHandler(fn) { onInvalidToken = fn; }
+
+module.exports = { sendPushToUnit, sendPushToUnitDetailed, setInvalidTokenHandler };

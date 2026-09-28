@@ -92,8 +92,13 @@ export function usePushRegistration({ token, enabled = true }) {
         settle();
         currentPushToken = value;
         const platform = window.Capacitor?.getPlatform?.() === 'ios' ? 'ios' : 'android';
-        setPushState('on');
-        registerPushToken(value, platform).catch(() => {});
+        // "On" only once the server has the token -- this used to show
+        // "Dispatch can reach you" even when that request failed (e.g. bad
+        // signal at login), leaving the phone unreachable with no sign of it.
+        // 'error' re-runs registration the next time the app is foregrounded.
+        registerPushToken(value, platform)
+          .then(() => { if (live) setPushState('on'); })
+          .catch(() => { if (live) setPushState('error'); });
       },
       onError: fail,
     };

@@ -86,15 +86,18 @@ export function subscribeOfflineQueue(fn) {
 }
 
 /**
- * Queue an action for retry after a genuine network failure. `id` is derived
- * from type+payload (not random) so an identical action already queued
- * (e.g. a double-tap while offline) is deduped rather than piling up.
+ * Queue an action for retry after a genuine network failure. A repeat of the
+ * *last* queued action (a double-tap while offline) is dropped rather than
+ * piling up. Only the last one, though: Available → En Route → Available
+ * while offline has to keep the second Available, or the replay finishes on
+ * En Route -- which is what deduping against the whole queue used to do.
  */
 export function enqueueOfflineAction(type, payload) {
   if (!RUNNERS[type]) return; // unknown type — programmer error, not a queueable failure
-  const id = `${type}:${JSON.stringify(payload)}`;
-  if (queue.some(a => a.id === id)) return;
-  queue = [...queue, { id, type, payload, createdAt: Date.now(), token: getCurrentToken() }];
+  const key = `${type}:${JSON.stringify(payload)}`;
+  if (queue.length && queue[queue.length - 1].key === key) return;
+  const id = `${key}:${Date.now()}:${Math.random().toString(36).slice(2, 7)}`;
+  queue = [...queue, { id, key, type, payload, createdAt: Date.now(), token: getCurrentToken() }];
   saveQueue(queue);
   notify();
   scheduleRetryLoop();

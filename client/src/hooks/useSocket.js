@@ -55,7 +55,24 @@ export function useSocket(handlers = {}, options = {}) {
       }
     });
 
-    socket.on('disconnect', () => setIsConnected(false));
+    // socket.io doesn't auto-reconnect when the *server* closes the
+    // connection (it does that when a token is revoked, e.g. right after a
+    // password change). Try again shortly under whatever token is current by
+    // then -- a genuinely signed-out session just fails to rejoin, harmlessly.
+    let serverDropTimer = null;
+    socket.on('disconnect', (reason) => {
+      setIsConnected(false);
+      if (reason === 'io server disconnect') {
+        clearTimeout(serverDropTimer);
+        serverDropTimer = setTimeout(() => socketRef.current?.connect(), 2000);
+      }
+    });
+    const handleTokenUpdated = () => {
+      if (!socketRef.current) return;
+      socketRef.current.disconnect();
+      socketRef.current.connect();
+    };
+    window.addEventListener('cad:token-updated', handleTokenUpdated);
 
     // Any inbound event at all — whether or not a caller registered a
     // handler for it — counts as proof the connection is actually carrying
@@ -95,6 +112,8 @@ export function useSocket(handlers = {}, options = {}) {
 
     return () => {
       document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('cad:token-updated', handleTokenUpdated);
+      clearTimeout(serverDropTimer);
       clearInterval(staleCheck);
       socket.disconnect();
     };

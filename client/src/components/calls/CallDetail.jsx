@@ -5,6 +5,7 @@ import CloseCallModal from './CloseCallModal';
 import { isOnCall, isReleased } from '../../lib/callUnits';
 import CallReport from './CallReport';
 import GpsTrackTab from './GpsTrackTab';
+import CallChangeLog from './CallChangeLog';
 import { STATUS_COLORS, STATUS_LABELS, VALID_UNIT_STATUSES, CALL_TYPES } from '../../data/mockData';
 import { updateCallNarrative, updateCallLocation, updateCallDetails } from '../../services/api';
 import { isCallPending } from '../../lib/calls';
@@ -347,7 +348,8 @@ export default function CallDetail({
           { id: 'detail',   label: 'Detail' },
           { id: 'timeline', label: 'Timeline' },
           { id: 'comments', label: `Comments${commentCount ? ` (${commentCount})` : ''}` },
-          { id: 'gpstrack', label: 'GPS Track' }
+          { id: 'gpstrack', label: 'GPS Track' },
+          { id: 'changes',  label: 'Changes' }
         ].map(t => (
           <button key={t.id} onClick={() => setTab(t.id)}
             className={`flex-1 py-2 text-xs font-medium transition-colors
@@ -827,6 +829,10 @@ export default function CallDetail({
 
         {tab === 'gpstrack' && (
           <GpsTrackTab call={call} />
+        )}
+
+        {tab === 'changes' && (
+          <CallChangeLog callId={call.id} />
         )}
       </div>
 

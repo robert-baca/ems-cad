@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { changePassword } from '../../services/api';
+import { useAuth } from '../../context/AuthContext';
 
 const STORAGE_KEY = 'ems_cad_quick_types';
 
@@ -28,6 +29,7 @@ export default function OptionsModal({
   const [pwError,    setPwError]   = useState('');
   const [pwSuccess,  setPwSuccess] = useState('');
   const [pwSaving,   setPwSaving]  = useState(false);
+  const { updateToken } = useAuth();
 
   useEffect(() => {
     setQuickTypes(loadQuickTypes());
@@ -41,8 +43,11 @@ export default function OptionsModal({
     if (newPw !== confirmPw) { setPwError('New password and confirmation don\'t match.'); return; }
     setPwSaving(true);
     try {
-      await changePassword(currentPw, newPw);
-      setPwSuccess('Password changed. You\'ll need it next time you sign in.');
+      const res = await changePassword(currentPw, newPw);
+      // The change signs out every other session for this account; the
+      // server hands this one a fresh token so it stays signed in.
+      if (res.data?.token) updateToken(res.data.token);
+      setPwSuccess('Password changed. Any other devices signed in to this account have been signed out.');
       setCurrentPw(''); setNewPw(''); setConfirmPw('');
     } catch (err) {
       setPwError(err.response?.data?.error || 'Failed to change password — please try again.');

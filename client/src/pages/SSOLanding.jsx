@@ -80,7 +80,9 @@ export default function SSOLanding() {
           // Pre-auth token received; now show the unit picker
           setPreAuthToken(data.token);
           setCrewName(data.user.name || '');
-          const ur = await fetch(`${apiBase()}/shift/units`);
+          const ur = await fetch(`${apiBase()}/shift/units`, {
+            headers: { Authorization: `Bearer ${data.token}` }
+          });
           const units = await ur.json();
           setShiftUnits(Array.isArray(units) ? units : []);
           setStep('pick');

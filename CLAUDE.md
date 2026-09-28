@@ -83,8 +83,15 @@ cad-system/
 - There is no `role: 'crew'` branch here anymore — see the removed-legacy-login note in the Data Model section below.
 
 ### Token Lifecycle
-- Every JWT carries a random `jti`. `POST /api/auth/logout` (called from `AuthContext.jsx`'s `logout()`) revokes that exact token immediately via an in-memory `revokedJtis` map, instead of leaving it valid for the rest of its 30-day life once the client just forgets it locally.
-- Dispatcher/overwatch tokens also carry `token_version`, checked against the account's current value on every request — changing a password invalidates *every* previously issued token for that account in one shot, not just the one used to change it.
+- Every JWT carries a random `jti`. `POST /api/auth/logout` (called from `AuthContext.jsx`'s `logout()`) revokes that exact token immediately via the `revokedJtis` map, persisted in the `revoked_tokens` table so a restart doesn't un-revoke it.
+- Dispatcher/overwatch tokens also carry `token_version`, checked against the account's current value on every request — changing a password invalidates *every* previously issued token for that account in one shot. The change-password response returns a fresh token so the person who changed it stays signed in.
+- `checkSessionToken()` is the single check used by both `verifyToken` (HTTP) and the Socket.IO handshake. It also rejects crew tokens with no `unit_id` (the step-1 pre-auth token is only valid for `verifyPersonnelPreAuth` routes) and SSO dispatcher/wayfinding tokens whose `auth_at` is over 7 days old (they re-enter via the portal, which re-checks `can_dispatch`/admin). Revoking disconnects live sockets holding that token.
+- Only 401s on the *current* session's token sign the client out (`api.js`); an offline-queued action replayed under an older token is just dropped.
+- `app.set('trust proxy', 1)` — without it every request behind Railway's proxy had the same `req.ip`, so per-IP limits were park-wide.
+- Crew PIN login enforces the portal's lockout (10 failures → 15 min `locked_until`) and pads failures to 1.5s. Display PIN is limited to 10 tries / 15 min / IP.
+
+### Call audit log
+Edits to call timestamps, narrative, details, location, priority and close-out are recorded in `call_audit_log` (`logCallChanges()`), shown in the dispatcher's call panel under the **Changes** tab (`CallChangeLog.jsx`, `GET /api/calls/:id/audit`). Calls are no longer deleted after 90 days; `gps_history` is pruned after 365 days.
 
 ### Crew Login (two-step)
 1. `POST /api/auth/crew-login` with `{ username, pin }`
@@ -164,6 +171,7 @@ a unit's location from showing is the crew member opting out themselves.
 - Android: native foreground service (`GpsTrackerService.java`) posts `POST /api/crew/gps` on a 5s heartbeat via `FusedLocationProviderClient`
 - iOS: native `GpsTrackerPlugin.swift` (CLLocationManager), not `@capacitor-community/background-geolocation` — that plugin is only used for `openSettings()`. Mirrors the Android service's architecture (own HTTP posts, offline queue, watchdog) so it survives WebView cross-origin navigation and backgrounding the same way.
 - Client-side, both platforms filter fixes with accuracy worse than 50m before posting
+- Each post carries `ts` (when the phone took the fix) and `sentAt` (phone clock at send). The server uses only `sentAt - ts` (the fix's age) so a wrong phone clock doesn't matter; fixes older than 20 min are dropped. Both trackers drain the offline queue oldest-first *before* sending the new fix, post from a single serialized worker, and stop themselves on a 401. Builds without `ts` fall back to server receipt time.
 - **Stale-tracking local notification** (both platforms): every successful post reschedules a local notification ~15 minutes out (`GpsStaleWarningReceiver`/`AlarmManager` on Android, `UNUserNotificationCenter` with a reused identifier on iOS). If tracking silently stops — an app-update install killing the process, a crash, revoked permission, a long dead zone — nothing resets it and it fires on the crew member's own phone, instead of only showing up as a "GPS stale" badge on the dispatcher dashboard that someone has to notice. Fires at most **once per tracking session** (not once per stale episode) — medics in patchy-signal areas of the park were getting a fresh nudge every time connectivity dropped 15+ minutes and recovered, which read as spam. Both platforms detect a firing after the fact by comparing the current time against the wall-clock time the currently-armed notification was set to go off (there's no reliable "it fired" callback, especially on iOS while backgrounded) and stop rearming for the rest of the session once that's happened; the budget resets only when a genuinely new tracking session begins (`onStartCommand`'s fresh-subscribe branch on Android, `beginTrackingIfNeeded()` on iOS), not on routine JWT-refresh restarts. Cancelled on a deliberate `stopTracking()`; deliberately left armed if the process dies without that ever running.
 - Server-side (`applyGpsUpdate()` in `server/src/index.js`), the real threshold is looser on purpose: a fix worse than 100m (`DEGRADED_ACCURACY_M`) is only rejected if a better fix landed within the last 120s (`DEGRADED_ACCURACY_OVERRIDE_S`) — otherwise it's accepted so the dispatcher's map pin doesn't freeze during a longer signal-degraded stretch (e.g. near large structures). This is deliberate, not a gap to tighten to 50m — see the comment directly above `DEGRADED_ACCURACY_M`.
 - `PATCH /api/crew/gps-sharing` — crew-only self-service opt-out (`unit.gps_sharing_disabled`); this is the *only* thing `applyGpsUpdate()` checks before accepting a ping
@@ -230,7 +238,11 @@ registered on Android.
 
 ---
 
-## iOS (built, not yet build-verified — needs a Mac)
+## iOS
+
+Built and uploaded to TestFlight by **Codemagic** (`codemagic.yaml`, workflow `ios-release`) — no Mac needed. The "To ship it" steps at the end of this section predate that and are kept only for history.
+
+Unverified: the significant-location-change relaunch described below depends on `GpsTrackerPlugin.load()` running, which needs the Capacitor bridge (and so a connected scene). When iOS relaunches the app in the background for a location event, no scene may connect, so tracking may not actually resume until the app is opened. Needs a real device test.
 
 This section previously said iOS was "Pending — needs Mac" as if `cap add ios` had never
 been run. That was stale: a real, hand-written iOS project already exists at `client/ios/`,
