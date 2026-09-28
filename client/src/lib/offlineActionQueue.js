@@ -30,7 +30,7 @@
 // handoff on the same device while actions are still queued can't replay
 // under the wrong crew member's identity.
 
-import { updateUnitStatus, updateCallStatus, closeCall as apiCloseCall, addCallComment } from '../services/api';
+import { updateUnitStatus, updateCallStatus, closeCall as apiCloseCall, addCallComment, startEmergency } from '../services/api';
 
 function getCurrentToken() {
   try { return JSON.parse(localStorage.getItem('cad_user') || 'null')?.token || null; } catch { return null; }
@@ -71,7 +71,13 @@ const RUNNERS = {
   call_status: ({ callId, status }, config) => updateCallStatus(callId, status, config),
   close_call:  ({ callId, disposition, close_notes }, config) => apiCloseCall(callId, disposition, close_notes, config),
   comment:     ({ callId, text, author }, config) => addCallComment(callId, text, author, config),
+  // Panic button pressed with no signal. The server treats a repeat as the
+  // same emergency, so a replay can never start a second one.
+  emergency:   ({ lat, lng }, config) => startEmergency({ lat, lng }, config),
 };
+
+// An emergency can't wait 15s between tries.
+const FAST_RETRY_TYPES = new Set(['emergency']);
 
 /** Current queue snapshot (array of { id, type, payload, createdAt }). */
 export function getOfflineQueue() {
@@ -97,7 +103,14 @@ export function enqueueOfflineAction(type, payload) {
   const key = `${type}:${JSON.stringify(payload)}`;
   if (queue.length && queue[queue.length - 1].key === key) return;
   const id = `${key}:${Date.now()}:${Math.random().toString(36).slice(2, 7)}`;
-  queue = [...queue, { id, key, type, payload, createdAt: Date.now(), token: getCurrentToken() }];
+  const entry = { id, key, type, payload, createdAt: Date.now(), token: getCurrentToken() };
+  if (type === 'emergency') {
+    // Jumps the line (and only ever one of them) -- it must not wait behind
+    // status taps and chat messages queued earlier.
+    queue = [entry, ...queue.filter(a => a.type !== 'emergency')];
+  } else {
+    queue = [...queue, entry];
+  }
   saveQueue(queue);
   notify();
   scheduleRetryLoop();
@@ -150,16 +163,22 @@ export async function retryOfflineQueue() {
   } finally {
     retrying = false;
     if (queue.length === 0) stopRetryLoop();
+    else scheduleRetryLoop(); // drops back to the slow interval once the emergency is through
   }
 }
 
 let retryTimer = null;
+let retryIntervalMs = null;
 function scheduleRetryLoop() {
-  if (retryTimer || queue.length === 0) return;
-  retryTimer = setInterval(retryOfflineQueue, RETRY_INTERVAL_MS);
+  if (queue.length === 0) return;
+  const wanted = queue.some(a => FAST_RETRY_TYPES.has(a.type)) ? 3000 : RETRY_INTERVAL_MS;
+  if (retryTimer && retryIntervalMs === wanted) return;
+  if (retryTimer) clearInterval(retryTimer);
+  retryIntervalMs = wanted;
+  retryTimer = setInterval(retryOfflineQueue, wanted);
 }
 function stopRetryLoop() {
-  if (retryTimer) { clearInterval(retryTimer); retryTimer = null; }
+  if (retryTimer) { clearInterval(retryTimer); retryTimer = null; retryIntervalMs = null; }
 }
 
 if (typeof window !== 'undefined') {

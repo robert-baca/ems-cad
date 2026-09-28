@@ -495,9 +495,12 @@ function Finder({ myUnit, units, onSelect, onClose }) {
 // ── Main export ───────────────────────────────────────────────────────
 // backRef lets CrewMobile's hardware/native back button step compass ->
 // unit list first, instead of closing Find a Medic outright.
-export default function BeaconMode({ myUnit, units, onClose, backRef }) {
-  const [view,   setView]   = useState('finder');
-  const [target, setTarget] = useState(null);
+// initialTargetId: open straight onto that unit's compass (used by the
+// emergency alert's "Find" button).
+export default function BeaconMode({ myUnit, units, onClose, backRef, initialTargetId = null }) {
+  const initialTarget = initialTargetId ? units.find(u => u.id === initialTargetId) || null : null;
+  const [view,   setView]   = useState(initialTarget ? 'compass' : 'finder');
+  const [target, setTarget] = useState(initialTarget);
 
   useEffect(() => {
     if (!backRef) return;

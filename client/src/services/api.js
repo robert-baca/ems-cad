@@ -88,6 +88,22 @@ export const addCallComment = (callId, text, author, config) =>
 export const getCallGpsTrack = (callId) => api.get(`/calls/${callId}/gps-track`);
 export const getCallAuditLog = (callId) => api.get(`/calls/${callId}/audit`);
 
+// ── Panic button ──────────────────────────────────────────────────────
+export const startEmergency      = (pos, config) => api.post('/crew/emergency', pos || {}, config);
+export const cancelEmergency     = () => api.post('/crew/emergency/cancel');
+export const getActiveEmergencies = () => api.get('/emergencies/active');
+export const ackEmergency        = (id) => api.post(`/emergencies/${id}/ack`);
+export const resolveEmergency    = (id, note) => api.post(`/emergencies/${id}/resolve`, { note });
+
+export const getWeatherAlerts = () => api.get('/weather/alerts');
+
+// ── Reports ───────────────────────────────────────────────────────────
+export const getReportCalls = (from, to) => api.get('/reports/calls', { params: { from, to } });
+
+// ── Shared dispatcher settings ────────────────────────────────────────
+export const getQuickCallTypes  = () => api.get('/settings/quick-call-types');
+export const saveQuickCallTypes = (types) => api.put('/settings/quick-call-types', { types });
+
 // ── Wayfinding path curation (admin-only) ────────────────────────────
 export const getWayfindingTraces  = () => api.get('/wayfinding/traces');
 export const reportWrongRoute     = (data) => api.post('/wayfinding/reports', data);

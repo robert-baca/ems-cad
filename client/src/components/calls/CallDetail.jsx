@@ -6,6 +6,8 @@ import { isOnCall, isReleased } from '../../lib/callUnits';
 import CallReport from './CallReport';
 import GpsTrackTab from './GpsTrackTab';
 import CallChangeLog from './CallChangeLog';
+import UnitEtaTag from '../units/UnitEtaTag';
+import { useUnitEtas } from '../../hooks/useUnitEtas';
 import { STATUS_COLORS, STATUS_LABELS, VALID_UNIT_STATUSES, CALL_TYPES } from '../../data/mockData';
 import { updateCallNarrative, updateCallLocation, updateCallDetails } from '../../services/api';
 import { isCallPending } from '../../lib/calls';
@@ -149,6 +151,13 @@ export default function CallDetail({
     }
   }, [call.narrative]);
 
+  // Closest first by travel time to this call's pin (see useUnitEtas).
+  // Above the early return below -- hooks must run on every render.
+  const freeUnits = units.filter(u => u.status === 'available' || u.status === 'cleared');
+  const callPin = call?.location_lat != null && call?.location_lng != null
+    ? { lat: call.location_lat, lng: call.location_lng } : null;
+  const { estimates: etas, sorted: freeUnitsByEta, hasTarget: hasPin } = useUnitEtas(freeUnits, callPin);
+
   if (!call) return null;
 
   const statusColor = STATUS_COLORS[call.status] || '#9ca3af';
@@ -164,12 +173,14 @@ export default function CallDetail({
     .map(id => units.find(u => u.id === id))
     .filter(Boolean);
 
+  const etaTag = (u) => hasPin ? <UnitEtaTag estimate={etas[u.id]} /> : null;
+
   // A backup that released itself can be added back onto the call.
-  const availableUnits = units.filter(u =>
-    (u.status === 'available' || u.status === 'cleared') &&
+  const availableUnits = freeUnitsByEta.filter(u =>
     u.id !== call.assigned_unit_id &&
     !isOnCall(call, u.id)
   );
+  const reassignableUnits = freeUnitsByEta.filter(u => u.unit_type !== 'Cart');
   const handleAssign = async () => {
     if (!selectedUnitId || assignSubmitting) return;
     setAssignSubmitting(true);
@@ -305,6 +316,7 @@ export default function CallDetail({
                               : 'bg-gray-700 border-gray-500 text-gray-300 hover:border-gray-400'}`}>
                         {TYPE_ICONS[u.unit_type] || '🚑'} {u.unit_number}{u.crew && ` · ${u.crew}`}
                         {isPrimary && ' · lead'}
+                        {etaTag(u)}
                       </button>
                     );
                   })}
@@ -550,11 +562,11 @@ export default function CallDetail({
                   <button onClick={() => { setAssigningUnit(false); setSelectedUnitId(''); setReassignStatus('dispatched'); }}
                     className="text-gray-500 hover:text-gray-300 text-sm leading-none">✕</button>
                 </div>
-                {units.filter(u => (u.status === 'available' || u.status === 'cleared') && u.unit_type !== 'Cart').length === 0 ? (
+                {reassignableUnits.length === 0 ? (
                   <div className="text-gray-500 text-xs py-1">No available units</div>
                 ) : (
                   <div className="flex flex-wrap gap-1.5">
-                    {units.filter(u => (u.status === 'available' || u.status === 'cleared') && u.unit_type !== 'Cart').map(u => (
+                    {reassignableUnits.map(u => (
                       <button key={u.id} type="button"
                         onClick={() => setSelectedUnitId(id => id === u.id ? '' : u.id)}
                         className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold border-2 transition-all
@@ -562,6 +574,7 @@ export default function CallDetail({
                             ? 'bg-green-700 border-green-400 text-white'
                             : 'bg-gray-600 border-gray-500 text-gray-300 hover:border-gray-400'}`}>
                         {TYPE_ICONS[u.unit_type] || '🚑'} {u.unit_number}{u.crew && ` · ${u.crew}`}
+                        {etaTag(u)}
                       </button>
                     ))}
                   </div>
@@ -702,6 +715,7 @@ export default function CallDetail({
                             ? 'bg-blue-700 border-blue-400 text-white'
                             : 'bg-gray-600 border-gray-500 text-gray-300 hover:border-gray-400'}`}>
                         {TYPE_ICONS[u.unit_type] || '🚑'} {u.unit_number}{u.crew && ` · ${u.crew}`}
+                        {etaTag(u)}
                       </button>
                     ))}
                   </div>

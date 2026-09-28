@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { apiBase } from '../lib/native';
@@ -23,6 +23,9 @@ import BroadcastModal, { receiptStats } from '../components/calls/BroadcastModal
 import SpinWheel from '../components/calls/SpinWheel';
 import { sendBroadcast, getBroadcasts } from '../services/api';
 import { playAlert } from '../lib/alertSound';
+import EmergencyBanner from '../components/units/EmergencyBanner';
+import ReportsModal from '../components/reports/ReportsModal';
+import { getActiveEmergencies, ackEmergency, resolveEmergency, getWeatherAlerts } from '../services/api';
 
 // Reconstructs which calls have an unanswered backup request, from comment
 // history alone — sosAlerts otherwise only ever grows/shrinks from live
@@ -107,6 +110,42 @@ export default function DispatcherDashboard() {
   // the moment the crew responds -- and an old alert can't resurface when
   // the same unit is later dispatched to a different call.
   const [unackAlerts,       setUnackAlerts]          = useState({});
+  const [showReports,       setShowReports]          = useState(false);
+  // Active National Weather Service alerts for the park (see server pollWeather).
+  const [weatherAlerts,     setWeatherAlerts]        = useState([]);
+  const [hiddenWeatherIds,  setHiddenWeatherIds]     = useState([]);
+  useEffect(() => {
+    getWeatherAlerts().then(res => { if (Array.isArray(res.data)) setWeatherAlerts(res.data); }).catch(() => {});
+  }, []);
+  // A warning arriving is worth one tone; watches/advisories stay silent.
+  const warningKey = weatherAlerts.filter(a => a.broadcast).map(a => a.event).sort().join('|');
+  const prevWarningKeyRef = useRef('');
+  useEffect(() => {
+    const prev = new Set(prevWarningKeyRef.current.split('|').filter(Boolean));
+    if (warningKey.split('|').filter(Boolean).some(ev => !prev.has(ev))) playAlert('warning');
+    prevWarningKeyRef.current = warningKey;
+  }, [warningKey]);
+  // { calls, label } shown as a density layer on the map, or null.
+  const [heatmap,           setHeatmap]              = useState(null);
+  // Open crew panic-button emergencies.
+  const [emergencies,       setEmergencies]          = useState([]);
+  const loadEmergencies = useCallback(() => {
+    getActiveEmergencies().then(res => { if (Array.isArray(res.data)) setEmergencies(res.data); }).catch(() => {});
+  }, []);
+  useEffect(() => { loadEmergencies(); }, [loadEmergencies]);
+  const handleEmergencyEvent = (e) => {
+    if (!e?.id) return;
+    setEmergencies(prev => e.resolved_at ? prev.filter(x => x.id !== e.id) : [...prev.filter(x => x.id !== e.id), e]);
+  };
+  // Siren runs continuously until every open emergency has been
+  // acknowledged -- this one must not be missable.
+  const unackedEmergencyCount = emergencies.filter(e => !e.acknowledged_at).length;
+  useEffect(() => {
+    if (!unackedEmergencyCount) return;
+    playAlert('sos');
+    const t = setInterval(() => playAlert('sos'), 2000);
+    return () => clearInterval(t);
+  }, [unackedEmergencyCount]);
 
   // This shift's broadcasts (read receipts arrive live via socket after this).
   useEffect(() => {
@@ -169,7 +208,15 @@ export default function DispatcherDashboard() {
     'init:state':          ({ units: u, calls: c, locations: l }) => {
       setUnits(u); setCalls(c); if (l) setPermLocations(l);
       setSosAlerts(deriveActiveBackupAlerts(c));
+      // Any emergency pressed while this screen was disconnected.
+      loadEmergencies();
     },
+    'emergency:started':   (e) => {
+      handleEmergencyEvent(e);
+      if (e.lat != null) setFlyToTarget({ lat: e.lat, lng: e.lng, _t: Date.now() });
+    },
+    'emergency:updated':   handleEmergencyEvent,
+    'weather:alerts':      (list) => { if (Array.isArray(list)) setWeatherAlerts(list); },
     'unit:gps_update':     handleGpsUpdate,
     'unit:status_change':  handleStatusChange,
     'unit:profile_update': handleProfileUpdate,
@@ -313,6 +360,48 @@ export default function DispatcherDashboard() {
       className="flex flex-col h-screen bg-gray-900 text-white overflow-hidden"
       onClick={() => contextMenu && setContextMenu(null)}
     >
+      {/* ── Crew panic-button emergencies ─────────────────────── */}
+      {emergencies.map(e => {
+        const eUnit = units.find(u => u.id === e.unit_id);
+        return (
+          <EmergencyBanner key={e.id}
+            emergency={e}
+            unit={eUnit}
+            canAct={!isOverwatch}
+            onLocate={() => {
+              const lat = eUnit?.last_lat ?? e.lat, lng = eUnit?.last_lng ?? e.lng;
+              if (lat != null) setFlyToTarget({ lat, lng, _t: Date.now() });
+            }}
+            onAck={async () => {
+              try { const r = await ackEmergency(e.id); handleEmergencyEvent(r.data); return null; }
+              catch (err) { return err.response?.data?.error || 'Could not acknowledge — try again'; }
+            }}
+            onResolve={async (note) => {
+              try { const r = await resolveEmergency(e.id, note); handleEmergencyEvent(r.data); return null; }
+              catch (err) { return err.response?.data?.error || 'Could not resolve — try again'; }
+            }}
+          />
+        );
+      })}
+
+      {/* ── National Weather Service alerts ───────────────────── */}
+      {weatherAlerts.filter(a => !hiddenWeatherIds.includes(a.id)).map(a => (
+        <div key={a.id}
+          className={`flex items-center gap-3 px-4 py-2 border-b flex-shrink-0 ${a.broadcast ? 'bg-amber-700 border-amber-400' : 'bg-amber-950/70 border-amber-800'}`}>
+          <span className="text-lg flex-shrink-0">⛈</span>
+          <div className="flex-1 min-w-0">
+            <div className="text-amber-50 font-bold text-sm">
+              {a.event}{a.ends ? ` · until ${new Date(a.ends).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}` : ''}
+            </div>
+            <div className="text-amber-200/90 text-xs truncate" title={a.headline}>
+              {a.broadcast ? 'Sent to all crews automatically · ' : 'Dispatch only · '}{a.headline}
+            </div>
+          </div>
+          <button onClick={() => setHiddenWeatherIds(prev => [...prev, a.id])}
+            className="flex-shrink-0 text-amber-200 hover:text-white text-lg font-bold leading-none px-1" title="Hide">×</button>
+        </div>
+      ))}
+
       {/* ── SOS backup alerts ─────────────────────────────────── */}
       {sosAlerts.map(alert => {
         const alertCall = calls.find(c => c.id === alert.call_id);
@@ -434,6 +523,12 @@ export default function DispatcherDashboard() {
           >
             📋 Call History
           </button>
+          <button
+            onClick={() => setShowReports(true)}
+            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium transition-colors bg-gray-700 text-gray-300 hover:bg-gray-600 hover:text-white"
+          >
+            📊 Reports
+          </button>
           {isOverwatch ? (
             <span className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-purple-900/60 border border-purple-700 text-purple-300 font-medium">
               👁 Overwatch
@@ -551,7 +646,14 @@ export default function DispatcherDashboard() {
             newCallPin={newCallPin}
             flyToTarget={flyToTarget}
             pickingLocation={!!repositioningCallId}
+            heatmapCalls={heatmap?.calls || null}
           />
+          {heatmap && (
+            <div className="absolute bottom-10 left-1/2 -translate-x-1/2 bg-orange-800/90 text-white text-xs px-3 py-1.5 rounded-full flex items-center gap-3 shadow-lg z-10">
+              <span>🔥 Heat map · {heatmap.calls.length} calls · {heatmap.label}</span>
+              <button onClick={() => setHeatmap(null)} className="bg-black/30 hover:bg-black/50 px-2 py-0.5 rounded-full font-semibold">Hide</button>
+            </div>
+          )}
           {repositioningCallId ? (
             <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-blue-700 text-white text-xs px-3 py-1.5 rounded-full flex items-center gap-3 shadow-lg z-10">
               <span>📍 Click the map to set the new location for Case #{calls.find(c => c.id === repositioningCallId)?.call_number}</span>
@@ -681,6 +783,13 @@ export default function DispatcherDashboard() {
       </div>
 
       {/* Modals */}
+      {showReports && (
+        <ReportsModal
+          units={units}
+          onClose={() => setShowReports(false)}
+          onShowHeatmap={(h) => { setHeatmap(h); setShowReports(false); }}
+        />
+      )}
       {!isOverwatch && showOptions && (
         <OptionsModal
           onClose={() => setShowOptions(false)}

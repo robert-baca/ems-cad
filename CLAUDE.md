@@ -90,6 +90,23 @@ cad-system/
 - `app.set('trust proxy', 1)` — without it every request behind Railway's proxy had the same `req.ip`, so per-IP limits were park-wide.
 - Crew PIN login enforces the portal's lockout (10 failures → 15 min `locked_until`) and pads failures to 1.5s. Display PIN is limited to 10 tries / 15 min / IP.
 
+### Panic button (crew emergencies)
+- Crew home screen: hold-2s **EMERGENCY** button (`EmergencyPanel.jsx`/`HoldButton.jsx`), available on or off a call. `POST /api/crew/emergency` is idempotent (a second press or an offline-queue replay returns the open one). With no signal it goes into `offlineActionQueue.js` as type `emergency` — front of the queue, retried every 3s — and the panel shows "NOT SENT — use your radio".
+- Server keeps open ones in memory + `emergencies` table (permanent record). Nearest 3 crews (straight line ×1.4, GPS < 10 min old) get an urgent push; everyone else on shift gets a normal one. Events `emergency:started`/`emergency:updated` go to `dispatchers` and `crew_all` (not the display board).
+- While open, the unit's GPS is accepted even with sharing turned off, out of service, or no shift (`openEmergencyForUnit()` checks in `applyGpsUpdate` and `/api/crew/gps`); the crew app keeps the tracker running and says so.
+- Dispatcher: `EmergencyBanner.jsx`, siren every 2s until **Acknowledge** (pushes "help is on the way" to the medic); **Resolve** requires a note. Crew can cancel their own ("I'm OK"), recorded as crew-cancelled.
+
+### Closest-unit suggestions
+`useUnitEtas` + `lib/unitEta.js`: one shortest-path search outward from the call pin over the published `park_paths` graph (same network as crew navigation), read off per unit. Walk 1.3 m/s, cart 4.5 m/s; off-network falls back to straight line ×1.4 ("approx"); GPS older than 2 min is flagged and sorted after fresh units. Used in New Call and the call panel's assign / reassign / add-unit pickers. Browser-only, no server involvement.
+
+### Weather alerts
+`pollWeather()` polls `api.weather.gov/alerts/active?point=WEATHER_POINT` every 2 min (override feed with `NWS_ALERTS_URL`, disable with `WEATHER_ALERTS=off`). Events in `WEATHER_BROADCAST_EVENTS` (tornado/severe thunderstorm/flash flood/extreme heat warnings) auto-broadcast via `createBroadcast()` while a shift is running, once per event (state in `app_settings.weather_broadcast_events`, reset at shift start so a new shift hears still-active ones), with an all-clear when they end. Everything else shows only on the dispatcher banner (`weather:alerts`). NWS has no per-strike lightning alerts.
+
+### Reports & heat map
+`GET /api/reports/calls?from&to` (dispatcher/overwatch; no narrative/complaint) feeds `ReportsModal.jsx` — stats computed client-side in `lib/reportStats.js` (medians/90th percentile of dispatch→scene, received→scene, on-scene, total; by hour; by unit; top types/dispositions; slow-response list; CSV export). "Show as heat map" draws those calls as a density layer on the dispatcher `ParkMap` (`heatmapCalls` prop) with a hover readout.
+
+Quick call types are shared server-side (`app_settings.quick_call_types`, `lib/quickTypes.js`); a browser's old localStorage list is migrated up once.
+
 ### Call audit log
 Edits to call timestamps, narrative, details, location, priority and close-out are recorded in `call_audit_log` (`logCallChanges()`), shown in the dispatcher's call panel under the **Changes** tab (`CallChangeLog.jsx`, `GET /api/calls/:id/audit`). Calls are no longer deleted after 90 days; `gps_history` is pruned after 365 days.
 

@@ -341,6 +341,8 @@ let directMessages = [];
 // Park-wide broadcasts for the current shift (persisted, so a missed one is
 // still there after a server restart). Each tracks which units have read it.
 let broadcasts = [];
+// Open (unresolved) panic-button emergencies. Resolved ones live only in the DB.
+let emergencies = [];
 let nextCallNum  = 100;
 const gpsDiscardLastLog  = new Map(); // unit_id → last discard log timestamp
 
@@ -501,6 +503,28 @@ async function initDb() {
     )
   `);
   await pool.query('CREATE INDEX IF NOT EXISTS call_audit_log_call_id_idx ON call_audit_log(call_id)');
+
+  // Crew panic-button activations. Kept permanently: this is the record of
+  // who pressed it, where, and how fast dispatch acknowledged/resolved it.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS emergencies (
+      id TEXT PRIMARY KEY,
+      unit_id TEXT NOT NULL,
+      unit_number TEXT,
+      crew_name TEXT,
+      started_at TIMESTAMPTZ NOT NULL,
+      lat DOUBLE PRECISION,
+      lng DOUBLE PRECISION,
+      acknowledged_at TIMESTAMPTZ,
+      acknowledged_by TEXT,
+      resolved_at TIMESTAMPTZ,
+      resolved_by TEXT,
+      resolve_note TEXT,
+      alerted_unit_ids JSONB DEFAULT '[]'
+    )
+  `);
+  const emRes = await pool.query('SELECT * FROM emergencies WHERE resolved_at IS NULL ORDER BY started_at');
+  emergencies = emRes.rows.map(rowToEmergency);
 
   // ── Wayfinding path curation (admin-only tool, fed by real crew GPS history) ──
   await pool.query(`
@@ -1445,6 +1469,16 @@ app.post('/api/broadcast', verifyToken, async (req, res) => {
   const message = req.body.message?.trim();
   if (!message) return res.status(400).json({ error: 'message required' });
   const from = req.user.name || req.user.username || 'Dispatch';
+  try {
+    res.json({ ok: true, ...(await createBroadcast(from, message)) });
+  } catch (err) {
+    console.error('[broadcast] failed to save:', err);
+    res.status(500).json({ error: 'Failed to save broadcast — please try again' });
+  }
+});
+
+// Shared by dispatcher broadcasts and automatic weather warnings.
+async function createBroadcast(from, message) {
   // Carts don't get broadcasts at all -- no push, no in-app banner, and not
   // counted as expected readers.
   const recipients = units.filter(u => !isCartUnit(u));
@@ -1460,12 +1494,7 @@ app.post('/api/broadcast', verifyToken, async (req, res) => {
     target_unit_ids: recipients.filter(u => u.status !== 'out_of_service').map(u => u.id),
     reads: {}
   };
-  try {
-    await saveBroadcast(broadcast);
-  } catch (err) {
-    console.error('[broadcast] failed to save:', err);
-    return res.status(500).json({ error: 'Failed to save broadcast — please try again' });
-  }
+  await saveBroadcast(broadcast);
   broadcasts.push(broadcast);
   recipients.forEach(u => io.to(`crew:${u.id}`).emit('crew:broadcast', { id: broadcast.id, from, message, sent_at: broadcast.sent_at }));
   emitDispatch('broadcast:created', broadcast);
@@ -1474,7 +1503,105 @@ app.post('/api/broadcast', verifyToken, async (req, res) => {
     targets.map(u => sendPushToUnit(u, { title: `📢 ${from}`, body: message, urgent: true }))
   );
   const sent = results.filter(r => r.status === 'fulfilled' && r.value === true).length;
-  res.json({ ok: true, sent, targeted: targets.length, broadcast });
+  return { sent, targeted: targets.length, broadcast };
+}
+
+// ── Weather alerts (National Weather Service) ────────────────────────
+// Polls the NWS's free active-alerts feed for the park's location. The
+// events in WEATHER_BROADCAST_EVENTS go to every crew phone automatically as
+// a normal broadcast (push, banner, read receipts), signed "National Weather
+// Service", while a shift is running; an "all clear" follows when they end.
+// Everything else active (watches, advisories, statements) only shows on the
+// dispatcher screen. Keyed by event name, so NWS "update" messages for the
+// same warning don't re-broadcast it.
+// NWS doesn't issue per-strike lightning alerts -- that needs a separate
+// lightning-detection service.
+const WEATHER_POINT = process.env.WEATHER_POINT || '32.7550,-97.0648';
+const WEATHER_POLL_MS = 2 * 60 * 1000;
+const WEATHER_BROADCAST_EVENTS = new Set([
+  'Tornado Warning', 'Severe Thunderstorm Warning', 'Flash Flood Warning',
+  'Extreme Heat Warning', 'Excessive Heat Warning' // NWS renamed the latter in 2025
+]);
+let weatherAlerts = [];            // current active alerts, dispatcher-facing shape
+let weatherBroadcastEvents = null; // Set of event names we've broadcast and not yet all-cleared (persisted)
+
+async function loadWeatherState() {
+  try {
+    const { rows } = await pool.query("SELECT value FROM app_settings WHERE key = 'weather_broadcast_events'");
+    weatherBroadcastEvents = new Set(rows[0] ? JSON.parse(rows[0].value) : []);
+  } catch { weatherBroadcastEvents = new Set(); }
+}
+function saveWeatherState() {
+  persist(pool.query(`
+    INSERT INTO app_settings (key, value, updated_at) VALUES ('weather_broadcast_events', $1, $2)
+    ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=EXCLUDED.updated_at
+  `, [JSON.stringify([...weatherBroadcastEvents]), new Date().toISOString()]), 'weather alert state');
+}
+
+async function pollWeather() {
+  if (process.env.WEATHER_ALERTS === 'off') return;
+  if (!weatherBroadcastEvents) await loadWeatherState();
+  let features;
+  try {
+    const url = process.env.NWS_ALERTS_URL || `https://api.weather.gov/alerts/active?point=${WEATHER_POINT}`;
+    const r = await fetch(url, {
+      // NWS asks every client to identify itself.
+      headers: { 'User-Agent': '(cad.sfotems.com, EMS dispatch)', Accept: 'application/geo+json' },
+      signal: AbortSignal.timeout(15000)
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    features = (await r.json()).features || [];
+  } catch (err) {
+    console.warn('[weather] NWS poll failed:', err.message);
+    return; // keep the last known list; try again next poll
+  }
+
+  const now = Date.now();
+  const active = features
+    .map(f => f.properties || {})
+    .filter(p => p.status === 'Actual' && p.messageType !== 'Cancel' &&
+      (!(p.ends || p.expires) || new Date(p.ends || p.expires).getTime() > now));
+  weatherAlerts = active.map(p => ({
+    id: p.id, event: p.event, headline: p.headline, severity: p.severity,
+    ends: p.ends || p.expires || null, instruction: p.instruction || null,
+    broadcast: WEATHER_BROADCAST_EVENTS.has(p.event)
+  }));
+  io.to('dispatchers').emit('weather:alerts', weatherAlerts);
+
+  const activeEvents = new Set(active.map(p => p.event));
+  const shiftRunning = currentShift && !currentShift.ended_at;
+  let changed = false;
+
+  for (const p of active) {
+    if (!WEATHER_BROADCAST_EVENTS.has(p.event) || weatherBroadcastEvents.has(p.event)) continue;
+    if (!shiftRunning) continue; // nobody on duty to tell; picked up if a shift starts while it's active
+    const until = p.ends || p.expires ? ` until ${new Date(p.ends || p.expires).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'America/Chicago' })}` : '';
+    const message = `⛈ ${p.event.toUpperCase()}${until}. ${p.instruction ? p.instruction.replace(/\s+/g, ' ').slice(0, 300) : (p.headline || '')}`.trim();
+    try {
+      await createBroadcast('National Weather Service', message);
+      weatherBroadcastEvents.add(p.event);
+      changed = true;
+      console.log(`[weather] broadcast: ${p.event}`);
+    } catch (err) {
+      console.error('[weather] broadcast failed:', err.message);
+    }
+  }
+  for (const event of [...weatherBroadcastEvents]) {
+    if (activeEvents.has(event)) continue;
+    weatherBroadcastEvents.delete(event);
+    changed = true;
+    if (shiftRunning) {
+      createBroadcast('National Weather Service', `✅ ${event} has ended or expired.`)
+        .catch(err => console.error('[weather] all-clear failed:', err.message));
+      console.log(`[weather] all clear: ${event}`);
+    }
+  }
+  if (changed) saveWeatherState();
+}
+
+app.get('/api/weather/alerts', verifyToken, (req, res) => {
+  if (!['dispatcher', 'overwatch'].includes(req.user.role)) return res.status(403).json({ error: 'Forbidden' });
+  res.json(weatherAlerts);
 });
 
 // Dispatch gets the full read receipts; a crew member gets the list with
@@ -1619,6 +1746,178 @@ app.post('/api/pt-notes/:id/view', verifyToken, async (req, res) => {
     console.error('[pt-notes] view failed:', err.message);
     res.status(500).json({ error: 'Could not open note' });
   }
+});
+
+// ── Panic button ─────────────────────────────────────────────────────
+// A crew member in trouble (assault, injury, anything) whether or not they're
+// on a call. Dispatch gets a siren that runs until acknowledged; the nearest
+// crews get an urgent push pointing them at the medic; everyone else on shift
+// gets a normal one. While it's open, that phone's location is accepted even
+// if the medic had turned sharing off (see applyGpsUpdate).
+const EMERGENCY_NEAREST_COUNT = 3;
+const EMERGENCY_NEAREST_MAX_GPS_AGE_MS = 10 * 60 * 1000;
+
+function rowToEmergency(r) {
+  const iso = v => (v ? new Date(v).toISOString() : null);
+  return {
+    ...r,
+    started_at: iso(r.started_at), acknowledged_at: iso(r.acknowledged_at), resolved_at: iso(r.resolved_at),
+    alerted_unit_ids: r.alerted_unit_ids || []
+  };
+}
+
+function openEmergencyForUnit(unitId) {
+  return emergencies.find(e => e.unit_id === unitId && !e.resolved_at) || null;
+}
+
+async function saveEmergency(e) {
+  await pool.query(`
+    INSERT INTO emergencies (id, unit_id, unit_number, crew_name, started_at, lat, lng,
+      acknowledged_at, acknowledged_by, resolved_at, resolved_by, resolve_note, alerted_unit_ids)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+    ON CONFLICT (id) DO UPDATE SET
+      acknowledged_at=EXCLUDED.acknowledged_at, acknowledged_by=EXCLUDED.acknowledged_by,
+      resolved_at=EXCLUDED.resolved_at, resolved_by=EXCLUDED.resolved_by, resolve_note=EXCLUDED.resolve_note
+  `, [e.id, e.unit_id, e.unit_number, e.crew_name, e.started_at, e.lat, e.lng,
+      e.acknowledged_at, e.acknowledged_by, e.resolved_at, e.resolved_by, e.resolve_note,
+      JSON.stringify(e.alerted_unit_ids || [])]);
+}
+
+// Dispatch and every crew phone get the same event; each crew app decides
+// whether it's its own emergency or a colleague's. The display board is left
+// out on purpose -- it's in a public-facing spot.
+function emitEmergency(event, e) {
+  io.to('dispatchers').emit(event, e);
+  io.to('crew_all').emit(event, e);
+}
+
+// Straight-line distance x1.4 as a rough walking distance. Good enough to
+// pick the closest few crews; the dispatcher's unit pickers use the real
+// walkway network.
+function nearestUnitsTo(lat, lng, excludeId) {
+  const now = Date.now();
+  return units
+    .filter(u => u.id !== excludeId && u.status !== 'out_of_service' && u.last_lat != null && u.last_lng != null &&
+      u.last_gps_at && now - new Date(u.last_gps_at).getTime() < EMERGENCY_NEAREST_MAX_GPS_AGE_MS)
+    .map(u => ({ unit: u, distM: Math.round(haversineMeters(lat, lng, u.last_lat, u.last_lng) * 1.4) }))
+    .sort((a, b) => a.distM - b.distM);
+}
+
+app.post('/api/crew/emergency', verifyToken, async (req, res) => {
+  if (req.user.role !== 'crew') return res.status(403).json({ error: 'Forbidden' });
+  const unit = units.find(u => u.id === req.user.unit_id);
+  if (!unit) return res.status(404).json({ error: 'Unit not found' });
+
+  // Idempotent: a retry from the phone's offline queue, or a second press,
+  // returns the one already open instead of starting another.
+  const existing = openEmergencyForUnit(unit.id);
+  if (existing) return res.json(existing);
+
+  const lat = Number.isFinite(parseFloat(req.body.lat)) ? parseFloat(req.body.lat) : unit.last_lat;
+  const lng = Number.isFinite(parseFloat(req.body.lng)) ? parseFloat(req.body.lng) : unit.last_lng;
+  const e = {
+    id: `em-${Date.now()}-${randomUUID().slice(0, 6)}`,
+    unit_id: unit.id,
+    unit_number: unit.unit_number,
+    crew_name: req.user.name || unit.crew || null,
+    started_at: new Date().toISOString(),
+    lat: lat ?? null, lng: lng ?? null,
+    acknowledged_at: null, acknowledged_by: null,
+    resolved_at: null, resolved_by: null, resolve_note: null,
+    alerted_unit_ids: []
+  };
+  const nearby = lat != null && lng != null ? nearestUnitsTo(lat, lng, unit.id).slice(0, EMERGENCY_NEAREST_COUNT) : [];
+  e.alerted_unit_ids = nearby.map(n => n.unit.id);
+  try {
+    await saveEmergency(e);
+  } catch (err) {
+    console.error('[emergency] failed to save:', err.message);
+    return res.status(500).json({ error: 'Could not send — use your radio' });
+  }
+  emergencies.push(e);
+  console.warn(`[emergency] ${unit.unit_number} (${e.crew_name || '?'}) pressed the panic button at ${lat},${lng}`);
+  emitEmergency('emergency:started', e);
+
+  const who = `${unit.unit_number}${e.crew_name ? ` (${e.crew_name})` : ''}`;
+  nearby.forEach(({ unit: u, distM }) => {
+    sendPushToUnit(u, { title: `🚨 ${who} EMERGENCY`, body: `About ${distM} m from you — open the app to find them`, urgent: true }).catch(() => {});
+  });
+  units
+    .filter(u => u.id !== unit.id && u.status !== 'out_of_service' && !e.alerted_unit_ids.includes(u.id))
+    .forEach(u => sendPushToUnit(u, { title: `🚨 ${who} emergency`, body: 'Dispatch is handling it' }).catch(() => {}));
+
+  res.status(201).json(e);
+});
+
+// Open emergencies (after a reload/reconnect). Crew see them too, so a
+// colleague's emergency stays on their screen.
+app.get('/api/emergencies/active', verifyToken, (req, res) => {
+  if (!['dispatcher', 'overwatch', 'crew'].includes(req.user.role)) return res.status(403).json({ error: 'Forbidden' });
+  res.json(emergencies.filter(e => !e.resolved_at));
+});
+
+app.get('/api/emergencies/history', verifyToken, async (req, res) => {
+  if (!['dispatcher', 'overwatch'].includes(req.user.role)) return res.status(403).json({ error: 'Forbidden' });
+  try {
+    const { rows } = await pool.query('SELECT * FROM emergencies ORDER BY started_at DESC LIMIT 200');
+    res.json(rows.map(rowToEmergency));
+  } catch (err) {
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// Acknowledge = "dispatch has seen it and is responding" -- stops the siren,
+// tells the medic. Still open until resolved.
+app.post('/api/emergencies/:id/ack', verifyToken, async (req, res) => {
+  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
+  const e = emergencies.find(x => x.id === req.params.id && !x.resolved_at);
+  if (!e) return res.status(404).json({ error: 'Not found or already resolved' });
+  if (!e.acknowledged_at) {
+    e.acknowledged_at = new Date().toISOString();
+    e.acknowledged_by = auditActor(req.user);
+    persist(saveEmergency(e), 'emergency ' + e.id);
+    emitEmergency('emergency:updated', e);
+    const unit = units.find(u => u.id === e.unit_id);
+    if (unit) sendPushToUnit(unit, { title: '✅ Dispatch has your emergency', body: 'Help is on the way', urgent: true }).catch(() => {});
+  }
+  res.json(e);
+});
+
+async function resolveEmergency(e, by, note) {
+  e.resolved_at = new Date().toISOString();
+  e.resolved_by = by;
+  e.resolve_note = note ? String(note).slice(0, 500) : null;
+  if (!e.acknowledged_at) { e.acknowledged_at = e.resolved_at; e.acknowledged_by = by; }
+  await saveEmergency(e);
+  emergencies = emergencies.filter(x => x.id !== e.id);
+  emitEmergency('emergency:updated', e);
+}
+
+app.post('/api/emergencies/:id/resolve', verifyToken, async (req, res) => {
+  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
+  const e = emergencies.find(x => x.id === req.params.id && !x.resolved_at);
+  if (!e) return res.status(404).json({ error: 'Not found or already resolved' });
+  const note = typeof req.body.note === 'string' ? req.body.note.trim() : '';
+  if (!note) return res.status(400).json({ error: 'Add a short note on how it was resolved' });
+  try {
+    await resolveEmergency(e, auditActor(req.user), note);
+  } catch (err) {
+    return res.status(500).json({ error: 'Could not save — try again' });
+  }
+  res.json(e);
+});
+
+// The medic's own "I'm OK" -- closes it, and dispatch sees who cancelled.
+app.post('/api/crew/emergency/cancel', verifyToken, async (req, res) => {
+  if (req.user.role !== 'crew') return res.status(403).json({ error: 'Forbidden' });
+  const e = openEmergencyForUnit(req.user.unit_id);
+  if (!e) return res.json({ ok: true });
+  try {
+    await resolveEmergency(e, `${auditActor(req.user)} (crew cancelled)`, 'Cancelled by crew — "I\'m OK"');
+  } catch (err) {
+    return res.status(500).json({ error: 'Could not cancel — try again or tell dispatch by radio' });
+  }
+  res.json(e);
 });
 
 // Broadcast history across shifts, for the dispatcher's History tab.
@@ -2276,6 +2575,9 @@ app.post('/api/shift/start', verifyToken, async (req, res) => {
   currentShift = newShift;
   // Broadcasts sent between shifts belonged to no shift; start clean.
   broadcasts = [];
+  // A weather warning still in effect gets broadcast again to the new shift.
+  if (weatherBroadcastEvents?.size) { weatherBroadcastEvents.clear(); saveWeatherState(); }
+  setTimeout(pollWeather, 5000);
 
   unit_staffing.forEach(({ unit_id, crew, unit_type, in_service, station }) => {
     const unit = units.find(u => u.id === unit_id);
@@ -2671,7 +2973,9 @@ function applyGpsUpdate(unit, lat, lng, timestamp, accuracy) {
     return false;
   }
 
-  if (unit.gps_sharing_disabled) {
+  // An open panic-button emergency overrides the crew opt-out: dispatch and
+  // responding crews need to find them. The crew app tells them so.
+  if (unit.gps_sharing_disabled && !openEmergencyForUnit(unit.id)) {
     const last = gpsDiscardLastLog.get(unit.id) || 0;
     if (Date.now() - last > 5 * 60 * 1000) {
       console.log(`[gps] ${unit.unit_number} — discarded (crew disabled GPS sharing)`);
@@ -2796,7 +3100,7 @@ app.post('/api/crew/gps', verifyToken, gpsRateLimit, (req, res) => {
   // nothing stored, shown or shared. Answered 200 on purpose -- the
   // native trackers queue failed posts and replay them later, which
   // would feed stale off-shift points into the next shift.
-  if (!currentShift || currentShift.ended_at || unit.status === 'out_of_service') {
+  if ((!currentShift || currentShift.ended_at || unit.status === 'out_of_service') && !openEmergencyForUnit(unit.id)) {
     return res.json({ ok: true, ignored: true, reason: !currentShift || currentShift.ended_at ? 'no_active_shift' : 'out_of_service' });
   }
   const lat = parseFloat(req.body.lat);
@@ -3013,6 +3317,66 @@ app.get('/api/wayfinding/settings', verifyToken, async (req, res) => {
   try {
     const { rows } = await pool.query("SELECT value FROM app_settings WHERE key = 'wayfinding_enabled'");
     res.json({ enabled: rows[0]?.value === 'true' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Reports: calls in a date range (dashboard + heat map + CSV) ─────
+// Only the fields the Reports tab and heat map need -- no comments,
+// narrative or chief complaint. Stats are computed in the browser.
+app.get('/api/reports/calls', verifyToken, async (req, res) => {
+  if (!['dispatcher', 'overwatch'].includes(req.user.role)) return res.status(403).json({ error: 'Forbidden' });
+  const from = new Date(req.query.from);
+  const to   = new Date(req.query.to);
+  if (isNaN(from) || isNaN(to) || to <= from) return res.status(400).json({ error: 'from and to must be valid dates' });
+  try {
+    const { rows } = await pool.query(`
+      SELECT id, call_number, status, call_type, priority, response_mode, disposition,
+             location_name, location_lat, location_lng,
+             assigned_unit_id, assigned_unit_number, additional_unit_ids, released_unit_ids,
+             received_at, dispatched_at, acknowledged_at, en_route_at, on_scene_at,
+             patient_contact_at, transporting_at, cleared_at, available_at, closed_at
+      FROM calls
+      WHERE received_at::timestamptz >= $1 AND received_at::timestamptz < $2
+      ORDER BY received_at
+      LIMIT 20000
+    `, [from.toISOString(), to.toISOString()]);
+    res.json(rows.map(r => ({ ...r, additional_unit_ids: r.additional_unit_ids || [], released_unit_ids: r.released_unit_ids || [] })));
+  } catch (err) {
+    console.error('[reports] query failed:', err.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// ── Quick call types (one-tap pills in New Call) ──────────────────────
+// Used to live in each browser's localStorage, so every dispatcher
+// workstation had its own list and a new PC started empty. One shared list.
+app.get('/api/settings/quick-call-types', verifyToken, async (req, res) => {
+  if (!['dispatcher', 'overwatch'].includes(req.user.role)) return res.status(403).json({ error: 'Forbidden' });
+  try {
+    const { rows } = await pool.query("SELECT value FROM app_settings WHERE key = 'quick_call_types'");
+    let types = null;
+    try { types = rows[0] ? JSON.parse(rows[0].value) : null; } catch {}
+    // null = never saved yet (lets a browser's old local list be migrated up once)
+    res.json({ types: Array.isArray(types) ? types : null });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.put('/api/settings/quick-call-types', verifyToken, async (req, res) => {
+  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
+  const { types } = req.body;
+  if (!Array.isArray(types)) return res.status(400).json({ error: 'types must be a list' });
+  const clean = [...new Set(types.filter(t => typeof t === 'string').map(t => t.trim()).filter(Boolean))]
+    .map(t => t.slice(0, 60)).slice(0, 40);
+  try {
+    await pool.query(`
+      INSERT INTO app_settings (key, value, updated_at) VALUES ('quick_call_types', $1, $2)
+      ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=EXCLUDED.updated_at
+    `, [JSON.stringify(clean), new Date().toISOString()]);
+    res.json({ types: clean });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -3492,6 +3856,8 @@ initDb()
     setInterval(checkSilentGps, GPS_WATCHDOG_INTERVAL_MS);
     purgeOldPtNotes();
     setInterval(purgeOldPtNotes, 10 * 60 * 1000);
+    pollWeather();
+    setInterval(pollWeather, WEATHER_POLL_MS);
   })
   .catch(err => {
     console.error('[db] Failed to connect to database:', err.message);

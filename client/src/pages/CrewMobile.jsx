@@ -20,7 +20,26 @@ import { setCrewGpsSharing, getCrewMessages, sendCrewMessage, getBroadcasts, mar
 import CrewBroadcasts from '../components/crew/CrewBroadcasts';
 import PtNotes from '../components/crew/PtNotes';
 import { isNative as isNativePlatform, nativeCall } from '../lib/native';
-import { enqueueOfflineAction, subscribeOfflineQueue } from '../lib/offlineActionQueue';
+import { enqueueOfflineAction, subscribeOfflineQueue, getOfflineQueue } from '../lib/offlineActionQueue';
+import EmergencyPanel from '../components/crew/EmergencyPanel';
+import { startEmergency, cancelEmergency, getActiveEmergencies } from '../services/api';
+
+const offlineQueueHasEmergency = () => getOfflineQueue().some(a => a.type === 'emergency');
+
+// Best-effort current position for the emergency itself -- a fresh fix if
+// the phone gives one fast, otherwise whatever the tracker last sent.
+function currentPosition(fallbackUnit) {
+  const fallback = fallbackUnit?.last_lat != null ? { lat: fallbackUnit.last_lat, lng: fallbackUnit.last_lng } : {};
+  if (!navigator.geolocation) return Promise.resolve(fallback);
+  return new Promise(resolve => {
+    const t = setTimeout(() => resolve(fallback), 2500);
+    navigator.geolocation.getCurrentPosition(
+      p => { clearTimeout(t); resolve({ lat: p.coords.latitude, lng: p.coords.longitude }); },
+      () => { clearTimeout(t); resolve(fallback); },
+      { enableHighAccuracy: true, timeout: 2500, maximumAge: 15000 }
+    );
+  });
+}
 import { STATUS_COLORS, STATUS_LABELS } from '../data/mockData';
 import { DISPOSITIONS } from '../data/dispositions';
 import { isOnCall } from '../lib/callUnits';
@@ -218,6 +237,12 @@ export default function CrewMobile() {
   const [showPtNotes,      setShowPtNotes]      = useState(false);
   const [ptNotes,          setPtNotes]          = useState([]);
   const [showBeacon,       setShowBeacon]       = useState(false);
+  // Open Find Medic straight onto this unit (emergency "Find" button).
+  const [beaconTargetId,   setBeaconTargetId]   = useState(null);
+  // Open panic-button emergencies -- this unit's own and colleagues'.
+  const [emergencies,      setEmergencies]      = useState([]);
+  const [emergencyBusy,    setEmergencyBusy]    = useState(false);
+  const [emergencyError,   setEmergencyError]   = useState('');
   const [showRoster,       setShowRoster]       = useState(false);
   // { [otherUnitId]: Message[] } — private crew-to-crew DMs, shift-scoped
   // (cleared server-side at shift end, so this just naturally goes stale/empty
@@ -423,10 +448,14 @@ export default function CrewMobile() {
   // Held off while the one-time setup screen is up — its own "Grant Location" step
   // already drives the permission request; letting this hook fire at the same time
   // races it and can cause iOS to drop or reorder the While-Using/Always dialogs.
+  // An open (or not-yet-sent) emergency keeps location on regardless of the
+  // sharing toggle or shift state -- responders need to find this medic.
+  const myEmergency = myUnit ? emergencies.find(e => e.unit_id === myUnit.id && !e.resolved_at) || null : null;
+  const emergencyForcesGps = !!myEmergency || offlineQueueHasEmergency();
   const { bgPermNeeded, openGpsSettings, gpsStatus } = useCrewGps({
     token: user?.token,
     unit: myUnit,
-    enabled: !!myUnit && !showNativeSetup && gpsSharingEnabled && shiftActive !== false,
+    enabled: !!myUnit && !showNativeSetup && (emergencyForcesGps || (gpsSharingEnabled && shiftActive !== false)),
   });
 
   // Check with the server whether a shift is running: on open, whenever the
@@ -446,8 +475,58 @@ export default function CrewMobile() {
   }, [user?.token]);
 
   useEffect(() => {
-    if (shiftActive === false) stopCrewGpsTracking();
-  }, [shiftActive]);
+    if (shiftActive === false && !emergencyForcesGps) stopCrewGpsTracking();
+  }, [shiftActive, emergencyForcesGps]);
+
+  // Emergency over: if the medic had sharing turned off, turn the tracker
+  // back off (the hook itself never stops the native tracker on its own).
+  const prevForcedRef = useRef(false);
+  useEffect(() => {
+    if (prevForcedRef.current && !emergencyForcesGps && !gpsSharingEnabled) stopCrewGpsTracking();
+    prevForcedRef.current = emergencyForcesGps;
+  }, [emergencyForcesGps, gpsSharingEnabled]);
+
+  const handleEmergency = async () => {
+    if (!myUnit || emergencyBusy) return;
+    setEmergencyBusy(true);
+    setEmergencyError('');
+    const pos = await currentPosition(myUnit);
+    try {
+      const res = await startEmergency(pos);
+      setEmergencies(prev => [...prev.filter(e => e.id !== res.data.id), res.data]);
+    } catch (err) {
+      if (!err?.response) {
+        // No signal: keep retrying every few seconds; the panel shows
+        // "NOT SENT — use your radio" until it goes through.
+        enqueueOfflineAction('emergency', pos);
+      } else {
+        setEmergencyError(err.response.data?.error || 'Emergency failed to send — USE YOUR RADIO');
+      }
+    } finally {
+      setEmergencyBusy(false);
+    }
+    if (isNative) nativeCall('Haptics', 'impact', { style: 'HEAVY' }).catch(() => {});
+  };
+
+  const handleCancelEmergency = async () => {
+    setEmergencyBusy(true);
+    setEmergencyError('');
+    try {
+      await cancelEmergency();
+      setEmergencies(prev => prev.filter(e => e.unit_id !== myUnit?.id));
+    } catch (err) {
+      setEmergencyError(err?.response?.data?.error || 'Could not cancel — try again or tell dispatch by radio');
+    } finally {
+      setEmergencyBusy(false);
+    }
+  };
+
+  const handleEmergencyEvent = (e) => {
+    if (!e?.id) return;
+    setEmergencies(prev => e.resolved_at
+      ? prev.filter(x => x.id !== e.id)
+      : [...prev.filter(x => x.id !== e.id), e]);
+  };
 
   // Same one-time-setup-screen deferral as useCrewGps above — the native
   // setup flow already drives permission prompts one at a time; racing this
@@ -477,7 +556,7 @@ export default function CrewMobile() {
     if (showCaseSummary)  { setShowCaseSummary(false); return true; }
     if (showCaseHistory)  { setShowCaseHistory(false); return true; }
     if (showPtNotes)      { if (ptNotesBackRef.current?.()) return true; setShowPtNotes(false); return true; }
-    if (showBeacon)       { if (beaconBackRef.current?.()) return true; setShowBeacon(false); return true; }
+    if (showBeacon)       { if (beaconBackRef.current?.()) return true; setShowBeacon(false); setBeaconTargetId(null); return true; }
     if (showRoster)       { setShowRoster(false); return true; }
     return false;
   };
@@ -592,7 +671,20 @@ export default function CrewMobile() {
       scheduleNotif(`📋 Patient notes from ${note.from_unit_number}`, 'Open PT Notes to view');
       if (isNative) nativeCall('Haptics', 'impact', { style: 'HEAVY' }).catch(() => {});
     },
-    'pt_note:read':        ({ id, read_at }) => setPtNotes(prev => prev.map(n => n.id === id ? { ...n, read_at } : n))
+    'pt_note:read':        ({ id, read_at }) => setPtNotes(prev => prev.map(n => n.id === id ? { ...n, read_at } : n)),
+    'emergency:started':   (e) => {
+      handleEmergencyEvent(e);
+      if (e.unit_id !== myUnit?.id) {
+        scheduleNotif(`🚨 ${e.unit_number} EMERGENCY`, 'Open the app to find them');
+        if (isNative) nativeCall('Haptics', 'impact', { style: 'HEAVY' }).catch(() => {});
+      }
+    },
+    'emergency:updated':   (e) => {
+      handleEmergencyEvent(e);
+      if (e.unit_id === myUnit?.id && e.acknowledged_at && !e.resolved_at && isNative) {
+        nativeCall('Haptics', 'impact', { style: 'HEAVY' }).catch(() => {});
+      }
+    }
   });
 
   // Load this shift's broadcasts on login, and again whenever the app comes
@@ -607,6 +699,9 @@ export default function CrewMobile() {
         .catch(() => {});
       getPtNotes()
         .then(res => { if (Array.isArray(res.data)) setPtNotes(res.data); })
+        .catch(() => {});
+      getActiveEmergencies()
+        .then(res => { if (Array.isArray(res.data)) setEmergencies(res.data); })
         .catch(() => {});
     };
     load();
@@ -942,6 +1037,19 @@ export default function CrewMobile() {
 
       {/* Body */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        <EmergencyPanel
+          myUnit={myUnit}
+          units={units}
+          myEmergency={myEmergency}
+          queued={!myEmergency && offlineQueue.some(a => a.type === 'emergency')}
+          otherEmergencies={emergencies.filter(e => e.unit_id !== myUnit.id && !e.resolved_at)}
+          onTrigger={handleEmergency}
+          onCancel={handleCancelEmergency}
+          onFind={(unitId) => { setBeaconTargetId(unitId); setShowBeacon(true); }}
+          busy={emergencyBusy}
+          error={emergencyError}
+        />
+
         <CrewBroadcasts broadcasts={broadcasts} onAck={handleAckBroadcast} />
 
         {statusError && (
@@ -1114,11 +1222,12 @@ export default function CrewMobile() {
       )}
 
       {showBeacon && (
-        <ErrorBoundary onClose={() => setShowBeacon(false)}>
+        <ErrorBoundary onClose={() => { setShowBeacon(false); setBeaconTargetId(null); }}>
           <BeaconMode
             myUnit={myUnit}
             units={units}
-            onClose={() => setShowBeacon(false)}
+            initialTargetId={beaconTargetId}
+            onClose={() => { setShowBeacon(false); setBeaconTargetId(null); }}
             backRef={beaconBackRef}
           />
         </ErrorBoundary>

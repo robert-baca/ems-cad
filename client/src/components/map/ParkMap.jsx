@@ -11,6 +11,13 @@ const PARK_ZOOM   = 16;
 
 // Dispatcher-entered text (call_type, location_name, location names) is rendered
 // via innerHTML for marker/popup styling — escape it so it can't inject markup/scripts.
+function getDistanceM(lat1, lng1, lat2, lng2) {
+  const toRad = d => d * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1), dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return 6371000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
 function escapeHtml(str) {
   return String(str ?? '').replace(/[&<>"']/g, (c) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
@@ -20,7 +27,8 @@ function escapeHtml(str) {
 export default function ParkMap({
   units = [], calls = [], locations = [],
   onMapClick, onMapRightClick, onRemoveLocation,
-  newCallPin, flyToTarget, pickingLocation = false
+  newCallPin, flyToTarget, pickingLocation = false,
+  heatmapCalls = null // array of calls to show as a density layer, or null for off
 }) {
   const containerRef       = useRef(null);
   const mapRef             = useRef(null);
@@ -75,6 +83,30 @@ export default function ParkMap({
     map.addControl(new mapboxgl.ScaleControl(), 'bottom-right');
 
     map.on('load', () => {
+      // Call-density heat map (Reports → "Show as heat map"). Added first so
+      // it sits under the unit dots. Single hue, light → dark as density
+      // rises (the dataviz sequential blue ramp); transparent at zero so the
+      // satellite imagery still shows through where there were no calls.
+      map.addSource('call-heat', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+      map.addLayer({
+        id: 'call-heat', type: 'heatmap', source: 'call-heat',
+        paint: {
+          'heatmap-weight': 1,
+          'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 14, 0.6, 18, 1.6],
+          'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 14, 12, 16, 22, 19, 45],
+          'heatmap-opacity': 0.8,
+          'heatmap-color': [
+            'interpolate', ['linear'], ['heatmap-density'],
+            0, 'rgba(0,0,0,0)',
+            0.15, '#cde2fb',
+            0.35, '#86b6ef',
+            0.55, '#3987e5',
+            0.75, '#1c5cab',
+            1, '#0d366b'
+          ]
+        }
+      });
+
       // Unit source + layers
       map.addSource('units', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
 
@@ -143,6 +175,46 @@ export default function ParkMap({
 
     return () => { map.remove(); mapRef.current = null; mapReadyRef.current = false; };
   }, []);
+
+  // Hover readout for the heat map: how many calls within ~30 m of the
+  // cursor, and their most common types.
+  const heatCallsRef = useRef(null);
+  heatCallsRef.current = heatmapCalls;
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReadyRef.current) return;
+    const popup = new mapboxgl.Popup({ closeButton: false, closeOnClick: false, offset: 12 });
+    const onMove = (e) => {
+      const hc = heatCallsRef.current;
+      if (!hc?.length) { popup.remove(); return; }
+      const { lat, lng } = e.lngLat;
+      const near = hc.filter(c => c.location_lat != null &&
+        getDistanceM(lat, lng, c.location_lat, c.location_lng) <= 30);
+      if (near.length < 2) { popup.remove(); return; }
+      const counts = {};
+      near.forEach(c => { counts[c.call_type || 'Unknown'] = (counts[c.call_type || 'Unknown'] || 0) + 1; });
+      const top = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 3)
+        .map(([t, n]) => `${escapeHtml(t)} (${n})`).join('<br>');
+      popup.setLngLat(e.lngLat).setHTML(
+        `<div style="background:#1f2937;color:#fff;padding:6px 8px;border-radius:6px;font-family:sans-serif;font-size:11px">
+           <b>${near.length} calls</b> within 30 m<br><span style="color:#d1d5db">${top}</span></div>`
+      ).addTo(map);
+    };
+    map.on('mousemove', onMove);
+    return () => { map.off('mousemove', onMove); popup.remove(); };
+  }, [mapLoaded]);
+
+  // Heat map data (null = off)
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReadyRef.current) return;
+    const source = map.getSource('call-heat');
+    if (!source) return;
+    const features = (heatmapCalls || [])
+      .filter(c => c.location_lat != null && c.location_lng != null)
+      .map(c => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [c.location_lng, c.location_lat] }, properties: {} }));
+    source.setData({ type: 'FeatureCollection', features });
+  }, [heatmapCalls, mapLoaded]);
 
   // Update unit dots — mapLoaded in deps ensures this re-runs after map style loads
   useEffect(() => {

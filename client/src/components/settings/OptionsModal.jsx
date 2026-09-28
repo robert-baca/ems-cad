@@ -1,19 +1,7 @@
 import { useState, useEffect } from 'react';
 import { changePassword } from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
-
-const STORAGE_KEY = 'ems_cad_quick_types';
-
-export function loadQuickTypes() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch { return []; }
-}
-
-function saveQuickTypes(types) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(types));
-}
+import { loadQuickTypes, storeQuickTypes } from '../../lib/quickTypes';
 
 export default function OptionsModal({
   onClose,
@@ -29,11 +17,22 @@ export default function OptionsModal({
   const [pwError,    setPwError]   = useState('');
   const [pwSuccess,  setPwSuccess] = useState('');
   const [pwSaving,   setPwSaving]  = useState(false);
-  const { updateToken } = useAuth();
+  const { user, updateToken } = useAuth();
+  const canEditTypes = user?.role === 'dispatcher';
 
   useEffect(() => {
-    setQuickTypes(loadQuickTypes());
+    loadQuickTypes().then(setQuickTypes).catch(() => setError('Could not load call types.'));
   }, []);
+
+  // Shared by every dispatcher screen (server-side). Updates optimistically
+  // and puts the old list back if the save fails.
+  const saveQuickTypes = (updated) => {
+    const previous = quickTypes;
+    setQuickTypes(updated);
+    storeQuickTypes(updated)
+      .then(setQuickTypes)
+      .catch(() => { setQuickTypes(previous); setError('Could not save — check connection and try again.'); });
+  };
 
   const handleChangePassword = async () => {
     setPwError('');
@@ -60,17 +59,13 @@ export default function OptionsModal({
     const val = input.trim();
     if (!val) { setError('Enter a call type label.'); return; }
     if (quickTypes.includes(val)) { setError('Already in the list.'); return; }
-    const updated = [...quickTypes, val];
-    setQuickTypes(updated);
-    saveQuickTypes(updated);
     setInput('');
     setError('');
+    saveQuickTypes([...quickTypes, val]);
   };
 
   const handleRemove = (type) => {
-    const updated = quickTypes.filter(t => t !== type);
-    setQuickTypes(updated);
-    saveQuickTypes(updated);
+    saveQuickTypes(quickTypes.filter(t => t !== type));
   };
 
   const handleReorder = (index, dir) => {
@@ -78,7 +73,6 @@ export default function OptionsModal({
     const swap = index + dir;
     if (swap < 0 || swap >= updated.length) return;
     [updated[index], updated[swap]] = [updated[swap], updated[index]];
-    setQuickTypes(updated);
     saveQuickTypes(updated);
   };
 
@@ -101,7 +95,7 @@ export default function OptionsModal({
           <div>
             <div className="text-gray-300 text-sm font-semibold mb-1">Quick Call Type Buttons</div>
             <div className="text-gray-500 text-xs mb-3">
-              These appear as one-tap pills when creating a new call.
+              These appear as one-tap pills when creating a new call. Shared by every dispatcher screen.
             </div>
 
             {quickTypes.length === 0 ? (
@@ -111,18 +105,20 @@ export default function OptionsModal({
                 {quickTypes.map((t, i) => (
                   <div key={t} className="flex items-center gap-2 bg-gray-700 rounded-lg px-3 py-2">
                     <span className="flex-1 text-white text-sm">{t}</span>
-                    <button onClick={() => handleReorder(i, -1)} disabled={i === 0}
-                      className="text-gray-500 hover:text-gray-300 disabled:opacity-30 text-xs px-1">↑</button>
-                    <button onClick={() => handleReorder(i, 1)} disabled={i === quickTypes.length - 1}
-                      className="text-gray-500 hover:text-gray-300 disabled:opacity-30 text-xs px-1">↓</button>
-                    <button onClick={() => handleRemove(t)}
-                      className="text-gray-600 hover:text-red-400 text-lg leading-none ml-1">×</button>
+                    {canEditTypes && (<>
+                      <button onClick={() => handleReorder(i, -1)} disabled={i === 0}
+                        className="text-gray-500 hover:text-gray-300 disabled:opacity-30 text-xs px-1">↑</button>
+                      <button onClick={() => handleReorder(i, 1)} disabled={i === quickTypes.length - 1}
+                        className="text-gray-500 hover:text-gray-300 disabled:opacity-30 text-xs px-1">↓</button>
+                      <button onClick={() => handleRemove(t)}
+                        className="text-gray-600 hover:text-red-400 text-lg leading-none ml-1">×</button>
+                    </>)}
                   </div>
                 ))}
               </div>
             )}
 
-            <div className="flex gap-2">
+            {canEditTypes && <div className="flex gap-2">
               <input
                 type="text"
                 value={input}
@@ -135,8 +131,8 @@ export default function OptionsModal({
                 className="px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-lg transition-colors">
                 Add
               </button>
-            </div>
-            {error && <p className="text-red-400 text-xs mt-1">{error}</p>}
+            </div>}
+            {error &&<p className="text-red-400 text-xs mt-1">{error}</p>}
           </div>
 
           {/* ── Permanent map pins ── */}
