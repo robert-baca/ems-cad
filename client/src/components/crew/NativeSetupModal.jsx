@@ -26,22 +26,37 @@ const ALL_STEPS = [
     androidOnly: true,
   },
   // Watch mirroring lives in the watch's own companion app, which this app
-  // can't open or change -- instructions only, like battery.
+  // can't change. On iOS, openUrl jumps to Apple's Watch app: Capacitor
+  // hands any non-web top-level navigation to UIApplication.open, so this
+  // works in already-installed builds. Android's watch apps vary by brand,
+  // so there it's instructions only, like battery.
+  {
+    key: 'watch',
+    icon: '⌚',
+    title: 'Apple Watch Alerts',
+    body: 'Tap Set Up to open the Watch app, then go to Notifications → EMS Crew → choose "Mirror my iPhone". Then come back here and tap Done.',
+    button: 'Set Up',
+    openUrl: 'itms-watchs://',
+    skipLabel: "I don't have an Apple Watch",
+    iosOnly: true,
+    since: 4,
+  },
   {
     key: 'watch',
     icon: '⌚',
     title: 'Smartwatch Alerts',
-    body: "This one's in your watch's app, not here. Apple Watch: Watch app on your iPhone → Notifications → EMS Crew → Mirror my iPhone. Galaxy Watch: Galaxy Wearable app → Watch settings → Notifications → turn on EMS Crew. Pixel Watch: Pixel Watch app → Notifications → EMS Crew on.",
+    body: "This one's in your watch's app, not here. Galaxy Watch: Galaxy Wearable app → Watch settings → Notifications → turn on EMS Crew. Pixel Watch: Pixel Watch app → Notifications → EMS Crew on.",
     button: "Done / I don't wear a watch",
+    androidOnly: true,
     since: 2,
   },
 ];
 
 // Bump when adding steps (and tag them `since` the new version): phones that
 // finished an older setup see just the steps added since, once. Stored in
-// native_setup_done -- the original setup saved '1' there. (Some phones
-// have '3' stored from a since-removed version; >= comparisons keep that fine.)
-export const SETUP_VERSION = 2;
+// native_setup_done -- the original setup saved '1' there. (3 was used by a
+// since-removed version, hence the jump to 4.)
+export const SETUP_VERSION = 4;
 export const setupDoneVersion = () => parseInt(localStorage.getItem('native_setup_done') || '0', 10) || 0;
 
 // Platform-specific steps (e.g. no "Unrestricted Battery" setting on iOS)
@@ -50,9 +65,14 @@ const platform = Capacitor.getPlatform();
 const PLATFORM_STEPS = ALL_STEPS.filter(s =>
   !(s.androidOnly && platform !== 'android') && !(s.iosOnly && platform !== 'ios'));
 
+const pendingSteps = (doneBefore) => PLATFORM_STEPS.filter(s => (s.since || 1) > doneBefore);
+// A version bump can add steps for one platform only -- the other shouldn't
+// get an empty setup screen.
+export const hasPendingSetup = () => pendingSteps(setupDoneVersion()).length > 0;
+
 export default function NativeSetupModal({ onDone }) {
   const [doneBefore] = useState(setupDoneVersion);
-  const STEPS = PLATFORM_STEPS.filter(s => (s.since || 1) > doneBefore);
+  const STEPS = pendingSteps(doneBefore);
   const [step, setStep]       = useState(0);
   const [loading, setLoading] = useState(false);
   const [done, setDone]       = useState(false);
@@ -60,12 +80,16 @@ export default function NativeSetupModal({ onDone }) {
   // an explicit "continue anyway" so a denial is never silently skipped past.
   const [permWarning, setPermWarning] = useState('');
   const [awaitingAck, setAwaitingAck] = useState(false);
+  // For openUrl steps: the first tap opens the other app, the next one
+  // (after they come back) moves on.
+  const [openedUrl, setOpenedUrl] = useState(false);
 
   const current = STEPS[step];
 
   const advance = () => {
     setPermWarning('');
     setAwaitingAck(false);
+    setOpenedUrl(false);
     if (step < STEPS.length - 1) {
       setStep(s => s + 1);
     } else {
@@ -77,6 +101,11 @@ export default function NativeSetupModal({ onDone }) {
 
   const handleStep = async () => {
     if (awaitingAck) { advance(); return; }
+    if (current.openUrl && !openedUrl) {
+      window.location.href = current.openUrl;
+      setOpenedUrl(true);
+      return;
+    }
     setLoading(true);
     setPermWarning('');
     try {
@@ -179,10 +208,26 @@ export default function NativeSetupModal({ onDone }) {
           disabled={loading}
           className="w-full py-4 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 text-white font-bold text-base rounded-2xl transition-colors"
         >
-          {loading ? 'Opening…' : awaitingAck ? 'Continue Anyway →' : current.button}
+          {loading ? 'Opening…' : awaitingAck ? 'Continue Anyway →' : openedUrl ? 'Done →' : current.button}
         </button>
 
-        {step === STEPS.length - 1 && (
+        {openedUrl && (
+          <button
+            onClick={() => { window.location.href = current.openUrl; }}
+            className="w-full mt-3 py-2.5 text-blue-400 hover:text-blue-300 text-sm transition-colors"
+          >
+            Open it again
+          </button>
+        )}
+
+        {current.skipLabel ? (
+          <button
+            onClick={advance}
+            className="w-full mt-3 py-2.5 text-gray-500 hover:text-gray-300 text-sm transition-colors"
+          >
+            {current.skipLabel}
+          </button>
+        ) : step === STEPS.length - 1 && (
           <button
             onClick={() => { localStorage.setItem('native_setup_done', String(SETUP_VERSION)); onDone(); }}
             className="w-full mt-3 py-2.5 text-gray-500 hover:text-gray-300 text-sm transition-colors"
