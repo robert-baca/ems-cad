@@ -105,12 +105,16 @@ export default function ParkMap({
         }
       });
 
-      // Cursor
-      map.getCanvas().style.cursor = 'grab';
+      // Cursor: a crosshair, not the open hand. The hand's click point is the
+      // middle of the palm, but people aim with the fingertips at its top --
+      // so dropped call pins landed "a little below" where the dispatcher was
+      // pointing. The crosshair's centre IS the click point. Still shows the
+      // closed hand while dragging the map.
+      map.getCanvas().style.cursor = 'crosshair';
       map.on('mousedown', () => { map.getCanvas().style.cursor = pickingLocationRef.current ? 'crosshair' : 'grabbing'; });
-      map.on('mouseup',   () => { map.getCanvas().style.cursor = pickingLocationRef.current ? 'crosshair' : 'grab'; });
+      map.on('mouseup',   () => { map.getCanvas().style.cursor = 'crosshair'; });
       map.on('mouseenter', 'units-circle', () => { map.getCanvas().style.cursor = pickingLocationRef.current ? 'crosshair' : 'pointer'; });
-      map.on('mouseleave', 'units-circle', () => { map.getCanvas().style.cursor = pickingLocationRef.current ? 'crosshair' : 'grab'; });
+      map.on('mouseleave', 'units-circle', () => { map.getCanvas().style.cursor = 'crosshair'; });
 
       // Left-click on empty map → new call / reposition pin
       map.on('click', (e) => {
@@ -301,7 +305,7 @@ export default function ParkMap({
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReadyRef.current) return;
-    map.getCanvas().style.cursor = pickingLocation ? 'crosshair' : 'grab';
+    map.getCanvas().style.cursor = 'crosshair';
   }, [pickingLocation]);
 
   // Fly to unit location
