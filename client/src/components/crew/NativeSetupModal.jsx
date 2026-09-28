@@ -25,45 +25,23 @@ const ALL_STEPS = [
     button: 'Got it',
     androidOnly: true,
   },
-  // Neither of these can be switched on by the app itself -- only the user can
-  // grant a DND/Focus override, and watch mirroring lives in the watch's own
-  // companion app. The DND step at least jumps to this app's Settings page
-  // (openSettings: the same BackgroundGeolocation call the GPS banner uses,
-  // already in every installed build); the watch step is instructions only.
-  {
-    key: 'dnd',
-    icon: '🚨',
-    title: 'Alerts Through Do Not Disturb',
-    body: 'Tap Open Settings, then Notifications → EMS Call Alerts → turn on "Override Do Not Disturb" (some phones call it "Ignore Do not disturb"). Then come back here. This lets calls, dispatch pings and broadcasts through even on silent.',
-    button: 'Open Settings',
-    openSettings: true,
-    androidOnly: true,
-    since: 3,
-  },
-  {
-    key: 'dnd',
-    icon: '🚨',
-    title: 'Alerts Through Focus',
-    body: 'Tap Open Settings, then Notifications → turn on "Time Sensitive Notifications" (if you don\'t see it yet, update the app from TestFlight / the App Store). Then come back here. This lets calls, dispatch pings and broadcasts through Focus and Do Not Disturb.',
-    button: 'Open Settings',
-    openSettings: true,
-    iosOnly: true,
-    since: 3,
-  },
+  // Watch mirroring lives in the watch's own companion app, which this app
+  // can't open or change -- instructions only, like battery.
   {
     key: 'watch',
     icon: '⌚',
     title: 'Smartwatch Alerts',
     body: "This one's in your watch's app, not here. Apple Watch: Watch app on your iPhone → Notifications → EMS Crew → Mirror my iPhone. Galaxy Watch: Galaxy Wearable app → Watch settings → Notifications → turn on EMS Crew. Pixel Watch: Pixel Watch app → Notifications → EMS Crew on.",
     button: "Done / I don't wear a watch",
-    since: 3,
+    since: 2,
   },
 ];
 
 // Bump when adding steps (and tag them `since` the new version): phones that
 // finished an older setup see just the steps added since, once. Stored in
-// native_setup_done -- the original setup saved '1' there.
-export const SETUP_VERSION = 3;
+// native_setup_done -- the original setup saved '1' there. (Some phones
+// have '3' stored from a since-removed version; >= comparisons keep that fine.)
+export const SETUP_VERSION = 2;
 export const setupDoneVersion = () => parseInt(localStorage.getItem('native_setup_done') || '0', 10) || 0;
 
 // Platform-specific steps (e.g. no "Unrestricted Battery" setting on iOS)
@@ -82,16 +60,12 @@ export default function NativeSetupModal({ onDone }) {
   // an explicit "continue anyway" so a denial is never silently skipped past.
   const [permWarning, setPermWarning] = useState('');
   const [awaitingAck, setAwaitingAck] = useState(false);
-  // For openSettings steps: the first tap opens Settings, the next one
-  // (after they come back) moves on.
-  const [openedSettings, setOpenedSettings] = useState(false);
 
   const current = STEPS[step];
 
   const advance = () => {
     setPermWarning('');
     setAwaitingAck(false);
-    setOpenedSettings(false);
     if (step < STEPS.length - 1) {
       setStep(s => s + 1);
     } else {
@@ -106,12 +80,6 @@ export default function NativeSetupModal({ onDone }) {
     setLoading(true);
     setPermWarning('');
     try {
-      if (current.openSettings && !openedSettings) {
-        await getBackgroundGeolocation().openSettings();
-        setOpenedSettings(true);
-        setLoading(false);
-        return;
-      }
       if (current.key === 'location') {
         const status = await nativeCall('Geolocation', 'requestPermissions', { permissions: ['location'] });
         if (status.location !== 'granted') {
@@ -177,7 +145,7 @@ export default function NativeSetupModal({ onDone }) {
           <div className="text-white font-bold text-xl">{doneBefore ? 'New Setup Steps' : 'One-Time Setup'}</div>
           <div className="text-gray-400 text-sm mt-1">
             {doneBefore
-              ? `${STEPS.length} quick settings so call alerts always reach you`
+              ? 'A quick new setting for call alerts'
               : `Allow these ${STEPS.length} things so GPS tracking and call alerts work`}
           </div>
         </div>
@@ -211,17 +179,8 @@ export default function NativeSetupModal({ onDone }) {
           disabled={loading}
           className="w-full py-4 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 text-white font-bold text-base rounded-2xl transition-colors"
         >
-          {loading ? 'Opening…' : awaitingAck ? 'Continue Anyway →' : openedSettings ? "Done — it's turned on →" : current.button}
+          {loading ? 'Opening…' : awaitingAck ? 'Continue Anyway →' : current.button}
         </button>
-
-        {openedSettings && (
-          <button
-            onClick={() => getBackgroundGeolocation().openSettings().catch(() => {})}
-            className="w-full mt-3 py-2.5 text-blue-400 hover:text-blue-300 text-sm transition-colors"
-          >
-            Open Settings again
-          </button>
-        )}
 
         {step === STEPS.length - 1 && (
           <button
