@@ -107,6 +107,14 @@ export function usePushRegistration({ token, enabled = true }) {
           reportPushStatus('denied').catch(() => {});
           return;
         }
+        // Server pushes target this channel by id (see server push.js); if
+        // it doesn't exist on the phone -- setup modal skipped, app
+        // reinstalled -- Android silently files them under "Miscellaneous"
+        // with no heads-up or strong vibration. Re-creating is a no-op.
+        if (window.Capacitor?.getPlatform?.() === 'android') {
+          const { createNotifChannel } = await import('./useCrewNotifications');
+          await createNotifChannel();
+        }
         // Listening before register() so a fast answer can't be missed.
         ensureListeners();
         timeout = setTimeout(
