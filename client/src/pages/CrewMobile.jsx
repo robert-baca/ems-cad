@@ -13,7 +13,8 @@ import StatusButtons from '../components/crew/StatusButtons';
 import CrewCaseHistory from '../components/crew/CrewCaseHistory';
 import ErrorBoundary from '../components/ErrorBoundary';
 import CallSummaryModal from '../components/calls/CallSummaryModal';
-import NativeSetupModal, { hasPendingSetup } from '../components/crew/NativeSetupModal';
+import NativeSetupModal, { hasPendingSetup, resetSetup } from '../components/crew/NativeSetupModal';
+import CrewHelp from '../components/crew/CrewHelp';
 import BeaconMode from '../components/crew/BeaconMode';
 import CrewRoster from '../components/crew/CrewRoster';
 import { setCrewGpsSharing, getCrewMessages, sendCrewMessage, getBroadcasts, markBroadcastRead, releaseFromCall, getPtNotes, getCurrentShift } from '../services/api';
@@ -244,6 +245,10 @@ export default function CrewMobile() {
   const [emergencyBusy,    setEmergencyBusy]    = useState(false);
   const [emergencyError,   setEmergencyError]   = useState('');
   const [showRoster,       setShowRoster]       = useState(false);
+  const [showHelp,         setShowHelp]         = useState(false);
+  // Setup re-run from Help while no shift is running (normally the first-time
+  // setup waits for a shift; an explicit re-run shouldn't).
+  const [showHelpSetupRerun, setShowHelpSetupRerun] = useState(false);
   // { [otherUnitId]: Message[] } — private crew-to-crew DMs, shift-scoped
   // (cleared server-side at shift end, so this just naturally goes stale/empty
   // next shift too). Keyed by id and merged/deduped since both a thread's own
@@ -558,6 +563,7 @@ export default function CrewMobile() {
     if (showPtNotes)      { if (ptNotesBackRef.current?.()) return true; setShowPtNotes(false); return true; }
     if (showBeacon)       { if (beaconBackRef.current?.()) return true; setShowBeacon(false); setBeaconTargetId(null); return true; }
     if (showRoster)       { setShowRoster(false); return true; }
+    if (showHelp)         { setShowHelp(false); return true; }
     return false;
   };
 
@@ -866,9 +872,39 @@ export default function CrewMobile() {
 
   const unitColor = STATUS_COLORS[myUnit?.status] || '#9ca3af';
 
+  // Help & Setup overlay -- reachable from the main screen's ? button and
+  // from the no-shift screen (people often set up before a shift starts).
+  const helpOverlay = showHelp && (
+    <ErrorBoundary onClose={() => setShowHelp(false)}>
+      <CrewHelp
+        onClose={() => setShowHelp(false)}
+        onOpenSettings={openGpsSettings}
+        onRunSetup={() => { resetSetup(); setShowHelp(false); setShowHelpSetupRerun(true); setShowNativeSetup(true); }}
+        gpsLabel={
+          !myUnit || shiftActive === false ? 'Off — no shift running'
+            : !gpsSharingEnabled ? 'Location sharing is turned off'
+            : bgPermNeeded ? 'Needs "Always" location access — see Location below'
+            : gpsConnecting ? 'Connecting…'
+            : gpsStale ? 'Stale — dispatch hasn\'t had a fresh position in over 90 seconds'
+            : myUnit?.last_gps_at ? 'Working' : 'No position yet'
+        }
+        pushLabel={
+          pushState === 'on' ? 'Notifications on — dispatch can reach you with the app closed'
+            : pushState === 'denied' ? 'Notifications are OFF — see Notifications below'
+            : pushState === 'error' ? 'Notifications not working — tell dispatch'
+            : null
+        }
+      />
+    </ErrorBoundary>
+  );
+
   if (!myUnit || shiftActive === false) {
+    if (showNativeSetup && showHelpSetupRerun) {
+      return <NativeSetupModal onDone={() => { setShowNativeSetup(false); setShowHelpSetupRerun(false); }} />;
+    }
     return (
       <div className="min-h-screen bg-gray-900 text-white flex flex-col items-center justify-center p-6 text-center max-w-md mx-auto">
+        {helpOverlay}
         <div className="text-5xl mb-4">{shiftEnded ? '🏁' : '🚑'}</div>
         <div className="text-white font-bold text-lg mb-1">
           {shiftEnded ? 'Shift Ended' : 'No Active Shift'}
@@ -880,12 +916,20 @@ export default function CrewMobile() {
         </div>
         <div className="text-green-400 text-sm mb-6">📍 Location sharing is off — you're not being tracked.</div>
         <div className="text-gray-600 text-xs mb-8">Logged in as {user?.unit_number}</div>
-        <button
-          onClick={async () => { stopCrewGpsTracking(); await unregisterPush(); logout(); navigate('/login'); }}
-          className="text-gray-500 hover:text-white text-xs px-3 py-1.5 rounded hover:bg-gray-700 transition-colors border border-gray-700"
-        >
-          Sign out
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowHelp(true)}
+            className="text-gray-300 hover:text-white text-xs px-3 py-1.5 rounded hover:bg-gray-700 transition-colors border border-gray-600"
+          >
+            ❓ Help & setup
+          </button>
+          <button
+            onClick={async () => { stopCrewGpsTracking(); await unregisterPush(); logout(); navigate('/login'); }}
+            className="text-gray-500 hover:text-white text-xs px-3 py-1.5 rounded hover:bg-gray-700 transition-colors border border-gray-700"
+          >
+            Sign out
+          </button>
+        </div>
       </div>
     );
   }
@@ -941,12 +985,21 @@ export default function CrewMobile() {
               <div className="text-gray-400 text-xs">{myUnit.unit_type}</div>
             </div>
           </div>
-          <button
-            onClick={async () => { stopCrewGpsTracking(); await unregisterPush(); logout(); navigate('/login'); }}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-900/40 hover:bg-red-700 border border-red-700/60 hover:border-red-500 text-red-400 hover:text-white text-xs font-semibold transition-colors"
-          >
-            <span>⏹</span> End Tracking
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowHelp(true)}
+              aria-label="Help and setup"
+              className="w-9 h-9 flex items-center justify-center rounded-full bg-gray-700 hover:bg-gray-600 border border-gray-600 text-gray-200 text-sm font-bold transition-colors"
+            >
+              ?
+            </button>
+            <button
+              onClick={async () => { stopCrewGpsTracking(); await unregisterPush(); logout(); navigate('/login'); }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-900/40 hover:bg-red-700 border border-red-700/60 hover:border-red-500 text-red-400 hover:text-white text-xs font-semibold transition-colors"
+            >
+              <span>⏹</span> End Tracking
+            </button>
+          </div>
         </div>
 
         {/* Status banner */}
@@ -1232,6 +1285,8 @@ export default function CrewMobile() {
           />
         </ErrorBoundary>
       )}
+
+      {helpOverlay}
 
       {showRoster && (
         <ErrorBoundary onClose={() => setShowRoster(false)}>

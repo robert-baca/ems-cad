@@ -70,8 +70,13 @@ export const setupDoneVersion = () => parseInt(localStorage.getItem('native_setu
 // Platform-specific steps (e.g. no "Unrestricted Battery" setting on iOS)
 // would just be confusing on the other platform.
 const platform = Capacitor.getPlatform();
-const PLATFORM_STEPS = ALL_STEPS.filter(s =>
+// Also shown in the crew Help screen (CrewHelp.jsx), so the reference copy
+// always matches what the first-time setup said.
+export const PLATFORM_STEPS = ALL_STEPS.filter(s =>
   !(s.androidOnly && platform !== 'android') && !(s.iosOnly && platform !== 'ios'));
+
+// Lets the Help screen re-run the whole setup from step 1.
+export const resetSetup = () => localStorage.setItem('native_setup_done', '0');
 
 const pendingSteps = (doneBefore) => PLATFORM_STEPS.filter(s => (s.since || 1) > doneBefore);
 // A version bump can add steps for one platform only -- the other shouldn't
