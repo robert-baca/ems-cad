@@ -1296,6 +1296,14 @@ app.patch('/api/units/:id/status', verifyToken, async (req, res) => {
   if (!VALID_UNIT_STATUSES.has(req.body.status))
     return res.status(400).json({ error: 'Invalid status' });
 
+  // A call-progress status from a crew phone only makes sense while the unit
+  // is on a call. Without this, a tap queued offline (see the client's
+  // offlineActionQueue) that replays after the unit came off the call strands
+  // it at e.g. 'acknowledged' with no call left to ever clear it. A 409 makes
+  // the queue drop the stale action instead of applying it.
+  if (req.user.role === 'crew' && STATUS_SEQUENCE.includes(req.body.status) && !getUnitActiveCall(unit.id))
+    return res.status(409).json({ error: 'Not on an active call' });
+
   unit.status = req.body.status;
   persist(saveUnit(unit), 'unit ' + unit.id);
   emitDispatch('unit:status_change', { unit_id: unit.id, status: unit.status });
