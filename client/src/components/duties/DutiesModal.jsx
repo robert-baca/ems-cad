@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { setDutiesEnabled, addDuty, deleteDuty } from '../../services/api';
 
 const byNumber = (a, b) => a.unit_number.localeCompare(b.unit_number, undefined, { numeric: true });
+// "Medic 9 · Haiden" -- the crew name dispatch set at shift start, if any.
+const unitLabel = (u) => u.crew ? `${u.unit_number} · ${u.crew}` : u.unit_number;
 
 export default function DutiesModal({ enabled, duties, units, onClose }) {
   const [text,     setText]     = useState('');
@@ -32,7 +34,7 @@ export default function DutiesModal({ enabled, duties, units, onClose }) {
 
   const togglePick = (id) => setPicked(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   const targetLabel = (d) => d.unit_ids.length
-    ? units.filter(u => d.unit_ids.includes(u.id)).sort(byNumber).map(u => u.unit_number).join(', ') || 'Removed unit'
+    ? units.filter(u => d.unit_ids.includes(u.id)).sort(byNumber).map(unitLabel).join(', ') || 'Removed unit'
     : 'All units';
 
   return (
@@ -91,7 +93,7 @@ export default function DutiesModal({ enabled, duties, units, onClose }) {
                   <button key={u.id} onClick={() => togglePick(u.id)}
                     className={`px-2.5 py-1 rounded-full text-xs border ${picked.includes(u.id)
                       ? 'bg-blue-700 border-blue-500 text-white' : 'bg-gray-700 border-gray-600 text-gray-300 hover:bg-gray-600'}`}>
-                    {u.unit_number}
+                    {unitLabel(u)}
                   </button>
                 ))}
               </div>
@@ -109,7 +111,7 @@ export default function DutiesModal({ enabled, duties, units, onClose }) {
               <div key={d.id} className="flex items-start gap-2 rounded-lg bg-gray-700/60 px-3 py-2">
                 <div className="flex-1 min-w-0">
                   <div className="text-gray-100 text-sm break-words">{d.text}</div>
-                  <div className="text-gray-400 text-[11px] truncate mt-0.5">{targetLabel(d)}</div>
+                  <div className="text-gray-400 text-[11px] break-words mt-0.5">{targetLabel(d)}</div>
                 </div>
                 <button onClick={() => handleDelete(d)} disabled={busy} title="Remove this duty"
                   className="text-gray-500 hover:text-red-400 w-7 h-7 flex items-center justify-center rounded hover:bg-gray-600 flex-shrink-0">
