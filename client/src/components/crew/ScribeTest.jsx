@@ -2,7 +2,8 @@ import { useState, useEffect, useRef } from 'react';
 import { processScribe, sendScribeFeedback, sendPtNote } from '../../services/api';
 import { startWavRecorder } from '../../lib/wavRecorder';
 
-// Ambient listening pilot, phase 0: role-play only. Records the encounter in
+// Ambient listening beta. Only starts once the medic records that the patient
+// (or a parent/guardian) agreed. Records the encounter in
 // the phone's browser, sends it to the server for transcription, and shows a
 // reference summary (not a written chart) where every item carries the quote
 // it came from -- the medic reads it while writing their own chart. Like
@@ -65,7 +66,7 @@ function Section({ title, children }) {
 
 export default function ScribeTest({ myUnit, onNoteSent, onClose, backRef }) {
   const [view, setView] = useState('intro'); // intro | recording | processing | review | error
-  const [rolePlay, setRolePlay] = useState(false);
+  const [consent, setConsent] = useState(''); // 'patient' | 'guardian' -- required to start
   const [elapsed, setElapsed] = useState(0);
   const [level, setLevel] = useState(0);
   const [paused, setPaused] = useState(false);
@@ -158,7 +159,7 @@ export default function ScribeTest({ myUnit, onNoteSent, onClose, backRef }) {
     setView('processing');
     setError('');
     try {
-      const res = await processScribe(wavRef.current.blob, segmentsRef.current, wavRef.current.seconds);
+      const res = await processScribe(wavRef.current.blob, segmentsRef.current, wavRef.current.seconds, consent);
       const data = res.data;
       setResult(data);
       setEdits(Object.fromEntries([
@@ -173,6 +174,17 @@ export default function ScribeTest({ myUnit, onNoteSent, onClose, backRef }) {
       setError(err?.response?.data?.error || 'Could not reach the server — check your signal and try again');
       setView('error');
     }
+  };
+
+  // Patient changed their mind (or the call turned critical): the audio never
+  // leaves the phone.
+  const discard = async () => {
+    if (!window.confirm('Throw away this recording? Nothing will be sent.')) return;
+    const rec = recRef.current;
+    recRef.current = null;
+    await rec?.stop().catch(() => {});
+    wakeRef.current?.release?.().catch(() => {});
+    onClose();
   };
 
   const stop = async () => {
@@ -261,7 +273,7 @@ export default function ScribeTest({ myUnit, onNoteSent, onClose, backRef }) {
 
   const header = (
     <div className="flex items-center justify-between px-4 pt-[calc(0.75rem+env(safe-area-inset-top))] pb-3 border-b border-gray-700 flex-shrink-0">
-      <span className="text-white font-bold text-base">🎙 Listen <span className="text-amber-400 text-xs font-semibold">TEST</span></span>
+      <span className="text-white font-bold text-base">🎙 Listen <span className="text-amber-400 text-xs font-semibold">BETA</span></span>
       <button onClick={() => { if (confirmClose()) onClose(); }}
         className="text-gray-400 hover:text-white w-11 h-11 flex items-center justify-center rounded hover:bg-gray-700 text-xl">×</button>
     </div>
@@ -274,27 +286,45 @@ export default function ScribeTest({ myUnit, onNoteSent, onClose, backRef }) {
       {view === 'intro' && (
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           <div className="bg-amber-900/40 border border-amber-600 rounded-xl p-3 text-amber-200 text-sm">
-            <b>Test mode — role-play only.</b> Don't use this on real patients yet. It's for trying the listening
-            tool on practice scenarios so we can measure how accurate it is.
+            <b>Beta.</b> You'll get a report to reference while you write your chart — patient info, vitals,
+            treatments and a timeline, each with the words it came from. It doesn't write the chart, and it can be
+            wrong: check everything against the patient.
           </div>
-          <div className="text-gray-300 text-sm space-y-2">
-            <p>How it works: tap Start, run the scenario normally, then tap Stop. You'll get a report to reference
-              while you write your chart — patient info, vitals, treatments and a timeline, each with the words it was
-              taken from so you can check it. It doesn't write the chart for you.</p>
-            <ul className="list-disc pl-5 space-y-1 text-gray-400">
-              <li>Keep the screen on and the phone face-up between you and the "patient". If the screen turns off, recording pauses.</li>
-              <li>Say vitals and treatments out loud: "BP 128 over 84, pulse 92", "giving 324 of aspirin by mouth".</li>
-              <li>Pause any time. Nothing is saved anywhere until you choose to.</li>
+
+          <div className="bg-gray-800 rounded-xl p-3 border border-gray-700 space-y-2">
+            <div className="text-white text-sm font-semibold">1. Ask first</div>
+            <p className="text-gray-200 text-sm italic">"I use a voice tool to help me with my notes. It doesn't keep the recording. Is that okay with you?"</p>
+            <div className="text-red-300 text-xs font-semibold pt-1">Don't record if:</div>
+            <ul className="list-disc pl-5 space-y-0.5 text-gray-300 text-xs">
+              <li>they say no, or seem unsure</li>
+              <li>the patient is under 18 and no parent/guardian is there to agree</li>
+              <li>the patient is confused, altered, unresponsive, or can't understand the question</li>
+              <li>it's a critical patient — care comes first</li>
             </ul>
+            <p className="text-gray-400 text-xs">If they change their mind, tap <b>Stop & throw away</b>.</p>
           </div>
-          <label className="flex items-start gap-3 bg-gray-800 rounded-xl p-3 border border-gray-700">
-            <input type="checkbox" checked={rolePlay} onChange={e => setRolePlay(e.target.checked)} className="mt-1 w-5 h-5" />
-            <span className="text-white text-sm">This is a training role-play, not a real patient.</span>
-          </label>
+
+          <div className="space-y-2">
+            <div className="text-white text-sm font-semibold">2. Who agreed?</div>
+            <div className="grid grid-cols-2 gap-2">
+              {[['patient', 'Patient agreed'], ['guardian', 'Parent/guardian agreed']].map(([id, label]) => (
+                <button key={id} onClick={() => setConsent(consent === id ? '' : id)}
+                  className={`py-3 rounded-xl text-sm font-semibold ${consent === id ? 'bg-green-700 text-white' : 'bg-gray-700 text-gray-300'}`}>
+                  {consent === id ? '✓ ' : ''}{label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <ul className="list-disc pl-5 space-y-1 text-gray-400 text-xs">
+            <li>Keep the screen on and the phone face-up near the patient. If the screen turns off, recording pauses.</li>
+            <li>Say findings, vitals and treatments out loud — it only knows what it hears.</li>
+            <li>Nothing is kept unless you save it to your PT Notes (deleted after 8 hours).</li>
+          </ul>
           {error && <p className="text-red-400 text-sm">{error}</p>}
-          <button onClick={start} disabled={!rolePlay}
+          <button onClick={start} disabled={!consent}
             className="w-full py-4 rounded-xl bg-red-600 active:bg-red-700 disabled:opacity-40 text-white font-bold">
-            ● Start listening
+            {consent ? '● Start listening' : 'Get consent to start'}
           </button>
         </div>
       )}
@@ -318,9 +348,12 @@ export default function ScribeTest({ myUnit, onNoteSent, onClose, backRef }) {
               {paused ? '▶ Resume' : '❚❚ Pause'}
             </button>
             <button onClick={stop} className="py-4 rounded-xl bg-blue-600 active:bg-blue-700 text-white font-bold">
-              ■ Stop & draft
+              ■ Stop & report
             </button>
           </div>
+          <button onClick={discard} className="w-full py-3 rounded-xl border border-red-700 text-red-300 text-sm font-semibold">
+            ✕ Stop & throw away
+          </button>
         </div>
       )}
 

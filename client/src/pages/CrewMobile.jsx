@@ -1269,7 +1269,7 @@ export default function CrewMobile() {
             onClick={() => setShowScribe(true)}
             className="w-full py-3 rounded-2xl bg-gray-800 border border-amber-700/60 text-amber-200 hover:border-amber-500 text-sm font-semibold transition-colors flex items-center justify-center gap-2"
           >
-            🎙 Listen <span className="text-amber-400 text-xs">(test)</span>
+            🎙 Listen <span className="text-amber-400 text-xs">(beta)</span>
           </button>
         )}
 

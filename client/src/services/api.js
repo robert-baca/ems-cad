@@ -43,10 +43,11 @@ export const deletePtNote = (id) => api.delete(`/pt-notes/${id}`);
 // Ambient listening pilot. The recording goes up as raw WAV; transcription
 // plus drafting can take a minute or two, so it gets a much longer timeout.
 export const getScribeConfig = () => api.get('/scribe/config');
-export const processScribe = (wavBlob, segments, audioSeconds) => api.post('/scribe/process', wavBlob, {
+export const processScribe = (wavBlob, segments, audioSeconds, consent) => api.post('/scribe/process', wavBlob, {
   timeout: 5 * 60 * 1000,
   headers: {
     'Content-Type': 'audio/wav',
+    'X-Scribe-Consent': consent,
     'X-Scribe-Segments': JSON.stringify(segments),
     'X-Scribe-Audio-Seconds': String(Math.round(audioSeconds)),
   },

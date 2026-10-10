@@ -645,6 +645,9 @@ async function initDb() {
       rated_at TIMESTAMPTZ
     )
   `);
+  // Who agreed to the recording: 'patient' or 'guardian'. Required since the
+  // beta moved to real patients.
+  await pool.query(`ALTER TABLE scribe_sessions ADD COLUMN IF NOT EXISTS consent TEXT`);
 
   // "Wrong way" reports from the crew navigation view -- where the medic was,
   // where they were headed, and the route they were given -- so the
@@ -1855,8 +1858,10 @@ app.delete('/api/pt-notes/:id', verifyToken, async (req, res) => {
 // reference summary -- PT Notes fields, vitals, treatments, pertinent
 // negatives and a timeline -- each item carrying the verbatim quote it came
 // from so the medic can check it. It deliberately does not write the chart
-// narrative; the medic writes that themselves using the summary. Phase 0 is role-play only and runs in the phone's browser -- the native
-// app doesn't declare microphone permission yet.
+// narrative; the medic writes that themselves using the summary. Beta on
+// real patients: every recording must carry who agreed to it (patient or
+// guardian), logged in scribe_sessions. Runs in the phone's browser only --
+// the native app doesn't declare microphone permission yet.
 // Rules this section keeps:
 //  - audio, transcript and draft are never written to the database, disk or
 //    console; they live for the length of one request and go back to the
@@ -2040,10 +2045,10 @@ function scribeVerify(draft, phrases) {
 
 function logScribeSession(row) {
   pool.query(
-    `INSERT INTO scribe_sessions (id, personnel_id, personnel, unit_id, unit_number, audio_seconds, phrase_count, status)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    `INSERT INTO scribe_sessions (id, personnel_id, personnel, unit_id, unit_number, audio_seconds, phrase_count, status, consent)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
     [row.id, row.user.personnel_id || null, row.user.name || null, row.user.unit_id || null,
-     units.find(u => u.id === row.user.unit_id)?.unit_number || null, row.audio_seconds, row.phrase_count, row.status]
+     units.find(u => u.id === row.user.unit_id)?.unit_number || null, row.audio_seconds, row.phrase_count, row.status, row.consent]
   ).catch(err => console.error('[scribe] session log write failed:', err.message));
 }
 
@@ -2060,6 +2065,8 @@ app.post('/api/scribe/process', verifyToken,
     if (req.user.role !== 'crew') return res.status(403).json({ error: 'Forbidden' });
     if (!scribeAllowed(req.user) || !scribeConfigured()) return res.status(403).json({ error: 'Listening isn\'t turned on for you' });
     if (!Buffer.isBuffer(req.body) || req.body.length < 1000) return res.status(400).json({ error: 'No audio received' });
+    const consent = req.get('X-Scribe-Consent');
+    if (!['patient', 'guardian'].includes(consent)) return res.status(400).json({ error: 'Record who agreed to the recording first' });
 
     const key = String(req.user.personnel_id || req.user.unit_id);
     const hourAgo = Date.now() - 60 * 60 * 1000;
@@ -2083,7 +2090,7 @@ app.post('/api/scribe/process', verifyToken,
       phrases = await scribeTranscribe(req.body, req.get('Content-Type') || 'audio/wav');
     } catch (err) {
       console.error('[scribe] transcription failed:', err.message);
-      logScribeSession({ id: sessionId, user: req.user, audio_seconds: audioSeconds, phrase_count: 0, status: 'transcribe_failed' });
+      logScribeSession({ id: sessionId, user: req.user, consent, audio_seconds: audioSeconds, phrase_count: 0, status: 'transcribe_failed' });
       return res.status(502).json({ error: 'Transcription failed — try again' });
     }
     phrases = phrases.map(p => ({
@@ -2092,7 +2099,7 @@ app.post('/api/scribe/process', verifyToken,
       text: p.text
     }));
     if (!phrases.length) {
-      logScribeSession({ id: sessionId, user: req.user, audio_seconds: audioSeconds, phrase_count: 0, status: 'no_speech' });
+      logScribeSession({ id: sessionId, user: req.user, consent, audio_seconds: audioSeconds, phrase_count: 0, status: 'no_speech' });
       return res.status(422).json({ error: 'No speech was picked up — keep the phone closer and try again' });
     }
 
@@ -2102,11 +2109,11 @@ app.post('/api/scribe/process', verifyToken,
       draft = scribeVerify(await scribeDraft(transcriptText), phrases);
     } catch (err) {
       console.error('[scribe] draft failed:', err.message);
-      logScribeSession({ id: sessionId, user: req.user, audio_seconds: audioSeconds, phrase_count: phrases.length, status: 'draft_failed' });
+      logScribeSession({ id: sessionId, user: req.user, consent, audio_seconds: audioSeconds, phrase_count: phrases.length, status: 'draft_failed' });
       // Still hand back the transcript -- it's useful on its own.
       return res.json({ session_id: sessionId, phrases, draft: null, error: 'The draft couldn\'t be written — the transcript is below' });
     }
-    logScribeSession({ id: sessionId, user: req.user, audio_seconds: audioSeconds, phrase_count: phrases.length, status: 'ok' });
+    logScribeSession({ id: sessionId, user: req.user, consent, audio_seconds: audioSeconds, phrase_count: phrases.length, status: 'ok' });
     res.json({ session_id: sessionId, phrases, draft });
   });
 
