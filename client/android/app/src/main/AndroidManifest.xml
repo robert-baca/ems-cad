@@ -61,4 +61,10 @@
          photo capture). Not required hardware, so no Play filtering. -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <!-- Start Incident recording (microphone in the WebView via getUserMedia;
+         Capacitor's WebChromeClient asks for RECORD_AUDIO when the page does).
+         Audio is sent for transcription and never stored on the phone. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
 </manifest>

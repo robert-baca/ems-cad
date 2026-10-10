@@ -30,6 +30,22 @@ export function nativeCall(plugin, method, options = {}) {
   return window.Capacitor.nativePromise(plugin, method, options);
 }
 
+// Start Incident recording needs an app build (1.7.0+) that declares the
+// microphone and ships the KeepAwake plugin. The screens load live from the
+// website, so older installs see this code too -- probing the plugin is how
+// we tell them apart (an older build rejects with "not implemented").
+export async function nativeCanRecord() {
+  if (!isNative()) return false;
+  try { await nativeCall('KeepAwake', 'isSupported'); return true; } catch { return false; }
+}
+
+// Keep the screen on while recording -- the WebView stops getting audio once
+// the phone locks. No-op on the web (the page uses the Wake Lock API there).
+export function keepScreenAwake(on) {
+  if (!isNative()) return;
+  nativeCall('KeepAwake', on ? 'keepAwake' : 'allowSleep').catch(() => {});
+}
+
 // Same reasoning as nativeCall above, but for persistent event listeners
 // (addListener-style APIs, e.g. PushNotifications' 'registration' event)
 // rather than one-shot calls -- registerPlugin()'s proxy builds its own

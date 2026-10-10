@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { processScribe, sendScribeFeedback, sendPtNote } from '../../services/api';
 import { startWavRecorder } from '../../lib/wavRecorder';
+import { keepScreenAwake } from '../../lib/native';
 import LicenseScanner from './LicenseScanner';
 import { UnitPicker, VitalsGrid, VITALS } from './PtNotes';
 
@@ -94,8 +95,8 @@ function Section({ title, children }) {
   );
 }
 
-// canRecord: false in the native app (no mic permission yet) or when the
-// listening pilot isn't on for this medic -- the form, scan, save and send
+// canRecord: false on app builds older than 1.7.0 (no mic permission) or when
+// the listening pilot isn't on for this medic -- the form, scan, save and send
 // still work, just without the recording.
 export default function ScribeTest({ myUnit, units, myActiveCall, canRecord, onNoteSent, onClose, backRef }) {
   const [view, setView] = useState('demos'); // demos | recording | processing | review | error
@@ -162,7 +163,7 @@ export default function ScribeTest({ myUnit, units, myActiveCall, canRecord, onN
   }, [view, paused]);
 
   // Release the mic and wake lock if the screen is closed mid-recording.
-  useEffect(() => () => { recRef.current?.stop().catch(() => {}); wakeRef.current?.release?.().catch(() => {}); }, []);
+  useEffect(() => () => { recRef.current?.stop().catch(() => {}); releaseWake(); }, []);
 
   // ── Demographics (before recording) ──
   const setDemo = (k, v) => {
@@ -188,8 +189,13 @@ export default function ScribeTest({ myUnit, units, myActiveCall, canRecord, onN
 
   // ── Recording ──
   const requestWakeLock = async () => {
+    keepScreenAwake(true); // app; the Wake Lock API below covers browsers
     try { wakeRef.current = await navigator.wakeLock?.request('screen'); } catch { /* unsupported -- the tip covers it */ }
   };
+  function releaseWake() {
+    keepScreenAwake(false);
+    wakeRef.current?.release?.().catch(() => {});
+  }
 
   const start = async () => {
     setError('');
@@ -270,7 +276,7 @@ export default function ScribeTest({ myUnit, units, myActiveCall, canRecord, onN
     const rec = recRef.current;
     recRef.current = null;
     await rec?.stop().catch(() => {});
-    wakeRef.current?.release?.().catch(() => {});
+    releaseWake();
     onClose();
   };
 
@@ -280,7 +286,7 @@ export default function ScribeTest({ myUnit, units, myActiveCall, canRecord, onN
     recRef.current = null;
     const seconds = rec.durationMs() / 1000;
     const blob = await rec.stop();
-    wakeRef.current?.release?.().catch(() => {});
+    releaseWake();
     if (seconds < 3) { setError('That recording was too short.'); setView('demos'); return; }
     wavRef.current = { blob, seconds };
     upload();
@@ -470,7 +476,7 @@ export default function ScribeTest({ myUnit, units, myActiveCall, canRecord, onN
             {error && <p className="text-red-400 text-sm">{error}</p>}
             {!canRecord ? (
               <>
-                <p className="text-gray-500 text-[11px] text-center">Recording only works in a web browser for now (cad.sfotems.com).</p>
+                <p className="text-gray-500 text-[11px] text-center">Recording isn't available here — update the EMS Crew app, or use cad.sfotems.com in a browser.</p>
                 <button onClick={skipRecording}
                   className="w-full py-3 rounded-xl bg-blue-600 active:bg-blue-700 text-white font-bold text-sm">
                   Next: save / send →

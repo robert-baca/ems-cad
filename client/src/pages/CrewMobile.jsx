@@ -22,7 +22,7 @@ import CrewBroadcasts from '../components/crew/CrewBroadcasts';
 import PtNotes from '../components/crew/PtNotes';
 import ScribeTest from '../components/crew/ScribeTest';
 import { getScribeConfig } from '../services/api';
-import { isNative as isNativePlatform, nativeCall } from '../lib/native';
+import { isNative as isNativePlatform, nativeCall, nativeCanRecord } from '../lib/native';
 import { enqueueOfflineAction, subscribeOfflineQueue, getOfflineQueue } from '../lib/offlineActionQueue';
 import EmergencyPanel from '../components/crew/EmergencyPanel';
 import { startEmergency, cancelEmergency, getActiveEmergencies } from '../services/api';
@@ -247,8 +247,8 @@ export default function CrewMobile() {
   // Patient handoff notes (PHI) -- memory only, never persisted on the device.
   const [showPtNotes,      setShowPtNotes]      = useState(false);
   const [ptNotes,          setPtNotes]          = useState([]);
-  // Ambient listening pilot: browser only for now (the native app has no
-  // microphone permission), and only for crew the server has it turned on for.
+  // Start Incident recording: only for crew the server has it turned on for,
+  // and in the app only on builds with the mic permission (nativeCanRecord).
   const [scribeEnabled,    setScribeEnabled]    = useState(false);
   const [showScribe,       setShowScribe]       = useState(false);
   const [showBeacon,       setShowBeacon]       = useState(false);
@@ -731,11 +731,10 @@ export default function CrewMobile() {
       getPtNotes()
         .then(res => { if (Array.isArray(res.data)) setPtNotes(res.data); })
         .catch(() => {});
-      if (!isNativePlatform()) {
-        getScribeConfig()
-          .then(res => setScribeEnabled(!!res.data?.enabled))
-          .catch(() => {});
-      }
+      // In the app, recording also needs a build with the mic permission.
+      Promise.all([getScribeConfig(), isNativePlatform() ? nativeCanRecord() : true])
+        .then(([res, deviceOk]) => setScribeEnabled(!!res.data?.enabled && deviceOk))
+        .catch(() => {});
       getActiveEmergencies()
         .then(res => { if (Array.isArray(res.data)) setEmergencies(res.data); })
         .catch(() => {});
