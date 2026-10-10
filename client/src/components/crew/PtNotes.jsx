@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { sendPtNote, viewPtNote } from '../../services/api';
+import { sendPtNote, viewPtNote, deletePtNote } from '../../services/api';
 import LicenseScanner from './LicenseScanner';
 
 // Patient handoff notes between medics. This is protected health
@@ -223,10 +223,26 @@ function Compose({ myUnit, units, myActiveCall, onSent, onCancel }) {
   );
 }
 
-function NoteView({ note, myUnit, onBack, onViewed }) {
+function NoteView({ note, myUnit, onBack, onViewed, onDeleted }) {
   const saved = note.to_unit_id === myUnit.id && note.from_unit_id === myUnit.id;
   const incoming = note.to_unit_id === myUnit.id && !saved;
   const [viewError, setViewError] = useState('');
+  const [deleting, setDeleting] = useState(false);
+
+  // Deleting removes the note for both medics on it, not just this phone.
+  const remove = async () => {
+    const who = saved ? '' : incoming ? ` It will also disappear from ${note.from_unit_number}'s Sent.` : ` ${note.to_unit_number} won't be able to see it anymore.`;
+    if (!window.confirm(`Delete these patient notes?${who} This can't be undone.`)) return;
+    setDeleting(true);
+    try {
+      await deletePtNote(note.id);
+      onDeleted(note.id);
+    } catch (err) {
+      if (err?.response?.status === 404) { onDeleted(note.id); return; } // already gone
+      setViewError('Could not delete — check your connection and try again');
+      setDeleting(false);
+    }
+  };
   // Vitals render as one card, placed where the first filled-in vital is.
   const firstFilledVital = VITALS.find(v => note.fields?.[v.key])?.key;
 
@@ -276,13 +292,19 @@ function NoteView({ note, myUnit, onBack, onViewed }) {
         )}
         <p className="text-gray-500 text-[11px] pt-2">Deleted automatically 8 hours after it was sent.</p>
       </div>
+      <div className="p-4 border-t border-gray-700 flex-shrink-0">
+        <button onClick={remove} disabled={deleting}
+          className="w-full py-3 rounded-xl bg-red-900/50 border border-red-700 active:bg-red-900 disabled:opacity-50 text-red-200 font-semibold text-sm">
+          {deleting ? 'Deleting…' : '🗑 Delete notes'}
+        </button>
+      </div>
     </>
   );
 }
 
 // backRef lets CrewMobile's native back button step out of a note/compose
 // view before closing PT NOTES entirely (same pattern as BeaconMode).
-export default function PtNotes({ myUnit, units, myActiveCall, notes, onNoteSent, onNoteViewed, onClose, backRef }) {
+export default function PtNotes({ myUnit, units, myActiveCall, notes, onNoteSent, onNoteViewed, onNoteDeleted, onClose, backRef }) {
   const [view, setView] = useState('list'); // list | compose | note
   const [tab, setTab] = useState('inbox');
   const [openId, setOpenId] = useState(null);
@@ -320,7 +342,8 @@ export default function PtNotes({ myUnit, units, myActiveCall, notes, onNoteSent
           onSent={(note) => { onNoteSent(note); setTab(note.to_unit_id === myUnit.id ? 'saved' : 'sent'); setView('list'); }}
         />
       ) : view === 'note' && openNote ? (
-        <NoteView note={openNote} myUnit={myUnit} onBack={() => setView('list')} onViewed={onNoteViewed} />
+        <NoteView note={openNote} myUnit={myUnit} onBack={() => setView('list')} onViewed={onNoteViewed}
+          onDeleted={(id) => { onNoteDeleted(id); setView('list'); }} />
       ) : (
         <>
           <div className="flex items-center justify-between px-4 pt-[calc(0.75rem+env(safe-area-inset-top))] pb-3 border-b border-gray-700 flex-shrink-0">

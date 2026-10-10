@@ -1829,6 +1829,26 @@ app.post('/api/pt-notes/:id/view', verifyToken, async (req, res) => {
   }
 });
 
+// Either unit on a note can delete it, and it's gone for both -- no copy is
+// left in the other medic's Sent/Received. The access log keeps the
+// 'delete' entry (no patient details).
+app.delete('/api/pt-notes/:id', verifyToken, async (req, res) => {
+  if (req.user.role !== 'crew') return res.status(403).json({ error: 'Forbidden' });
+  try {
+    const r = await pool.query('SELECT to_unit_id, from_unit_id, created_at FROM pt_notes WHERE id = $1', [req.params.id]);
+    const n = r.rows[0];
+    if (!n || (n.to_unit_id !== req.user.unit_id && n.from_unit_id !== req.user.unit_id) || n.created_at < ptNoteVisibleSince())
+      return res.status(404).json({ error: 'Not found' });
+    await pool.query('DELETE FROM pt_notes WHERE id = $1', [req.params.id]);
+    logPtNoteAccess(req.params.id, 'delete', req.user);
+    io.to(`crew:${n.from_unit_id}`).to(`crew:${n.to_unit_id}`).emit('pt_note:deleted', { id: req.params.id });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[pt-notes] delete failed:', err.message);
+    res.status(500).json({ error: 'Could not delete — try again' });
+  }
+});
+
 // ── SCRIBE: ambient listening pilot (phase 0) ───────────────────────
 // A medic records a role-played encounter on their phone; Azure AI Speech
 // transcribes it (with speakers separated) and Azure OpenAI builds a

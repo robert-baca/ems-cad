@@ -702,6 +702,7 @@ export default function CrewMobile() {
     },
     'duties:updated':      (s) => { if (Array.isArray(s?.duties)) setDutiesState(s); },
     'pt_note:read':        ({ id, read_at }) => setPtNotes(prev => prev.map(n => n.id === id ? { ...n, read_at } : n)),
+    'pt_note:deleted':     ({ id }) => setPtNotes(prev => prev.filter(n => n.id !== id)),
     'emergency:started':   (e) => {
       handleEmergencyEvent(e);
       if (e.unit_id !== myUnit?.id) {
@@ -1332,6 +1333,7 @@ export default function CrewMobile() {
             onNoteSent={(note) => setPtNotes(prev => [note, ...prev.filter(n => n.id !== note.id)])}
             onNoteViewed={(id, readAt) => setPtNotes(prev => prev.map(n =>
               n.id === id && !n.read_at && n.to_unit_id === myUnit.id ? { ...n, read_at: readAt || new Date().toISOString() } : n))}
+            onNoteDeleted={(id) => setPtNotes(prev => prev.filter(n => n.id !== id))}
             onClose={() => setShowPtNotes(false)}
             backRef={ptNotesBackRef}
           />

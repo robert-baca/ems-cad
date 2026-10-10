@@ -38,6 +38,7 @@ export const getBroadcasts = () => api.get('/broadcasts');
 export const getPtNotes = () => api.get('/pt-notes');
 export const sendPtNote = (data) => api.post('/pt-notes', data);
 export const viewPtNote = (id) => api.post(`/pt-notes/${id}/view`);
+export const deletePtNote = (id) => api.delete(`/pt-notes/${id}`);
 
 // Ambient listening pilot. The recording goes up as raw WAV; transcription
 // plus drafting can take a minute or two, so it gets a much longer timeout.
