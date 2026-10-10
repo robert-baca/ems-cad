@@ -38,6 +38,19 @@ export const getBroadcasts = () => api.get('/broadcasts');
 export const getPtNotes = () => api.get('/pt-notes');
 export const sendPtNote = (data) => api.post('/pt-notes', data);
 export const viewPtNote = (id) => api.post(`/pt-notes/${id}/view`);
+
+// Ambient listening pilot. The recording goes up as raw WAV; transcription
+// plus drafting can take a minute or two, so it gets a much longer timeout.
+export const getScribeConfig = () => api.get('/scribe/config');
+export const processScribe = (wavBlob, segments, audioSeconds) => api.post('/scribe/process', wavBlob, {
+  timeout: 5 * 60 * 1000,
+  headers: {
+    'Content-Type': 'audio/wav',
+    'X-Scribe-Segments': JSON.stringify(segments),
+    'X-Scribe-Audio-Seconds': String(Math.round(audioSeconds)),
+  },
+});
+export const sendScribeFeedback = (sessionId, data) => api.post(`/scribe/sessions/${sessionId}/feedback`, data);
 export const getBroadcastHistory = () => api.get('/broadcasts/history');
 export const markBroadcastRead = (id) => api.post(`/broadcasts/${id}/read`);
 

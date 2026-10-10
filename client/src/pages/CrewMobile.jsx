@@ -20,6 +20,8 @@ import CrewRoster from '../components/crew/CrewRoster';
 import { setCrewGpsSharing, getCrewMessages, sendCrewMessage, getBroadcasts, markBroadcastRead, releaseFromCall, getPtNotes, getCurrentShift } from '../services/api';
 import CrewBroadcasts from '../components/crew/CrewBroadcasts';
 import PtNotes from '../components/crew/PtNotes';
+import ScribeTest from '../components/crew/ScribeTest';
+import { getScribeConfig } from '../services/api';
 import { isNative as isNativePlatform, nativeCall } from '../lib/native';
 import { enqueueOfflineAction, subscribeOfflineQueue, getOfflineQueue } from '../lib/offlineActionQueue';
 import EmergencyPanel from '../components/crew/EmergencyPanel';
@@ -245,6 +247,10 @@ export default function CrewMobile() {
   // Patient handoff notes (PHI) -- memory only, never persisted on the device.
   const [showPtNotes,      setShowPtNotes]      = useState(false);
   const [ptNotes,          setPtNotes]          = useState([]);
+  // Ambient listening pilot: browser only for now (the native app has no
+  // microphone permission), and only for crew the server has it turned on for.
+  const [scribeEnabled,    setScribeEnabled]    = useState(false);
+  const [showScribe,       setShowScribe]       = useState(false);
   const [showBeacon,       setShowBeacon]       = useState(false);
   // Open Find Medic straight onto this unit (emergency "Find" button).
   const [beaconTargetId,   setBeaconTargetId]   = useState(null);
@@ -724,6 +730,11 @@ export default function CrewMobile() {
       getPtNotes()
         .then(res => { if (Array.isArray(res.data)) setPtNotes(res.data); })
         .catch(() => {});
+      if (!isNativePlatform()) {
+        getScribeConfig()
+          .then(res => setScribeEnabled(!!res.data?.enabled))
+          .catch(() => {});
+      }
       getActiveEmergencies()
         .then(res => { if (Array.isArray(res.data)) setEmergencies(res.data); })
         .catch(() => {});
@@ -1252,6 +1263,15 @@ export default function CrewMobile() {
           )}
         </button>
 
+        {scribeEnabled && (
+          <button
+            onClick={() => setShowScribe(true)}
+            className="w-full py-3 rounded-2xl bg-gray-800 border border-amber-700/60 text-amber-200 hover:border-amber-500 text-sm font-semibold transition-colors flex items-center justify-center gap-2"
+          >
+            🎙 Listen <span className="text-amber-400 text-xs">(test)</span>
+          </button>
+        )}
+
         <button
           onClick={() => setShowCaseHistory(true)}
           className="w-full py-3 rounded-2xl bg-gray-800 border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 text-sm font-medium transition-colors flex items-center justify-center gap-2"
@@ -1314,6 +1334,16 @@ export default function CrewMobile() {
               n.id === id && !n.read_at && n.to_unit_id === myUnit.id ? { ...n, read_at: readAt || new Date().toISOString() } : n))}
             onClose={() => setShowPtNotes(false)}
             backRef={ptNotesBackRef}
+          />
+        </ErrorBoundary>
+      )}
+
+      {showScribe && myUnit && (
+        <ErrorBoundary onClose={() => setShowScribe(false)}>
+          <ScribeTest
+            myUnit={myUnit}
+            onNoteSent={(note) => setPtNotes(prev => [note, ...prev.filter(n => n.id !== note.id)])}
+            onClose={() => setShowScribe(false)}
           />
         </ErrorBoundary>
       )}

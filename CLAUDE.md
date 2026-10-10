@@ -107,6 +107,13 @@ cad-system/
 
 Quick call types are shared server-side (`app_settings.quick_call_types`, `lib/quickTypes.js`); a browser's old localStorage list is migrated up once.
 
+### Ambient listening pilot ("Listen (test)", phase 0)
+Role-play-only test of an AI scribe. Crew home screen shows **🎙 Listen (test)** only in a phone *browser* (not the native app — it declares no microphone permission yet; adding `RECORD_AUDIO` / `NSMicrophoneUsageDescription` plus background audio is phase 1 and needs a native release) and only when `GET /api/scribe/config` says enabled.
+- `ScribeTest.jsx` records 16 kHz mono WAV via `lib/wavRecorder.js` (PCM, not MediaRecorder — iOS/Chrome disagree on formats). Pause/resume and screen-off pauses are tracked as segments (`X-Scribe-Segments` header) so transcript times are real clock times.
+- `POST /api/scribe/process` (raw audio body): Azure AI Speech fast transcription with diarization → Azure OpenAI structured output (`SCRIBE_SCHEMA`) → `scribeVerify()` checks every evidence quote against the transcript (unverified = ⚠ in the UI). Audio/transcript/draft are never stored or logged; the response goes back to the phone only.
+- Medic reviews/edits, can save to their own PT Notes (same 8h purge), and must rate the draft. `scribe_sessions` keeps usage + ratings only (no PHI) — that's the pilot data.
+- Env: `SCRIBE_PILOT` (`on`, or comma-separated personnel ids; unset = off), `AZURE_SPEECH_KEY`, `AZURE_SPEECH_REGION` (or `AZURE_SPEECH_ENDPOINT`), `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_KEY`, `AZURE_OPENAI_DEPLOYMENT`, optional `AZURE_OPENAI_API_VERSION` (default `2024-10-21`).
+
 ### Call audit log
 Edits to call timestamps, narrative, details, location, priority and close-out are recorded in `call_audit_log` (`logCallChanges()`), shown in the dispatcher's call panel under the **Changes** tab (`CallChangeLog.jsx`, `GET /api/calls/:id/audit`). Calls are no longer deleted after 90 days; `gps_history` is pruned after 365 days.
 

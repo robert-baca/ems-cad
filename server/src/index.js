@@ -624,6 +624,28 @@ async function initDb() {
     )
   `);
 
+  // Ambient scribe pilot (see SCRIBE section). One row per recording, for
+  // measuring the pilot -- who used it, how long, how the medic rated the
+  // draft. No audio, transcript or patient details are ever stored.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS scribe_sessions (
+      id TEXT PRIMARY KEY,
+      personnel_id TEXT,
+      personnel TEXT,
+      unit_id TEXT,
+      unit_number TEXT,
+      audio_seconds INTEGER,
+      phrase_count INTEGER,
+      status TEXT NOT NULL,
+      rating TEXT,
+      critical_errors INTEGER,
+      fields_edited INTEGER,
+      saved_to_pt_notes BOOLEAN DEFAULT FALSE,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      rated_at TIMESTAMPTZ
+    )
+  `);
+
   // "Wrong way" reports from the crew navigation view -- where the medic was,
   // where they were headed, and the route they were given -- so the
   // wayfinding admin can find and fix bad spots in the path network.
@@ -1801,6 +1823,282 @@ app.post('/api/pt-notes/:id/view', verifyToken, async (req, res) => {
   } catch (err) {
     console.error('[pt-notes] view failed:', err.message);
     res.status(500).json({ error: 'Could not open note' });
+  }
+});
+
+// ── SCRIBE: ambient listening pilot (phase 0) ───────────────────────
+// A medic records a role-played encounter on their phone; Azure AI Speech
+// transcribes it (with speakers separated) and Azure OpenAI drafts PT Notes
+// fields, a vitals/treatment timeline, pertinent negatives and a narrative,
+// each item carrying the verbatim quote it came from so the medic can check
+// it. Phase 0 is role-play only and runs in the phone's browser -- the native
+// app doesn't declare microphone permission yet.
+// Rules this section keeps:
+//  - audio, transcript and draft are never written to the database, disk or
+//    console; they live for the length of one request and go back to the
+//    medic's phone. scribe_sessions holds usage numbers only.
+//  - only the Azure services (covered by the Microsoft BAA) are called
+//  - off unless SCRIBE_PILOT is set: 'on' for every crew member, or a
+//    comma-separated list of personnel ids
+const SCRIBE_PILOT = (process.env.SCRIBE_PILOT || '').trim();
+const AZURE_SPEECH_KEY = process.env.AZURE_SPEECH_KEY;
+const AZURE_SPEECH_ENDPOINT = (process.env.AZURE_SPEECH_ENDPOINT
+  || (process.env.AZURE_SPEECH_REGION ? `https://${process.env.AZURE_SPEECH_REGION}.api.cognitive.microsoft.com` : '')).replace(/\/+$/, '');
+const AZURE_OPENAI_ENDPOINT = (process.env.AZURE_OPENAI_ENDPOINT || '').replace(/\/+$/, '');
+const AZURE_OPENAI_KEY = process.env.AZURE_OPENAI_KEY;
+const AZURE_OPENAI_DEPLOYMENT = process.env.AZURE_OPENAI_DEPLOYMENT;
+const AZURE_OPENAI_API_VERSION = process.env.AZURE_OPENAI_API_VERSION || '2024-10-21';
+const SCRIBE_TIME_ZONE = 'America/Chicago';
+const SCRIBE_MAX_BYTES = 64 * 1024 * 1024; // a bit over 30 min of 16 kHz mono WAV
+const SCRIBE_HOURLY_LIMIT = 20;
+const scribeRecent = new Map(); // personnel_id -> request timestamps (last hour)
+
+const SCRIBE_FIELD_KEYS = ['name', 'dob', 'age', 'sex', 'location', 'address', 'phone', 'medical_hx', 'allergies', 'medications'];
+const SCRIBE_HISTORY_KEYS = ['onset', 'provocation', 'quality', 'radiation', 'severity', 'time_course', 'last_oral_intake', 'events_leading_up'];
+const SCRIBE_VITAL_KEYS = ['bp', 'hr', 'rr', 'spo2', 'bgl', 'gcs', 'pain', 'temp'];
+
+function scribeConfigured() {
+  return !!(AZURE_SPEECH_KEY && AZURE_SPEECH_ENDPOINT && AZURE_OPENAI_ENDPOINT && AZURE_OPENAI_KEY && AZURE_OPENAI_DEPLOYMENT);
+}
+
+function scribeAllowed(user) {
+  if (!SCRIBE_PILOT || SCRIBE_PILOT === 'off') return false;
+  if (SCRIBE_PILOT === 'on') return true;
+  return SCRIBE_PILOT.split(',').map(s => s.trim()).includes(String(user.personnel_id));
+}
+
+const nullableString = { type: ['string', 'null'] };
+const scribeItem = () => ({
+  type: 'object', additionalProperties: false, required: ['value', 'evidence'],
+  properties: { value: nullableString, evidence: nullableString }
+});
+const scribeObject = (keys, make) => ({
+  type: 'object', additionalProperties: false, required: keys,
+  properties: Object.fromEntries(keys.map(k => [k, make()]))
+});
+const SCRIBE_SCHEMA = {
+  type: 'object', additionalProperties: false,
+  required: ['speakers', 'patient', 'chief_complaint', 'history', 'vitals', 'interventions', 'pertinent_negatives', 'missing', 'narrative'],
+  properties: {
+    speakers: { type: 'array', items: {
+      type: 'object', additionalProperties: false, required: ['speaker', 'role'],
+      properties: { speaker: { type: 'string' }, role: { type: 'string', enum: ['medic', 'patient', 'family_or_bystander', 'other_provider', 'unknown'] } }
+    } },
+    patient: scribeObject(SCRIBE_FIELD_KEYS, scribeItem),
+    chief_complaint: scribeItem(),
+    history: scribeObject(SCRIBE_HISTORY_KEYS, scribeItem),
+    vitals: { type: 'array', items: {
+      type: 'object', additionalProperties: false, required: ['time', ...SCRIBE_VITAL_KEYS, 'evidence'],
+      properties: { time: nullableString, ...Object.fromEntries(SCRIBE_VITAL_KEYS.map(k => [k, nullableString])), evidence: { type: 'string' } }
+    } },
+    interventions: { type: 'array', items: {
+      type: 'object', additionalProperties: false, required: ['time', 'description', 'evidence'],
+      properties: { time: nullableString, description: { type: 'string' }, evidence: { type: 'string' } }
+    } },
+    pertinent_negatives: { type: 'array', items: {
+      type: 'object', additionalProperties: false, required: ['finding', 'evidence'],
+      properties: { finding: { type: 'string' }, evidence: { type: 'string' } }
+    } },
+    missing: { type: 'array', items: { type: 'string' } },
+    narrative: { type: 'string' }
+  }
+};
+
+const SCRIBE_PROMPT = `You draft EMS documentation from the transcript of a patient encounter recorded by a medic at Six Flags Over Texas, a theme park. The transcript comes from speech recognition, so it can contain recognition errors, and the speaker labels (S1, S2, ...) can be mixed up.
+
+Rules:
+1. Document only what was actually said. Never infer, assume, or add typical findings. If something was not said, its value is null.
+2. Negation matters more than anything else. "Denies chest pain", "no allergies", "not on any medications" must stay negative. If you can't tell whether something was affirmed or denied, leave it null and add it to missing.
+3. Every value needs evidence: a short quote copied word for word from the transcript text (without the time or speaker label) that supports it. Never paraphrase evidence.
+4. History comes from what the patient or family said; findings, vitals and treatments from what the medic said.
+5. vitals: one entry per set the medic stated aloud, with the clock time (HH:MM) of the transcript line. Values as normally charted: bp "128/84", hr "92", rr "18", spo2 "97", bgl "104", gcs "15", pain "6", temp "99.1". Null for anything not stated in that set.
+6. interventions: treatments, medications (name, dose, route) and procedures the medic said they did or were doing, with clock time (HH:MM). Leave out anything only discussed or considered.
+7. allergies: "NKDA" if the patient said they have no allergies. medications / medical_hx: "None" if the patient said they have none.
+8. age: number only, e.g. "34". sex: "M", "F" or "Other", only if said in the conversation. dob as said, formatted MM/DD/YYYY when it is complete.
+9. location: where in the park the patient was, only if said.
+10. pertinent_negatives: findings the patient denied or the medic found absent, e.g. "Denies chest pain".
+11. missing: short reminders of standard documentation items NOT covered in the conversation that would normally be documented for this kind of call, e.g. "Allergies not asked", "No repeat vitals", "Pain scale not recorded". Documentation gaps only -- never treatment advice.
+12. narrative: a concise EMS narrative, third person, past tense, chronological, using only facts that have evidence above. Do not include the patient's name, phone number or address. Empty string if there is too little to write one.
+13. speakers: your best guess at each speaker label's role.`;
+
+const scribeNorm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+function scribeClockTime(ms) {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: SCRIBE_TIME_ZONE, hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23'
+  }).format(new Date(ms));
+}
+
+// The phone pauses/resumes recording, so audio offsets map to wall-clock time
+// through the list of segments it sends ({ a: audio offset ms, t: epoch ms }).
+function scribeWallClock(offsetMs, segments) {
+  let seg = segments[0];
+  for (const s of segments) if (s.a <= offsetMs) seg = s;
+  return seg.t + (offsetMs - seg.a);
+}
+
+async function scribeTranscribe(audio, contentType) {
+  const form = new FormData();
+  form.append('audio', new Blob([audio], { type: contentType }), 'encounter.wav');
+  form.append('definition', JSON.stringify({
+    locales: ['en-US'],
+    diarization: { enabled: true, maxSpeakers: 4 },
+    profanityFilterMode: 'None'
+  }));
+  const r = await fetch(`${AZURE_SPEECH_ENDPOINT}/speechtotext/transcriptions:transcribe?api-version=2024-11-15`, {
+    method: 'POST',
+    headers: { 'Ocp-Apim-Subscription-Key': AZURE_SPEECH_KEY },
+    body: form,
+    signal: AbortSignal.timeout(180000)
+  });
+  if (!r.ok) throw new Error(`speech HTTP ${r.status}`);
+  const data = await r.json();
+  return (data.phrases || [])
+    .filter(p => p.text && p.text.trim())
+    .map(p => ({ offset_ms: p.offsetMilliseconds || 0, speaker: p.speaker ?? null, text: p.text.trim() }));
+}
+
+async function scribeDraft(transcriptText) {
+  const url = `${AZURE_OPENAI_ENDPOINT}/openai/deployments/${encodeURIComponent(AZURE_OPENAI_DEPLOYMENT)}/chat/completions?api-version=${AZURE_OPENAI_API_VERSION}`;
+  const body = {
+    messages: [
+      { role: 'system', content: SCRIBE_PROMPT },
+      { role: 'user', content: `Transcript (times are local clock time):\n\n${transcriptText}` }
+    ],
+    temperature: 0,
+    response_format: { type: 'json_schema', json_schema: { name: 'ems_encounter_draft', strict: true, schema: SCRIBE_SCHEMA } }
+  };
+  const post = (b) => fetch(url, {
+    method: 'POST',
+    headers: { 'api-key': AZURE_OPENAI_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify(b),
+    signal: AbortSignal.timeout(120000)
+  });
+  let r = await post(body);
+  // Reasoning-model deployments reject a temperature setting; retry without it.
+  if (r.status === 400) {
+    const text = await r.text();
+    if (!/temperature/i.test(text)) throw new Error('openai HTTP 400');
+    delete body.temperature;
+    r = await post(body);
+  }
+  if (!r.ok) throw new Error(`openai HTTP ${r.status}`);
+  const data = await r.json();
+  const content = data.choices?.[0]?.message?.content;
+  if (!content) throw new Error('openai returned no draft');
+  return JSON.parse(content);
+}
+
+// Check every quote against the transcript. A quote that isn't really there
+// is flagged (verified: false) instead of dropped, so the medic sees it and
+// knows to check that item by ear. Found quotes get the clock time of the
+// line they came from.
+function scribeVerify(draft, phrases) {
+  const lines = phrases.map(p => ({ norm: scribeNorm(p.text), time: p.time }));
+  const all = lines.map(l => l.norm).join(' ');
+  const check = (item, key = 'evidence') => {
+    const ev = scribeNorm(item[key]);
+    item.verified = !!ev && all.includes(ev);
+    item.heard_at = item.verified ? (lines.find(l => l.norm.includes(ev))?.time || null) : null;
+  };
+  for (const k of SCRIBE_FIELD_KEYS) if (draft.patient?.[k]?.value) check(draft.patient[k]);
+  if (draft.chief_complaint?.value) check(draft.chief_complaint);
+  for (const k of SCRIBE_HISTORY_KEYS) if (draft.history?.[k]?.value) check(draft.history[k]);
+  for (const v of draft.vitals || []) check(v);
+  for (const i of draft.interventions || []) check(i);
+  for (const n of draft.pertinent_negatives || []) check(n);
+  return draft;
+}
+
+function logScribeSession(row) {
+  pool.query(
+    `INSERT INTO scribe_sessions (id, personnel_id, personnel, unit_id, unit_number, audio_seconds, phrase_count, status)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [row.id, row.user.personnel_id || null, row.user.name || null, row.user.unit_id || null,
+     units.find(u => u.id === row.user.unit_id)?.unit_number || null, row.audio_seconds, row.phrase_count, row.status]
+  ).catch(err => console.error('[scribe] session log write failed:', err.message));
+}
+
+app.get('/api/scribe/config', verifyToken, (req, res) => {
+  if (req.user.role !== 'crew') return res.status(403).json({ error: 'Forbidden' });
+  res.json({ enabled: scribeAllowed(req.user) && scribeConfigured() });
+});
+
+// Body is the raw audio (16 kHz mono WAV from the phone). The segment map
+// comes in a header so the body can stay plain audio.
+app.post('/api/scribe/process', verifyToken,
+  express.raw({ type: () => true, limit: SCRIBE_MAX_BYTES }),
+  async (req, res) => {
+    if (req.user.role !== 'crew') return res.status(403).json({ error: 'Forbidden' });
+    if (!scribeAllowed(req.user) || !scribeConfigured()) return res.status(403).json({ error: 'Listening isn\'t turned on for you' });
+    if (!Buffer.isBuffer(req.body) || req.body.length < 1000) return res.status(400).json({ error: 'No audio received' });
+
+    const key = String(req.user.personnel_id || req.user.unit_id);
+    const hourAgo = Date.now() - 60 * 60 * 1000;
+    const recent = (scribeRecent.get(key) || []).filter(t => t > hourAgo);
+    if (recent.length >= SCRIBE_HOURLY_LIMIT) return res.status(429).json({ error: 'Too many recordings this hour — try again later' });
+    recent.push(Date.now());
+    scribeRecent.set(key, recent);
+
+    let segments;
+    try {
+      segments = JSON.parse(req.get('X-Scribe-Segments') || '[]')
+        .filter(s => Number.isFinite(s.a) && Number.isFinite(s.t))
+        .sort((x, y) => x.a - y.a);
+    } catch { segments = []; }
+    if (!segments.length) segments = [{ a: 0, t: Date.now() }];
+    const audioSeconds = Math.round(Number(req.get('X-Scribe-Audio-Seconds')) || 0);
+    const sessionId = `scr-${Date.now()}-${randomUUID().slice(0, 8)}`;
+
+    let phrases;
+    try {
+      phrases = await scribeTranscribe(req.body, req.get('Content-Type') || 'audio/wav');
+    } catch (err) {
+      console.error('[scribe] transcription failed:', err.message);
+      logScribeSession({ id: sessionId, user: req.user, audio_seconds: audioSeconds, phrase_count: 0, status: 'transcribe_failed' });
+      return res.status(502).json({ error: 'Transcription failed — try again' });
+    }
+    phrases = phrases.map(p => ({
+      time: scribeClockTime(scribeWallClock(p.offset_ms, segments)),
+      speaker: p.speaker == null ? '?' : `S${p.speaker}`,
+      text: p.text
+    }));
+    if (!phrases.length) {
+      logScribeSession({ id: sessionId, user: req.user, audio_seconds: audioSeconds, phrase_count: 0, status: 'no_speech' });
+      return res.status(422).json({ error: 'No speech was picked up — keep the phone closer and try again' });
+    }
+
+    let draft;
+    try {
+      const transcriptText = phrases.map(p => `[${p.time}] ${p.speaker}: ${p.text}`).join('\n');
+      draft = scribeVerify(await scribeDraft(transcriptText), phrases);
+    } catch (err) {
+      console.error('[scribe] draft failed:', err.message);
+      logScribeSession({ id: sessionId, user: req.user, audio_seconds: audioSeconds, phrase_count: phrases.length, status: 'draft_failed' });
+      // Still hand back the transcript -- it's useful on its own.
+      return res.json({ session_id: sessionId, phrases, draft: null, error: 'The draft couldn\'t be written — the transcript is below' });
+    }
+    logScribeSession({ id: sessionId, user: req.user, audio_seconds: audioSeconds, phrase_count: phrases.length, status: 'ok' });
+    res.json({ session_id: sessionId, phrases, draft });
+  });
+
+// The medic's rating of a draft, for the pilot numbers. No patient details.
+app.post('/api/scribe/sessions/:id/feedback', verifyToken, async (req, res) => {
+  if (req.user.role !== 'crew') return res.status(403).json({ error: 'Forbidden' });
+  const { rating, critical_errors, fields_edited, saved_to_pt_notes } = req.body || {};
+  if (!['good', 'minor', 'major'].includes(rating)) return res.status(400).json({ error: 'Pick a rating' });
+  const int = (v) => Number.isInteger(v) && v >= 0 && v <= 100 ? v : null;
+  try {
+    const r = await pool.query(
+      `UPDATE scribe_sessions SET rating = $1, critical_errors = $2, fields_edited = $3, saved_to_pt_notes = $4, rated_at = NOW()
+       WHERE id = $5 AND personnel_id = $6`,
+      [rating, int(critical_errors), int(fields_edited), !!saved_to_pt_notes, req.params.id, String(req.user.personnel_id)]
+    );
+    if (!r.rowCount) return res.status(404).json({ error: 'Not found' });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[scribe] feedback failed:', err.message);
+    res.status(500).json({ error: 'Could not save rating' });
   }
 });
 
