@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { processScribe, sendScribeFeedback, sendPtNote } from '../../services/api';
 import { startWavRecorder } from '../../lib/wavRecorder';
 import LicenseScanner from './LicenseScanner';
-import { UnitPicker } from './PtNotes';
+import { UnitPicker, VitalsGrid, VITALS } from './PtNotes';
 
 // Start Incident (ambient listening beta). One flow: the medic enters or
 // scans the patient's demographics, gets consent, records the encounter, and
@@ -26,6 +26,15 @@ const PATIENT_FIELDS = [
   ['medical_hx', 'Medical history'], ['allergies', 'Allergies'], ['medications', 'Medications'],
 ];
 const SEXES = ['M', 'F', 'Other'];
+// Typed-in clinical basics -- this form is now the only way to start a PT
+// note, so it carries what the old New PT Notes screen had.
+const MORE_FIELDS = [
+  ['medical_hx', 'Medical history', 'e.g. HTN, DM2, asthma'],
+  ['allergies', 'Allergies', 'e.g. PCN, latex', 'NKDA'],
+  ['medications', 'Medications', 'e.g. metformin, lisinopril'],
+  ['notes', 'Other notes', 'Anything else the next medic should know'],
+];
+const VITAL_KEYS = VITALS.map(v => v.key);
 const HISTORY_FIELDS = [
   ['onset', 'Onset'], ['provocation', 'Provocation'], ['quality', 'Quality'], ['radiation', 'Radiation'],
   ['severity', 'Severity'], ['time_course', 'Time'], ['last_oral_intake', 'Last oral intake'],
@@ -85,7 +94,10 @@ function Section({ title, children }) {
   );
 }
 
-export default function ScribeTest({ myUnit, units, myActiveCall, onNoteSent, onClose, backRef }) {
+// canRecord: false in the native app (no mic permission yet) or when the
+// listening pilot isn't on for this medic -- the form, scan, save and send
+// still work, just without the recording.
+export default function ScribeTest({ myUnit, units, myActiveCall, canRecord, onNoteSent, onClose, backRef }) {
   const [view, setView] = useState('demos'); // demos | recording | processing | review | error
   const [title, setTitle] = useState('');
   const [demos, setDemos] = useState({});
@@ -289,6 +301,10 @@ export default function ScribeTest({ myUnit, units, myActiveCall, onNoteSent, on
   const fieldsEdited = () => Object.keys(edits)
     .filter(k => original(k) && edits[k] !== original(k)).length;
 
+  const hasManualVitals = VITAL_KEYS.some(k => k !== 'vitals_time' && demos[k]?.trim());
+  const manualVitalsLine = () => `${demos.vitals_time?.trim() || '--:--'} ${VITALS
+    .filter(f => f.key !== 'vitals_time' && demos[f.key]?.trim()).map(f => `${f.label} ${demos[f.key].trim()}`).join(', ')}`;
+
   // The whole report as plain text, saved with the PT note for reference.
   const reportText = () => {
     const out = [];
@@ -302,11 +318,16 @@ export default function ScribeTest({ myUnit, units, myActiveCall, onNoteSent, on
       ...rows(HISTORY_FIELDS, 'history'),
     ];
     if (hx.length) out.push('COMPLAINT & HISTORY', ...hx, '');
-    if (draft?.vitals?.length) out.push('VITALS', ...draft.vitals.map(v =>
-      `${v.time || '--:--'} ${Object.entries(VITAL_LABELS).filter(([k]) => v[k]).map(([k, l]) => `${l} ${v[k]}`).join(', ')}`), '');
+    const vitalsLines = [
+      ...(hasManualVitals ? [`${manualVitalsLine()} (entered)`] : []),
+      ...(draft?.vitals || []).map(v =>
+        `${v.time || '--:--'} ${Object.entries(VITAL_LABELS).filter(([k]) => v[k]).map(([k, l]) => `${l} ${v[k]}`).join(', ')}`),
+    ];
+    if (vitalsLines.length) out.push('VITALS', ...vitalsLines, '');
     if (draft?.interventions?.length) out.push('TREATMENTS', ...draft.interventions.map(t => `${t.time || '--:--'} ${t.description}`), '');
     if (draft?.pertinent_negatives?.length) out.push('PERTINENT NEGATIVES', ...draft.pertinent_negatives.map(n => n.finding), '');
     if (draft?.timeline?.length) out.push('TIMELINE', ...draft.timeline.map(e => `${e.time || '--:--'} ${e.event}`), '');
+    if (demos.notes?.trim()) out.push('OTHER NOTES', demos.notes.trim(), '');
     if (draft?.missing?.length) out.push('NOT COVERED', ...draft.missing.map(m => `- ${m}`));
     return out.join('\n').trim();
   };
@@ -315,7 +336,10 @@ export default function ScribeTest({ myUnit, units, myActiveCall, onNoteSent, on
     const fields = {};
     if (title.trim()) fields.title = title.trim().slice(0, 80);
     for (const [k] of PATIENT_FIELDS) if (edits[`patient.${k}`]?.trim()) fields[k] = edits[`patient.${k}`].trim();
-    const v = draft?.vitals?.[vitalsIdx];
+    if (demos.notes?.trim()) fields.notes = demos.notes.trim();
+    // Vitals the medic typed win over a set the recording heard.
+    const v = hasManualVitals ? null : draft?.vitals?.[vitalsIdx];
+    if (hasManualVitals) for (const k of VITAL_KEYS) if (demos[k]?.trim()) fields[k] = demos[k].trim();
     if (v) {
       if (v.time) fields.vitals_time = v.time;
       for (const k of Object.keys(VITAL_LABELS)) if (v[k]) fields[k] = v[k];
@@ -412,6 +436,19 @@ export default function ScribeTest({ myUnit, units, myActiveCall, onNoteSent, on
           )}
         </div>
       ))}
+      {MORE_FIELDS.map(([k, label, placeholder, quick]) => (
+        <div key={k}>
+          <label className="block text-gray-400 text-xs mb-1">{label}</label>
+          <div className="flex gap-2 items-start">
+            <textarea value={demos[k] || ''} onChange={e => setDemo(k, e.target.value)} placeholder={placeholder} rows={2}
+              className={`${inputCls} flex-1 resize-none`} />
+            {quick && (
+              <button onClick={() => setDemo(k, quick)} className="px-3 py-2 rounded-lg bg-gray-700 text-gray-300 text-xs font-bold">{quick}</button>
+            )}
+          </div>
+        </div>
+      ))}
+      <VitalsGrid values={demos} set={setDemo} />
       <p className="text-gray-500 text-[11px]">What you enter here stays on your phone — only the recording is sent to be transcribed.</p>
     </>
   );
@@ -431,6 +468,15 @@ export default function ScribeTest({ myUnit, units, myActiveCall, onNoteSent, on
               still required for every recording, just without its own screen. */}
           <div className="p-4 border-t border-gray-700 flex-shrink-0 space-y-2">
             {error && <p className="text-red-400 text-sm">{error}</p>}
+            {!canRecord ? (
+              <>
+                <p className="text-gray-500 text-[11px] text-center">Recording only works in a web browser for now (cad.sfotems.com).</p>
+                <button onClick={skipRecording}
+                  className="w-full py-3 rounded-xl bg-blue-600 active:bg-blue-700 text-white font-bold text-sm">
+                  Next: save / send →
+                </button>
+              </>
+            ) : (<>
             <div className="grid grid-cols-2 gap-2">
               <button onClick={() => startWith('patient')}
                 className="py-2 rounded-lg bg-red-600 active:bg-red-700 text-white font-semibold text-xs">
@@ -445,6 +491,7 @@ export default function ScribeTest({ myUnit, units, myActiveCall, onNoteSent, on
               className="w-full py-2 rounded-lg bg-gray-700 active:bg-gray-600 text-gray-200 font-semibold text-xs">
               Don't record — just save/send
             </button>
+            </>)}
           </div>
         </>
       )}
@@ -554,6 +601,20 @@ export default function ScribeTest({ myUnit, units, myActiveCall, onNoteSent, on
                     <EditableRow key={k} label={label} item={draft?.patient?.[k]} value={edits[`patient.${k}`] || ''}
                       source={sources[`patient.${k}`]} onChange={v => setEdit(`patient.${k}`, v)} />
                   ))}
+                  <div className="bg-gray-800 rounded-xl px-3 py-2.5 border border-gray-700">
+                    <div className="text-gray-400 text-[11px] uppercase tracking-wider mb-1">Other notes</div>
+                    <textarea value={demos.notes || ''} onChange={e => setDemo('notes', e.target.value)} rows={2}
+                      className={`${inputCls} resize-none`} />
+                  </div>
+                  {/* Typed vitals (recorded ones are in the Vitals section below) */}
+                  {(!recorded || hasManualVitals) && (
+                    <>
+                      <VitalsGrid values={demos} set={setDemo} />
+                      {hasManualVitals && draft?.vitals?.length > 0 && (
+                        <p className="text-gray-500 text-[11px]">Your typed vitals go in the PT note's vitals; the recorded sets are in the report.</p>
+                      )}
+                    </>
+                  )}
                 </Section>
 
                 {draft && (
@@ -579,7 +640,7 @@ export default function ScribeTest({ myUnit, units, myActiveCall, onNoteSent, on
                             {Object.entries(VITAL_LABELS).filter(([k]) => v[k]).map(([k, l]) => `${l} ${v[k]}`).join(' · ')}
                           </div>
                           <Quote item={v} />
-                          {vitalsIdx === i && <div className="text-blue-300 text-[11px] mt-1">This set goes in the PT note's vitals (all sets are in the report)</div>}
+                          {vitalsIdx === i && !hasManualVitals && <div className="text-blue-300 text-[11px] mt-1">This set goes in the PT note's vitals (all sets are in the report)</div>}
                         </button>
                       ))}
                     </Section>

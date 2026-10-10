@@ -1264,14 +1264,14 @@ export default function CrewMobile() {
           )}
         </button>
 
-        {scribeEnabled && (
-          <button
-            onClick={() => setShowScribe(true)}
-            className="w-full py-3 rounded-2xl bg-gray-800 border border-amber-700/60 text-amber-200 hover:border-amber-500 text-sm font-semibold transition-colors flex items-center justify-center gap-2"
-          >
-            🚑 Start Incident <span className="text-amber-400 text-xs">(beta)</span>
-          </button>
-        )}
+        {/* The only way to start a PT note now -- shown to everyone; recording
+            inside it is browser + pilot only (canRecord). */}
+        <button
+          onClick={() => setShowScribe(true)}
+          className="w-full py-3 rounded-2xl bg-gray-800 border border-amber-700/60 text-amber-200 hover:border-amber-500 text-sm font-semibold transition-colors flex items-center justify-center gap-2"
+        >
+          🚑 Start Incident <span className="text-amber-400 text-xs">(beta)</span>
+        </button>
 
         <button
           onClick={() => setShowCaseHistory(true)}
@@ -1346,6 +1346,7 @@ export default function CrewMobile() {
             myUnit={myUnit}
             units={units}
             myActiveCall={myActiveCall}
+            canRecord={scribeEnabled}
             onNoteSent={(note) => setPtNotes(prev => [note, ...prev.filter(n => n.id !== note.id)])}
             onClose={() => setShowScribe(false)}
           />

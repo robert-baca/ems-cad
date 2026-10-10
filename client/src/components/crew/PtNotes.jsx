@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { sendPtNote, viewPtNote, deletePtNote } from '../../services/api';
-import LicenseScanner from './LicenseScanner';
 
 // Patient handoff notes between medics. This is protected health
 // information: it's only ever held in memory here (never localStorage or
@@ -31,12 +30,13 @@ const FIELDS = [
   { key: 'temp',        label: 'Temp °F',    placeholder: '98.6',       vital: true, inputMode: 'decimal' },
   { key: 'notes',       label: 'Other notes',     placeholder: 'Anything else the receiving medic should know', multiline: true },
 ];
-const VITALS = FIELDS.filter(f => f.vital);
+export const VITALS = FIELDS.filter(f => f.vital);
 const FIRST_VITAL = VITALS[0].key;
 
 const nowHHMM = () => new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
 
-function VitalsGrid({ values, set }) {
+// Used by Start Incident's patient-info form (ScribeTest).
+export function VitalsGrid({ values, set }) {
   return (
     <div className="bg-gray-800/60 border border-gray-700 rounded-xl p-3">
       <div className="text-gray-300 text-xs font-semibold mb-2">Vitals <span className="text-gray-500 font-normal">— optional</span></div>
@@ -109,125 +109,6 @@ export function UnitPicker({ myUnit, units, myActiveCall, toId, onPick }) {
           {onThisCall(u) && <span className="text-xs opacity-80">on your call</span>}
         </button>
       ))}
-    </>
-  );
-}
-
-function Compose({ myUnit, units, myActiveCall, onSent, onCancel }) {
-  const [values, setValues] = useState({});
-  const [toId, setToId] = useState('');
-  const [sending, setSending] = useState(false);
-  const [error, setError] = useState('');
-  const [scanning, setScanning] = useState(false);
-  const [scannedKeys, setScannedKeys] = useState([]); // fields filled from a license, for the check-it hint
-
-  const set = (k, v) => { setValues(prev => ({ ...prev, [k]: v })); setError(''); };
-  const filled = Object.values(values).some(v => v && v.trim());
-
-  const send = async () => {
-    if (!toId) { setError('Pick who to send it to'); return; }
-    if (!filled) { setError('Fill in at least one field'); return; }
-    setSending(true);
-    setError('');
-    try {
-      const res = await sendPtNote({ to_unit_id: toId, fields: values });
-      onSent(res.data);
-    } catch (err) {
-      setError(err?.response?.data?.error || 'Could not send — check your connection and try again');
-      setSending(false);
-    }
-  };
-
-  return (
-    <>
-      <Header title="New PT Notes" onBack={onCancel} backLabel="Cancel" />
-      {scanning && (
-        <LicenseScanner
-          onClose={() => setScanning(false)}
-          onResult={(fields) => {
-            // Scanned values replace what's there for those fields only;
-            // anything typed into the others (allergies, hx…) is kept.
-            setValues(prev => ({ ...prev, ...fields }));
-            setScannedKeys(Object.keys(fields));
-            setScanning(false);
-            setError('');
-          }}
-        />
-      )}
-      <div className="flex-1 overflow-y-auto p-4 space-y-3">
-        <button onClick={() => setScanning(true)}
-          className="w-full py-3 rounded-xl bg-gray-700 active:bg-gray-600 text-white text-sm font-semibold flex items-center justify-center gap-2">
-          📷 Scan Driver License / ID
-        </button>
-        {scannedKeys.length > 0 && (
-          <p className="text-green-400 text-xs">✓ Filled from the license — check it matches the patient before sending.</p>
-        )}
-        {FIELDS.map(f => f.vital ? (
-          f.key === FIRST_VITAL && <VitalsGrid key="vitals" values={values} set={set} />
-        ) : (
-          <div key={f.key}>
-            <label className="block text-gray-400 text-xs mb-1">{f.label}</label>
-            {f.options ? (
-              <div className="flex gap-2">
-                {f.options.map(o => (
-                  <button key={o} onClick={() => set(f.key, values[f.key] === o ? '' : o)}
-                    className={`flex-1 py-2.5 rounded-lg text-sm font-semibold ${values[f.key] === o ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-300'}`}>
-                    {o}
-                  </button>
-                ))}
-              </div>
-            ) : f.multiline ? (
-              <div className="flex gap-2 items-start">
-                <textarea
-                  value={values[f.key] || ''}
-                  onChange={e => set(f.key, e.target.value)}
-                  placeholder={f.placeholder}
-                  rows={2}
-                  className="flex-1 bg-gray-700 text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500 resize-none"
-                />
-                {f.quick && (
-                  <button onClick={() => set(f.key, f.quick)}
-                    className="px-3 py-2 rounded-lg bg-gray-700 text-gray-300 text-xs font-bold">{f.quick}</button>
-                )}
-              </div>
-            ) : (
-              <input
-                value={values[f.key] || ''}
-                onChange={e => set(f.key, e.target.value)}
-                placeholder={f.placeholder}
-                inputMode={f.inputMode}
-                autoComplete="off"
-                className="w-full bg-gray-700 text-white rounded-lg px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500"
-              />
-            )}
-          </div>
-        ))}
-
-        <div className="pt-2">
-          <label className="block text-gray-400 text-xs mb-1">Send to</label>
-          <div className="space-y-1.5">
-            <button onClick={() => { setToId(myUnit.id); setError(''); }}
-              className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-left text-sm ${
-                toId === myUnit.id ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-200'}`}>
-              <span className="font-semibold">📌 Save to myself</span>
-              <span className="text-xs opacity-80">keep it in Saved</span>
-            </button>
-            <UnitPicker myUnit={myUnit} units={units} myActiveCall={myActiveCall} toId={toId}
-              onPick={(id) => { setToId(id); setError(''); }} />
-          </div>
-        </div>
-
-        <p className="text-gray-500 text-[11px]">
-          Patient info — only you and the medic you send it to can see it (saved notes: only you). Deleted automatically after 8 hours. Don't screenshot it.
-        </p>
-        {error && <p className="text-red-400 text-sm">{error}</p>}
-      </div>
-      <div className="p-4 border-t border-gray-700 flex-shrink-0">
-        <button onClick={send} disabled={sending}
-          className="w-full py-3.5 rounded-xl bg-blue-600 active:bg-blue-700 disabled:opacity-50 text-white font-bold text-sm">
-          {sending ? 'Saving…' : toId === myUnit.id ? '💾 Save PT Notes' : '📤 Send PT Notes'}
-        </button>
-      </div>
     </>
   );
 }
@@ -370,10 +251,10 @@ function NoteView({ note, myUnit, units, myActiveCall, onBack, onViewed, onDelet
   );
 }
 
-// backRef lets CrewMobile's native back button step out of a note/compose
+// backRef lets CrewMobile's native back button step out of a note
 // view before closing PT NOTES entirely (same pattern as BeaconMode).
 export default function PtNotes({ myUnit, units, myActiveCall, notes, onNoteSent, onNoteViewed, onNoteDeleted, onClose, backRef }) {
-  const [view, setView] = useState('list'); // list | compose | note
+  const [view, setView] = useState('list'); // list | note
   const [tab, setTab] = useState('inbox');
   const [openId, setOpenId] = useState(null);
 
@@ -394,22 +275,14 @@ export default function PtNotes({ myUnit, units, myActiveCall, notes, onNoteSent
   const EMPTY = {
     inbox: 'No patient notes received this shift.',
     sent:  'You haven’t sent any this shift.',
-    saved: 'Nothing saved — pick “Save to myself” when writing a note.',
+    saved: 'Nothing saved — use 🚑 Start Incident and tap Save.',
   };
   const unread = inbox.filter(n => !n.read_at).length;
   const openNote = notes.find(n => n.id === openId);
 
   return (
     <div className="fixed inset-0 z-40 bg-gray-900 flex flex-col max-w-md mx-auto">
-      {view === 'compose' ? (
-        <Compose
-          myUnit={myUnit}
-          units={units}
-          myActiveCall={myActiveCall}
-          onCancel={() => setView('list')}
-          onSent={(note) => { onNoteSent(note); setTab(note.to_unit_id === myUnit.id ? 'saved' : 'sent'); setView('list'); }}
-        />
-      ) : view === 'note' && openNote ? (
+      {view === 'note' && openNote ? (
         <NoteView note={openNote} myUnit={myUnit} units={units} myActiveCall={myActiveCall}
           onBack={() => setView('list')} onViewed={onNoteViewed} onSent={onNoteSent}
           onDeleted={(id) => { onNoteDeleted(id); setView('list'); }} />
@@ -419,12 +292,6 @@ export default function PtNotes({ myUnit, units, myActiveCall, notes, onNoteSent
             <span className="text-white font-bold text-base">📝 PT Notes</span>
             <button onClick={onClose}
               className="text-gray-400 hover:text-white w-11 h-11 flex items-center justify-center rounded hover:bg-gray-700 text-xl">×</button>
-          </div>
-          <div className="p-4 flex-shrink-0">
-            <button onClick={() => setView('compose')}
-              className="w-full py-3.5 rounded-xl bg-blue-600 active:bg-blue-700 text-white font-bold text-sm">
-              ＋ New PT Notes
-            </button>
           </div>
           <div className="flex px-4 border-b border-gray-700 flex-shrink-0">
             {[['inbox', `Received${unread ? ` (${unread})` : ''}`], ['sent', 'Sent'], ['saved', 'Saved']].map(([id, label]) => (
