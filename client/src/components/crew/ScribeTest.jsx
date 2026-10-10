@@ -79,7 +79,6 @@ export default function ScribeTest({ myUnit, onNoteSent, onClose, backRef }) {
   const [criticalErrors, setCriticalErrors] = useState(0);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [copied, setCopied] = useState(false);
 
   const recRef = useRef(null);
   const segmentsRef = useRef([]);
@@ -197,7 +196,7 @@ export default function ScribeTest({ myUnit, onNoteSent, onClose, backRef }) {
 
   const timelineText = () => (draft?.timeline || []).map(e => `${e.time || '--:--'} ${e.event}`).join('\n');
 
-  // The whole summary as plain text, for reading next to the chart.
+  // The whole summary as plain text, saved with the PT note for reference.
   const reportText = () => {
     const out = [];
     const rows = (pairs, prefix) => pairs
@@ -253,11 +252,6 @@ export default function ScribeTest({ myUnit, onNoteSent, onClose, backRef }) {
   const finish = async () => {
     if (!saved) await sendFeedback(false);
     onClose();
-  };
-
-  const copyReport = async () => {
-    try { await navigator.clipboard.writeText(reportText()); setCopied(true); setTimeout(() => setCopied(false), 2000); }
-    catch { setError('Copy failed — select the text and copy it by hand'); }
   };
 
   const roleOf = (speaker) => {
@@ -364,7 +358,7 @@ export default function ScribeTest({ myUnit, onNoteSent, onClose, backRef }) {
               <div key={i} className="text-sm">
                 <span className="text-gray-500 text-xs font-mono">{p.time} </span>
                 <span className="text-blue-300 text-xs font-semibold">{p.speaker}{roleOf(p.speaker) ? ` (${roleOf(p.speaker)})` : ''}: </span>
-                <span className="text-gray-200 select-text">{p.text}</span>
+                <span className="text-gray-200 select-none" style={{ WebkitTouchCallout: 'none' }}>{p.text}</span>
               </div>
             ))}
 
@@ -449,10 +443,6 @@ export default function ScribeTest({ myUnit, onNoteSent, onClose, backRef }) {
                     ))}
                   </Section>
                 )}
-
-                <button onClick={copyReport} className="w-full py-2.5 rounded-xl bg-gray-700 text-gray-200 text-sm font-semibold">
-                  {copied ? '✓ Copied' : '📋 Copy report'}
-                </button>
               </>
             )}
 
