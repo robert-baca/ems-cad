@@ -232,7 +232,10 @@ export default function ScribeTest({ myUnit, onNoteSent, onClose, backRef }) {
       if (v.time) fields.vitals_time = v.time;
       for (const k of Object.keys(VITAL_LABELS)) if (v[k]) fields[k] = v[k];
     }
-    if (draft?.timeline?.length) fields.notes = timelineText().slice(0, 2000);
+    // The whole summary rides along so the saved note has everything; it's
+    // purged with the rest of the note after 8 hours.
+    const report = reportText();
+    if (report) fields.report = report.slice(0, 10000);
     if (!Object.keys(fields).length) { setError('Nothing to save yet'); return; }
     setSaving(true);
     setError('');

@@ -266,6 +266,12 @@ function NoteView({ note, myUnit, onBack, onViewed }) {
             <div className="text-white text-base whitespace-pre-wrap break-words select-text">{note.fields[f.key]}</div>
           </div>
         ))}
+        {note.fields?.report && (
+          <div className="bg-gray-800 rounded-xl px-3 py-2.5 border border-amber-700/60">
+            <div className="text-amber-300 text-[11px] uppercase tracking-wider mb-1">🎙 Listening report</div>
+            <div className="text-white text-sm whitespace-pre-wrap break-words select-text">{note.fields.report}</div>
+          </div>
+        )}
         <p className="text-gray-500 text-[11px] pt-2">Deleted automatically 8 hours after it was sent.</p>
       </div>
     </>

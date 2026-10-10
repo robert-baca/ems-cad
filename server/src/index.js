@@ -1710,7 +1710,10 @@ app.get('/api/broadcasts', verifyToken, (req, res) => {
 const PT_NOTE_RETENTION_MS = 8 * 60 * 60 * 1000;
 const PT_NOTE_FIELDS = ['name', 'dob', 'age', 'sex', 'location', 'address', 'phone', 'medical_hx', 'allergies', 'medications', 'notes',
   // one optional set of vitals
-  'vitals_time', 'bp', 'hr', 'rr', 'spo2', 'bgl', 'gcs', 'pain', 'temp'];
+  'vitals_time', 'bp', 'hr', 'rr', 'spo2', 'bgl', 'gcs', 'pain', 'temp',
+  // the full plain-text summary from a Listen recording (see SCRIBE)
+  'report'];
+const PT_NOTE_FIELD_MAX = { report: 10000 };
 
 function logPtNoteAccess(noteId, action, user) {
   pool.query(
@@ -1748,7 +1751,7 @@ app.post('/api/pt-notes', verifyToken, async (req, res) => {
   const fields = {};
   for (const k of PT_NOTE_FIELDS) {
     const v = req.body.fields?.[k];
-    if (typeof v === 'string' && v.trim()) fields[k] = v.trim().slice(0, 2000);
+    if (typeof v === 'string' && v.trim()) fields[k] = v.trim().slice(0, PT_NOTE_FIELD_MAX[k] || 2000);
   }
   if (!Object.keys(fields).length) return res.status(400).json({ error: 'Fill in at least one field' });
 
