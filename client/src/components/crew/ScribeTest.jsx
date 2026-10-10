@@ -3,8 +3,9 @@ import { processScribe, sendScribeFeedback, sendPtNote } from '../../services/ap
 import { startWavRecorder } from '../../lib/wavRecorder';
 
 // Ambient listening pilot, phase 0: role-play only. Records the encounter in
-// the phone's browser, sends it to the server for transcription + drafting,
-// and shows a draft where every item carries the quote it came from. Like
+// the phone's browser, sends it to the server for transcription, and shows a
+// reference summary (not a written chart) where every item carries the quote
+// it came from -- the medic reads it while writing their own chart. Like
 // PT Notes, the recording, transcript and draft are only held in memory
 // here -- leaving this screen throws them away.
 
@@ -73,7 +74,6 @@ export default function ScribeTest({ myUnit, onNoteSent, onClose, backRef }) {
   const [result, setResult] = useState(null); // { session_id, phrases, draft, error }
   const [tab, setTab] = useState('draft');
   const [edits, setEdits] = useState({});
-  const [narrative, setNarrative] = useState('');
   const [vitalsIdx, setVitalsIdx] = useState(-1);
   const [rating, setRating] = useState('');
   const [criticalErrors, setCriticalErrors] = useState(0);
@@ -167,7 +167,6 @@ export default function ScribeTest({ myUnit, onNoteSent, onClose, backRef }) {
         ['chief_complaint', data.draft?.chief_complaint?.value || ''],
         ...HISTORY_FIELDS.map(([k]) => [`history.${k}`, data.draft?.history?.[k]?.value || '']),
       ]));
-      setNarrative(data.draft?.narrative || '');
       setVitalsIdx((data.draft?.vitals?.length || 0) - 1);
       setTab(data.draft ? 'draft' : 'transcript');
       setView('review');
@@ -194,8 +193,31 @@ export default function ScribeTest({ myUnit, onNoteSent, onClose, backRef }) {
     const [a, b] = path.split('.');
     return (b ? draft?.[a]?.[b]?.value : draft?.[a]?.value) || '';
   };
-  const fieldsEdited = () =>
-    Object.keys(edits).filter(k => edits[k] !== original(k)).length + (narrative !== (draft?.narrative || '') ? 1 : 0);
+  const fieldsEdited = () => Object.keys(edits).filter(k => edits[k] !== original(k)).length;
+
+  const timelineText = () => (draft?.timeline || []).map(e => `${e.time || '--:--'} ${e.event}`).join('\n');
+
+  // The whole summary as plain text, for reading next to the chart.
+  const reportText = () => {
+    const out = [];
+    const rows = (pairs, prefix) => pairs
+      .filter(([k]) => edits[`${prefix}.${k}`]?.trim())
+      .map(([k, label]) => `${label}: ${edits[`${prefix}.${k}`].trim()}`);
+    const patient = rows(PATIENT_FIELDS, 'patient');
+    if (patient.length) out.push('PATIENT', ...patient, '');
+    const hx = [
+      ...(edits.chief_complaint?.trim() ? [`Chief complaint: ${edits.chief_complaint.trim()}`] : []),
+      ...rows(HISTORY_FIELDS, 'history'),
+    ];
+    if (hx.length) out.push('COMPLAINT & HISTORY', ...hx, '');
+    if (draft?.vitals?.length) out.push('VITALS', ...draft.vitals.map(v =>
+      `${v.time || '--:--'} ${Object.entries(VITAL_LABELS).filter(([k]) => v[k]).map(([k, l]) => `${l} ${v[k]}`).join(', ')}`), '');
+    if (draft?.interventions?.length) out.push('TREATMENTS', ...draft.interventions.map(t => `${t.time || '--:--'} ${t.description}`), '');
+    if (draft?.pertinent_negatives?.length) out.push('PERTINENT NEGATIVES', ...draft.pertinent_negatives.map(n => n.finding), '');
+    if (draft?.timeline?.length) out.push('TIMELINE', timelineText(), '');
+    if (draft?.missing?.length) out.push('NOT COVERED', ...draft.missing.map(m => `- ${m}`));
+    return out.join('\n').trim();
+  };
 
   const sendFeedback = (savedToPtNotes) =>
     sendScribeFeedback(result.session_id, {
@@ -210,7 +232,7 @@ export default function ScribeTest({ myUnit, onNoteSent, onClose, backRef }) {
       if (v.time) fields.vitals_time = v.time;
       for (const k of Object.keys(VITAL_LABELS)) if (v[k]) fields[k] = v[k];
     }
-    if (narrative.trim()) fields.notes = narrative.trim().slice(0, 2000);
+    if (draft?.timeline?.length) fields.notes = timelineText().slice(0, 2000);
     if (!Object.keys(fields).length) { setError('Nothing to save yet'); return; }
     setSaving(true);
     setError('');
@@ -230,8 +252,8 @@ export default function ScribeTest({ myUnit, onNoteSent, onClose, backRef }) {
     onClose();
   };
 
-  const copyNarrative = async () => {
-    try { await navigator.clipboard.writeText(narrative); setCopied(true); setTimeout(() => setCopied(false), 2000); }
+  const copyReport = async () => {
+    try { await navigator.clipboard.writeText(reportText()); setCopied(true); setTimeout(() => setCopied(false), 2000); }
     catch { setError('Copy failed — select the text and copy it by hand'); }
   };
 
@@ -259,8 +281,9 @@ export default function ScribeTest({ myUnit, onNoteSent, onClose, backRef }) {
             tool on practice scenarios so we can measure how accurate it is.
           </div>
           <div className="text-gray-300 text-sm space-y-2">
-            <p>How it works: tap Start, run the scenario normally, then tap Stop. You'll get a draft of the PT Notes
-              fields, vitals, treatments and a narrative — each with the words it was taken from so you can check it.</p>
+            <p>How it works: tap Start, run the scenario normally, then tap Stop. You'll get a report to reference
+              while you write your chart — patient info, vitals, treatments and a timeline, each with the words it was
+              taken from so you can check it. It doesn't write the chart for you.</p>
             <ul className="list-disc pl-5 space-y-1 text-gray-400">
               <li>Keep the screen on and the phone face-up between you and the "patient". If the screen turns off, recording pauses.</li>
               <li>Say vitals and treatments out loud: "BP 128 over 84, pulse 92", "giving 324 of aspirin by mouth".</li>
@@ -413,13 +436,20 @@ export default function ScribeTest({ myUnit, onNoteSent, onClose, backRef }) {
                   </Section>
                 )}
 
-                <Section title="Narrative">
-                  <textarea value={narrative} onChange={e => setNarrative(e.target.value)} rows={8}
-                    className="w-full bg-gray-800 border border-gray-700 text-white rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
-                  <button onClick={copyNarrative} className="w-full py-2.5 rounded-xl bg-gray-700 text-gray-200 text-sm font-semibold">
-                    {copied ? '✓ Copied' : 'Copy narrative'}
-                  </button>
-                </Section>
+                {draft.timeline?.length > 0 && (
+                  <Section title="Timeline">
+                    {draft.timeline.map((e, i) => (
+                      <div key={i} className="bg-gray-800 rounded-xl px-3 py-2.5 border border-gray-700">
+                        <div className="text-white text-sm"><span className="text-gray-400">{e.time || '—'} · </span>{e.event}</div>
+                        <Quote item={e} />
+                      </div>
+                    ))}
+                  </Section>
+                )}
+
+                <button onClick={copyReport} className="w-full py-2.5 rounded-xl bg-gray-700 text-gray-200 text-sm font-semibold">
+                  {copied ? '✓ Copied' : '📋 Copy report'}
+                </button>
               </>
             )}
 

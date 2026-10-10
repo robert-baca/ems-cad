@@ -1828,10 +1828,11 @@ app.post('/api/pt-notes/:id/view', verifyToken, async (req, res) => {
 
 // ── SCRIBE: ambient listening pilot (phase 0) ───────────────────────
 // A medic records a role-played encounter on their phone; Azure AI Speech
-// transcribes it (with speakers separated) and Azure OpenAI drafts PT Notes
-// fields, a vitals/treatment timeline, pertinent negatives and a narrative,
-// each item carrying the verbatim quote it came from so the medic can check
-// it. Phase 0 is role-play only and runs in the phone's browser -- the native
+// transcribes it (with speakers separated) and Azure OpenAI builds a
+// reference summary -- PT Notes fields, vitals, treatments, pertinent
+// negatives and a timeline -- each item carrying the verbatim quote it came
+// from so the medic can check it. It deliberately does not write the chart
+// narrative; the medic writes that themselves using the summary. Phase 0 is role-play only and runs in the phone's browser -- the native
 // app doesn't declare microphone permission yet.
 // Rules this section keeps:
 //  - audio, transcript and draft are never written to the database, disk or
@@ -1878,7 +1879,7 @@ const scribeObject = (keys, make) => ({
 });
 const SCRIBE_SCHEMA = {
   type: 'object', additionalProperties: false,
-  required: ['speakers', 'patient', 'chief_complaint', 'history', 'vitals', 'interventions', 'pertinent_negatives', 'missing', 'narrative'],
+  required: ['speakers', 'patient', 'chief_complaint', 'history', 'vitals', 'interventions', 'pertinent_negatives', 'timeline', 'missing'],
   properties: {
     speakers: { type: 'array', items: {
       type: 'object', additionalProperties: false, required: ['speaker', 'role'],
@@ -1899,12 +1900,15 @@ const SCRIBE_SCHEMA = {
       type: 'object', additionalProperties: false, required: ['finding', 'evidence'],
       properties: { finding: { type: 'string' }, evidence: { type: 'string' } }
     } },
-    missing: { type: 'array', items: { type: 'string' } },
-    narrative: { type: 'string' }
+    timeline: { type: 'array', items: {
+      type: 'object', additionalProperties: false, required: ['time', 'event', 'evidence'],
+      properties: { time: nullableString, event: { type: 'string' }, evidence: { type: 'string' } }
+    } },
+    missing: { type: 'array', items: { type: 'string' } }
   }
 };
 
-const SCRIBE_PROMPT = `You draft EMS documentation from the transcript of a patient encounter recorded by a medic at Six Flags Over Texas, a theme park. The transcript comes from speech recognition, so it can contain recognition errors, and the speaker labels (S1, S2, ...) can be mixed up.
+const SCRIBE_PROMPT = `You build a reference summary of a patient encounter from its transcript, recorded by a medic at Six Flags Over Texas, a theme park. The medic reads your summary while writing their own chart, so you organize what was said -- you do not write the chart. The transcript comes from speech recognition, so it can contain recognition errors, and the speaker labels (S1, S2, ...) can be mixed up.
 
 Rules:
 1. Document only what was actually said. Never infer, assume, or add typical findings. If something was not said, its value is null.
@@ -1917,8 +1921,8 @@ Rules:
 8. age: number only, e.g. "34". sex: "M", "F" or "Other", only if said in the conversation. dob as said, formatted MM/DD/YYYY when it is complete.
 9. location: where in the park the patient was, only if said.
 10. pertinent_negatives: findings the patient denied or the medic found absent, e.g. "Denies chest pain".
-11. missing: short reminders of standard documentation items NOT covered in the conversation that would normally be documented for this kind of call, e.g. "Allergies not asked", "No repeat vitals", "Pain scale not recorded". Documentation gaps only -- never treatment advice.
-12. narrative: a concise EMS narrative, third person, past tense, chronological, using only facts that have evidence above. Do not include the patient's name, phone number or address. Empty string if there is too little to write one.
+11. timeline: the key moments of the encounter in time order, one short factual entry each, with clock time (HH:MM): what the patient reported, what the medic found, vitals taken, treatments given, the patient's response, and the outcome (released, refused, transported). Terse EMS shorthand, e.g. "Pt states dizzy while in line at Titan", "Oral glucose 1 tube PO". Never write narrative prose or a chart format (no DCHART, SOAP, CHART).
+12. missing: at most 5 short reminders of assessment items NOT covered that matter for this kind of complaint, most important first, e.g. "Allergies not asked", "No repeat vitals after glucose", "Onset not asked". Skip routine demographics (DOB, address, phone). Documentation gaps only -- never treatment advice.
 13. speakers: your best guess at each speaker label's role.`;
 
 const scribeNorm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
@@ -2007,6 +2011,7 @@ function scribeVerify(draft, phrases) {
   for (const v of draft.vitals || []) check(v);
   for (const i of draft.interventions || []) check(i);
   for (const n of draft.pertinent_negatives || []) check(n);
+  for (const e of draft.timeline || []) check(e);
   return draft;
 }
 
