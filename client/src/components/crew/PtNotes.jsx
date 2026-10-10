@@ -87,16 +87,9 @@ function Header({ title, onBack, backLabel = '← Back' }) {
   );
 }
 
-function Compose({ myUnit, units, myActiveCall, onSent, onCancel }) {
-  const [values, setValues] = useState({});
-  const [toId, setToId] = useState('');
-  const [sending, setSending] = useState(false);
-  const [error, setError] = useState('');
-  const [scanning, setScanning] = useState(false);
-  const [scannedKeys, setScannedKeys] = useState([]); // fields filled from a license, for the check-it hint
-
-  // Units someone could actually receive it on: not carts, not this unit.
-  // Units on this same call first, then ones with a crew logged in.
+// Units someone could actually receive a note on: not carts, not this unit.
+// Units on this same call first, then ones with a crew logged in.
+function UnitPicker({ myUnit, units, myActiveCall, toId, onPick }) {
   const onThisCall = (u) => myActiveCall && (myActiveCall.assigned_unit_id === u.id || (myActiveCall.additional_unit_ids || []).includes(u.id));
   const recipients = units
     .filter(u => u.id !== myUnit.id && u.unit_type !== 'Cart' && u.status !== 'out_of_service')
@@ -104,6 +97,28 @@ function Compose({ myUnit, units, myActiveCall, onSent, onCancel }) {
       (onThisCall(b) - onThisCall(a)) ||
       (!!b.crew - !!a.crew) ||
       a.unit_number.localeCompare(b.unit_number, undefined, { numeric: true }));
+  return (
+    <>
+      {recipients.length === 0 && <div className="text-gray-500 text-sm">No other units in service right now.</div>}
+      {recipients.map(u => (
+        <button key={u.id} onClick={() => onPick(u.id)}
+          className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-left text-sm ${
+            toId === u.id ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-200'}`}>
+          <span className="font-semibold">{u.unit_number}{u.crew ? <span className="font-normal opacity-80"> · {u.crew}</span> : null}</span>
+          {onThisCall(u) && <span className="text-xs opacity-80">on your call</span>}
+        </button>
+      ))}
+    </>
+  );
+}
+
+function Compose({ myUnit, units, myActiveCall, onSent, onCancel }) {
+  const [values, setValues] = useState({});
+  const [toId, setToId] = useState('');
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState('');
+  const [scanning, setScanning] = useState(false);
+  const [scannedKeys, setScannedKeys] = useState([]); // fields filled from a license, for the check-it hint
 
   const set = (k, v) => { setValues(prev => ({ ...prev, [k]: v })); setError(''); };
   const filled = Object.values(values).some(v => v && v.trim());
@@ -196,15 +211,8 @@ function Compose({ myUnit, units, myActiveCall, onSent, onCancel }) {
               <span className="font-semibold">📌 Save to myself</span>
               <span className="text-xs opacity-80">keep it in Saved</span>
             </button>
-            {recipients.length === 0 && <div className="text-gray-500 text-sm">No other units in service right now.</div>}
-            {recipients.map(u => (
-              <button key={u.id} onClick={() => { setToId(u.id); setError(''); }}
-                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-left text-sm ${
-                  toId === u.id ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-200'}`}>
-                <span className="font-semibold">{u.unit_number}{u.crew ? <span className="font-normal opacity-80"> · {u.crew}</span> : null}</span>
-                {onThisCall(u) && <span className="text-xs opacity-80">on your call</span>}
-              </button>
-            ))}
+            <UnitPicker myUnit={myUnit} units={units} myActiveCall={myActiveCall} toId={toId}
+              onPick={(id) => { setToId(id); setError(''); }} />
           </div>
         </div>
 
@@ -223,11 +231,35 @@ function Compose({ myUnit, units, myActiveCall, onSent, onCancel }) {
   );
 }
 
-function NoteView({ note, myUnit, onBack, onViewed, onDeleted }) {
+function NoteView({ note, myUnit, units, myActiveCall, onBack, onViewed, onDeleted, onSent }) {
   const saved = note.to_unit_id === myUnit.id && note.from_unit_id === myUnit.id;
   const incoming = note.to_unit_id === myUnit.id && !saved;
   const [viewError, setViewError] = useState('');
   const [deleting, setDeleting] = useState(false);
+  const [picking, setPicking] = useState(false);
+  const [toId, setToId] = useState('');
+  const [sending, setSending] = useState(false);
+  const [sentTo, setSentTo] = useState([]); // unit numbers this was sent to from here
+
+  // Sending a saved note (e.g. a Listening report) to another medic: a new
+  // note with the same fields, so it shows in their Received like any other
+  // and expires 8 hours from now. Only the saved note itself goes -- the
+  // recording's draft screen and transcript never left this phone.
+  const sendOn = async () => {
+    if (!toId) { setViewError('Pick who to send it to'); return; }
+    setSending(true);
+    setViewError('');
+    try {
+      const res = await sendPtNote({ to_unit_id: toId, fields: note.fields });
+      onSent(res.data);
+      setSentTo(prev => [...prev, res.data.to_unit_number]);
+      setPicking(false);
+      setToId('');
+    } catch (err) {
+      setViewError(err?.response?.data?.error || 'Could not send — check your connection and try again');
+    }
+    setSending(false);
+  };
 
   // Deleting removes the note for both medics on it, not just this phone.
   const remove = async () => {
@@ -291,8 +323,31 @@ function NoteView({ note, myUnit, onBack, onViewed, onDeleted }) {
           </div>
         )}
         <p className="text-gray-500 text-[11px] pt-2">Deleted automatically 8 hours after it was sent.</p>
+        {picking && (
+          <div className="pt-2 space-y-1.5">
+            <label className="block text-gray-400 text-xs mb-1">Send to</label>
+            <UnitPicker myUnit={myUnit} units={units} myActiveCall={myActiveCall} toId={toId}
+              onPick={(id) => { setToId(id); setViewError(''); }} />
+          </div>
+        )}
       </div>
-      <div className="p-4 border-t border-gray-700 flex-shrink-0">
+      <div className="p-4 border-t border-gray-700 flex-shrink-0 space-y-2">
+        {sentTo.length > 0 && <p className="text-green-400 text-sm text-center">✓ Sent to {sentTo.join(', ')}</p>}
+        {saved && (picking ? (
+          <div className="grid grid-cols-2 gap-2">
+            <button onClick={() => { setPicking(false); setToId(''); setViewError(''); }}
+              className="py-3 rounded-xl bg-gray-700 text-gray-200 font-semibold text-sm">Cancel</button>
+            <button onClick={sendOn} disabled={sending || !toId}
+              className="py-3 rounded-xl bg-blue-600 active:bg-blue-700 disabled:opacity-50 text-white font-bold text-sm">
+              {sending ? 'Sending…' : '📤 Send'}
+            </button>
+          </div>
+        ) : (
+          <button onClick={() => setPicking(true)}
+            className="w-full py-3 rounded-xl bg-blue-600 active:bg-blue-700 text-white font-bold text-sm">
+            📤 Send to another medic
+          </button>
+        ))}
         <button onClick={remove} disabled={deleting}
           className="w-full py-3 rounded-xl bg-red-900/50 border border-red-700 active:bg-red-900 disabled:opacity-50 text-red-200 font-semibold text-sm">
           {deleting ? 'Deleting…' : '🗑 Delete notes'}
@@ -342,7 +397,8 @@ export default function PtNotes({ myUnit, units, myActiveCall, notes, onNoteSent
           onSent={(note) => { onNoteSent(note); setTab(note.to_unit_id === myUnit.id ? 'saved' : 'sent'); setView('list'); }}
         />
       ) : view === 'note' && openNote ? (
-        <NoteView note={openNote} myUnit={myUnit} onBack={() => setView('list')} onViewed={onNoteViewed}
+        <NoteView note={openNote} myUnit={myUnit} units={units} myActiveCall={myActiveCall}
+          onBack={() => setView('list')} onViewed={onNoteViewed} onSent={onNoteSent}
           onDeleted={(id) => { onNoteDeleted(id); setView('list'); }} />
       ) : (
         <>
