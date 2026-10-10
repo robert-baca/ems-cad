@@ -1,11 +1,70 @@
-import { useState } from 'react';
-import { setDutiesEnabled, addDuty, deleteDuty } from '../../services/api';
+import { useState, useEffect, useMemo } from 'react';
+import { setDutiesEnabled, addDuty, deleteDuty, getDutyReports } from '../../services/api';
+
+function fmtWhen(iso) {
+  const d = new Date(iso);
+  return `${d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} · ${d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
+}
+
+function ReportCard({ r }) {
+  const [open, setOpen] = useState(false);
+  const done = r.items.filter(i => i.checked).length;
+  const allDone = done === r.items.length;
+  const unitsLabel = (i) => i.units.map(u => u.crew ? `${u.unit_number} · ${u.crew}` : u.unit_number).join(', ');
+  return (
+    <div className="rounded-lg bg-gray-700/60 px-3 py-2">
+      <button onClick={() => setOpen(v => !v)} className="w-full text-left">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-gray-400 text-[11px]">{fmtWhen(r.submitted_at)}</span>
+          <span className={`text-[11px] font-bold ${allDone ? 'text-green-400' : 'text-amber-400'}`}>Done {done}/{r.items.length}</span>
+        </div>
+        <div className="text-gray-100 text-sm">
+          {r.submitted_by || 'Unknown'}{r.submitted_unit ? <span className="text-gray-400"> ({r.submitted_unit})</span> : null}
+        </div>
+        {!open && r.notes && <div className="text-gray-400 text-xs truncate mt-0.5">📝 {r.notes}</div>}
+      </button>
+      {open && (
+        <div className="mt-1.5 pt-1.5 border-t border-gray-600 space-y-1">
+          {r.items.map(i => (
+            <div key={i.duty_id} className={`text-xs ${i.checked ? 'text-green-400/90' : 'text-amber-400/90'}`}>
+              {i.checked ? '✓' : '✗'} {i.text} <span className="text-gray-500">— {unitsLabel(i)}</span>
+            </div>
+          ))}
+          {r.notes && <div className="text-gray-300 text-xs whitespace-pre-wrap break-words pt-1">📝 {r.notes}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Duty checks submitted by admins from the crew app, last 90 days.
+// liveReports are ones that arrived over the socket while the dashboard was open.
+function ReportsTab({ liveReports }) {
+  const [reports, setReports] = useState(null);
+  const [error,   setError]   = useState('');
+  useEffect(() => {
+    getDutyReports()
+      .then(res => setReports(Array.isArray(res.data) ? res.data : []))
+      .catch(err => setError(err?.response?.data?.error || 'Could not load reports'));
+  }, []);
+  const merged = useMemo(() => {
+    const byId = new Map((reports || []).map(r => [r.id, r]));
+    liveReports.forEach(r => byId.set(r.id, r));
+    return [...byId.values()].sort((a, b) => b.submitted_at.localeCompare(a.submitted_at));
+  }, [reports, liveReports]);
+
+  if (error) return <p className="text-red-400 text-sm">{error}</p>;
+  if (reports === null) return <p className="text-gray-500 text-sm">Loading…</p>;
+  if (!merged.length) return <p className="text-gray-500 text-sm">No duty reports yet. Admins submit them from the crew app.</p>;
+  return <div className="space-y-2">{merged.map(r => <ReportCard key={r.id} r={r} />)}</div>;
+}
 
 const byNumber = (a, b) => a.unit_number.localeCompare(b.unit_number, undefined, { numeric: true });
 // "Medic 9 · Haiden" -- the crew name dispatch set at shift start, if any.
 const unitLabel = (u) => u.crew ? `${u.unit_number} · ${u.crew}` : u.unit_number;
 
-export default function DutiesModal({ enabled, duties, units, onClose }) {
+export default function DutiesModal({ enabled, duties, units, liveReports = [], initialTab = 'duties', onClose }) {
+  const [tab,      setTab]      = useState(initialTab);
   const [text,     setText]     = useState('');
   const [allUnits, setAllUnits] = useState(true);
   const [picked,   setPicked]   = useState([]);
@@ -40,7 +99,7 @@ export default function DutiesModal({ enabled, duties, units, onClose }) {
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
       <div className="bg-gray-800 rounded-2xl w-full max-w-md shadow-2xl border border-gray-700">
-        <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-gray-700">
+        <div className="flex items-center justify-between px-5 pt-4 pb-2">
           <div>
             <div className="text-white font-bold">🧽 Cleaning Duties</div>
             <div className="text-gray-400 text-xs">Shown in the crew app while turned on</div>
@@ -50,7 +109,19 @@ export default function DutiesModal({ enabled, duties, units, onClose }) {
             ×
           </button>
         </div>
+        <div className="flex px-5 border-b border-gray-700">
+          {[['duties', 'Duties'], ['reports', 'Reports']].map(([id, label]) => (
+            <button key={id} onClick={() => setTab(id)}
+              className={`flex-1 py-2 text-xs font-semibold border-b-2 transition-colors ${
+                tab === id ? 'border-teal-500 text-white' : 'border-transparent text-gray-400 hover:text-gray-200'}`}>
+              {label}
+            </button>
+          ))}
+        </div>
 
+        {tab === 'reports' ? (
+          <div className="p-5 max-h-[70vh] overflow-y-auto"><ReportsTab liveReports={liveReports} /></div>
+        ) : (
         <div className="p-5 space-y-4 max-h-[70vh] overflow-y-auto">
           <div className="flex items-center justify-between rounded-xl px-4 py-2.5 bg-gray-900/50 border border-gray-700">
             <div className="pr-3">
@@ -121,6 +192,7 @@ export default function DutiesModal({ enabled, duties, units, onClose }) {
             )) : <p className="text-gray-500 text-sm">No duties yet.</p>}
           </div>
         </div>
+        )}
 
         <div className="px-5 py-4 border-t border-gray-700">
           <button onClick={onClose}

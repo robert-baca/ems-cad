@@ -577,6 +577,21 @@ async function initDb() {
     )
   `);
 
+  // Duty checks submitted by admins from the crew app. items is a snapshot
+  // (duty text, unit, crew name, checked) so a report still reads right
+  // after the duty list or roster changes.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS duty_reports (
+      id TEXT PRIMARY KEY,
+      submitted_at TEXT,
+      submitted_by TEXT,
+      submitted_unit TEXT,
+      shift_id TEXT,
+      items JSONB DEFAULT '[]',
+      notes TEXT
+    )
+  `);
+
   // Patient handoff notes (PT NOTES) -- protected health information.
   // Only ever readable by the sending and receiving unit, never logged or
   // put in a push notification, and purged PT_NOTE_RETENTION_MS after
@@ -2003,9 +2018,37 @@ function emitDuties() {
   io.to('crew_all').emit('duties:updated', state);
 }
 
-app.get('/api/duties', verifyToken, (req, res) => {
+// Admin = access_role 'admin' on the sfotems.com personnel record (same bar
+// as wayfinding admin). Looked up live rather than baked into the 30-day
+// crew token, so removing admin in the portal takes effect within minutes.
+const ADMIN_CACHE_MS = 5 * 60 * 1000;
+const personnelAdminCache = new Map(); // personnel_id -> { admin, at }
+async function isPersonnelAdmin(personnelId) {
+  if (!personnelId) return false;
+  const hit = personnelAdminCache.get(personnelId);
+  if (hit && Date.now() - hit.at < ADMIN_CACHE_MS) return hit.admin;
+  const supabase = getSupabase();
+  if (!supabase) return false;
+  const { data, error } = await supabase.from('personnel').select('access_role').eq('id', personnelId).maybeSingle();
+  if (error) {
+    console.error('[duties] admin lookup failed:', error.message);
+    return hit?.admin ?? false;
+  }
+  const admin = data?.access_role === 'admin';
+  personnelAdminCache.set(personnelId, { admin, at: Date.now() });
+  return admin;
+}
+
+// Admins get every unit's duties (even with the crew view switched off) for
+// the duty check; everyone else gets just their own unit's.
+app.get('/api/duties', verifyToken, async (req, res) => {
   if (req.user.role === 'crew') {
-    return res.json({ enabled: dutiesEnabled, duties: dutiesEnabled ? duties.filter(d => dutyAppliesTo(d, req.user.unit_id)) : [] });
+    const admin = await isPersonnelAdmin(req.user.personnel_id);
+    return res.json({
+      enabled: dutiesEnabled,
+      duties: admin ? duties : dutiesEnabled ? duties.filter(d => dutyAppliesTo(d, req.user.unit_id)) : [],
+      admin
+    });
   }
   if (!['dispatcher', 'overwatch'].includes(req.user.role)) return res.status(403).json({ error: 'Forbidden' });
   res.json({ enabled: dutiesEnabled, duties });
@@ -2059,6 +2102,60 @@ app.delete('/api/duties/:id', verifyToken, async (req, res) => {
   persist(pool.query('DELETE FROM duties WHERE id = $1', [req.params.id]), 'duty ' + req.params.id);
   emitDuties();
   res.json({ ok: true });
+});
+
+// An admin's duty check from the crew app: which duties they found done.
+app.post('/api/duties/reports', verifyToken, async (req, res) => {
+  if (req.user.role !== 'crew' || !(await isPersonnelAdmin(req.user.personnel_id)))
+    return res.status(403).json({ error: 'Admin access required' });
+  if (!duties.length) return res.status(400).json({ error: 'There are no duties to report on' });
+  const checked = new Set(Array.isArray(req.body.checked_ids) ? req.body.checked_ids : []);
+  const unitFor = (id) => units.find(u => u.id === id);
+  const items = duties.map(d => {
+    const assigned = d.unit_ids.length ? d.unit_ids.map(unitFor).filter(Boolean) : [];
+    return {
+      duty_id: d.id,
+      text: d.text,
+      units: d.unit_ids.length
+        ? assigned.map(u => ({ unit_number: u.unit_number, crew: u.crew || null }))
+        : [{ unit_number: 'All units', crew: null }],
+      checked: checked.has(d.id)
+    };
+  });
+  const report = {
+    id: `dr-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    submitted_at: new Date().toISOString(),
+    submitted_by: req.user.name || null,
+    submitted_unit: req.user.unit_number || null,
+    shift_id: currentShift && !currentShift.ended_at ? currentShift.id : null,
+    items,
+    notes: typeof req.body.notes === 'string' ? req.body.notes.trim().slice(0, 2000) || null : null
+  };
+  try {
+    await pool.query(
+      `INSERT INTO duty_reports (id, submitted_at, submitted_by, submitted_unit, shift_id, items, notes)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [report.id, report.submitted_at, report.submitted_by, report.submitted_unit, report.shift_id, JSON.stringify(items), report.notes]
+    );
+  } catch (err) {
+    console.error('[duties] report save failed:', err.message);
+    return res.status(500).json({ error: 'Could not save report — try again' });
+  }
+  console.log(`[duties] report from ${report.submitted_by} (${report.submitted_unit}): ${[...checked].length}/${items.length} done`);
+  io.to('dispatchers').emit('duty_report:created', report);
+  res.status(201).json(report);
+});
+
+app.get('/api/duties/reports', verifyToken, async (req, res) => {
+  if (!['dispatcher', 'overwatch'].includes(req.user.role)) return res.status(403).json({ error: 'Forbidden' });
+  try {
+    const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+    const r = await pool.query('SELECT * FROM duty_reports WHERE submitted_at > $1 ORDER BY submitted_at DESC LIMIT 200', [cutoff]);
+    res.json(r.rows.map(x => ({ ...x, items: x.items || [] })));
+  } catch (err) {
+    console.error('[duties] reports query failed:', err.message);
+    res.status(500).json({ error: 'Database error' });
+  }
 });
 
 app.delete('/api/units/:id', verifyToken, async (req, res) => {

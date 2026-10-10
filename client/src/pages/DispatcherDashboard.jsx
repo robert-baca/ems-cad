@@ -157,6 +157,10 @@ export default function DispatcherDashboard() {
   // Cleaning duties (DutiesModal); checkmarks arrive live via 'duties:updated'.
   const [dutiesState, setDutiesState] = useState({ enabled: false, duties: [] });
   const [showDuties,  setShowDuties]  = useState(false);
+  // Duty reports admins submitted from the crew app while this screen was open;
+  // unseenDutyReports badges the Duties button until it's opened.
+  const [liveDutyReports,   setLiveDutyReports]   = useState([]);
+  const [unseenDutyReports, setUnseenDutyReports] = useState(0);
   useEffect(() => {
     if (isOverwatch) return;
     getDuties().then(res => { if (Array.isArray(res.data?.duties)) setDutiesState(res.data); }).catch(() => {});
@@ -234,6 +238,12 @@ export default function DispatcherDashboard() {
     'broadcast:read':      ({ id, unit_id, at, unit_number }) =>
       setBroadcasts(prev => prev.map(b => b.id === id ? { ...b, reads: { ...b.reads, [unit_id]: { at, unit_number } } } : b)),
     'duties:updated':      (s) => { if (Array.isArray(s?.duties)) setDutiesState(s); },
+    'duty_report:created': (r) => {
+      if (!r?.id) return;
+      setLiveDutyReports(prev => prev.some(x => x.id === r.id) ? prev : [r, ...prev]);
+      setUnseenDutyReports(n => n + 1);
+      playAlert('info');
+    },
     'unit:unacknowledged': (a) => { setUnackAlerts(prev => ({ ...prev, [a.unit_id]: a })); playAlert('warning'); },
     'unit:removed':        handleUnitRemoved,
     'location:added':      addRemoteLocation,
@@ -584,13 +594,19 @@ export default function DispatcherDashboard() {
                 📜 Broadcast History
               </button>
               <button
-                onClick={() => setShowDuties(true)}
+                onClick={() => setShowDuties(unseenDutyReports ? 'reports' : 'duties')}
                 className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium transition-colors border ${
                   dutiesState.enabled ? 'bg-teal-900/60 border-teal-700 text-teal-200 hover:bg-teal-800' : 'bg-gray-800 border-gray-600 text-gray-400 hover:bg-gray-700'}`}
                 title="Cleaning duties shown in the crew app"
               >
                 🧽 Duties
                 {!dutiesState.enabled && <span className="text-[10px] text-gray-500">(off)</span>}
+                {unseenDutyReports > 0 && (
+                  <span className="ml-0.5 px-1.5 rounded-full bg-amber-500 text-black text-[10px] font-bold"
+                    title={`${unseenDutyReports} new duty report${unseenDutyReports === 1 ? '' : 's'}`}>
+                    {unseenDutyReports}
+                  </span>
+                )}
               </button>
               {currentShift && (
                 <button
@@ -848,7 +864,9 @@ export default function DispatcherDashboard() {
           enabled={dutiesState.enabled}
           duties={dutiesState.duties}
           units={units}
-          onClose={() => setShowDuties(false)}
+          liveReports={liveDutyReports}
+          initialTab={showDuties}
+          onClose={() => { setShowDuties(false); setUnseenDutyReports(0); }}
         />
       )}
 

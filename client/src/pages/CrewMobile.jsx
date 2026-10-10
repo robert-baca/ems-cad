@@ -24,8 +24,9 @@ import { isNative as isNativePlatform, nativeCall } from '../lib/native';
 import { enqueueOfflineAction, subscribeOfflineQueue, getOfflineQueue } from '../lib/offlineActionQueue';
 import EmergencyPanel from '../components/crew/EmergencyPanel';
 import { startEmergency, cancelEmergency, getActiveEmergencies } from '../services/api';
-import { getDuties, getUnits, getAllCrewMessages } from '../services/api';
+import { getDuties, getUnits, getAllCrewMessages, submitDutyReport } from '../services/api';
 import CrewDuties from '../components/crew/CrewDuties';
+import CrewDutyCheck from '../components/crew/CrewDutyCheck';
 
 const offlineQueueHasEmergency = () => getOfflineQueue().some(a => a.type === 'emergency');
 
@@ -231,6 +232,8 @@ export default function CrewMobile() {
   // Cleaning duties from dispatch. The socket event carries every unit's
   // duties; the card below shows only this unit's.
   const [dutiesState,      setDutiesState]      = useState({ enabled: false, duties: [] });
+  // Portal admins also get the all-units duty check (server decides, via GET /duties).
+  const [isDutyAdmin,      setIsDutyAdmin]      = useState(false);
   const [backupSubmitting, setBackupSubmitting] = useState(false);
   const [backupError,      setBackupError]      = useState('');
   const [lastActiveCallId, setLastActiveCallId] = useState(null);
@@ -725,7 +728,11 @@ export default function CrewMobile() {
         .then(res => { if (Array.isArray(res.data)) setEmergencies(res.data); })
         .catch(() => {});
       getDuties()
-        .then(res => { if (Array.isArray(res.data?.duties)) setDutiesState(res.data); })
+        .then(res => {
+          if (!Array.isArray(res.data?.duties)) return;
+          setDutiesState({ enabled: res.data.enabled, duties: res.data.duties });
+          setIsDutyAdmin(!!res.data.admin);
+        })
         .catch(() => {});
       loadAllMessages(myUnit.id);
       // Status changes for other units missed while the app was backgrounded.
@@ -1132,6 +1139,17 @@ export default function CrewMobile() {
           <CrewDuties
             // "Every unit" duties skip carts, matching the server.
             duties={dutiesState.duties.filter(d => d.unit_ids.length ? d.unit_ids.includes(myUnit.id) : myUnit.unit_type !== 'Cart')}
+          />
+        )}
+
+        {isDutyAdmin && (
+          <CrewDutyCheck
+            duties={dutiesState.duties}
+            units={units}
+            onSubmit={async (checkedIds, notes) => {
+              try { await submitDutyReport(checkedIds, notes); return null; }
+              catch (err) { return err?.response?.data?.error || 'Could not send report — check connection and try again'; }
+            }}
           />
         )}
 
