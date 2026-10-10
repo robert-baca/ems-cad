@@ -24,6 +24,8 @@ import { isNative as isNativePlatform, nativeCall } from '../lib/native';
 import { enqueueOfflineAction, subscribeOfflineQueue, getOfflineQueue } from '../lib/offlineActionQueue';
 import EmergencyPanel from '../components/crew/EmergencyPanel';
 import { startEmergency, cancelEmergency, getActiveEmergencies } from '../services/api';
+import { getDuties, setDutyDone } from '../services/api';
+import CrewDuties from '../components/crew/CrewDuties';
 
 const offlineQueueHasEmergency = () => getOfflineQueue().some(a => a.type === 'emergency');
 
@@ -226,6 +228,10 @@ export default function CrewMobile() {
   const [shiftActive,      setShiftActive]      = useState(null);
   // This shift's park-wide broadcasts, each with this unit's read flag.
   const [broadcasts,       setBroadcasts]       = useState([]);
+  // Cleaning duties from dispatch. The socket event carries every unit's
+  // duties; the card below shows only this unit's.
+  const [dutiesState,      setDutiesState]      = useState({ enabled: false, duties: [] });
+  const [dutyBusyId,       setDutyBusyId]       = useState(null);
   const [backupSubmitting, setBackupSubmitting] = useState(false);
   const [backupError,      setBackupError]      = useState('');
   const [lastActiveCallId, setLastActiveCallId] = useState(null);
@@ -677,6 +683,7 @@ export default function CrewMobile() {
       scheduleNotif(`📋 Patient notes from ${note.from_unit_number}`, 'Open PT Notes to view');
       if (isNative) nativeCall('Haptics', 'impact', { style: 'HEAVY' }).catch(() => {});
     },
+    'duties:updated':      (s) => { if (Array.isArray(s?.duties)) setDutiesState(s); },
     'pt_note:read':        ({ id, read_at }) => setPtNotes(prev => prev.map(n => n.id === id ? { ...n, read_at } : n)),
     'emergency:started':   (e) => {
       handleEmergencyEvent(e);
@@ -709,6 +716,9 @@ export default function CrewMobile() {
       getActiveEmergencies()
         .then(res => { if (Array.isArray(res.data)) setEmergencies(res.data); })
         .catch(() => {});
+      getDuties()
+        .then(res => { if (Array.isArray(res.data?.duties)) setDutiesState(res.data); })
+        .catch(() => {});
     };
     load();
     const onVisible = () => { if (document.visibilityState === 'visible') load(); };
@@ -725,6 +735,19 @@ export default function CrewMobile() {
       // stays accurate -- better a second tap than a silent "unread".
       setBroadcasts(prev => prev.map(b => b.id === id ? { ...b, read: false } : b));
       setStatusError('Could not mark broadcast as read — tap Got it again');
+    }
+  };
+
+  const handleToggleDuty = async (id, done) => {
+    setDutyBusyId(id);
+    try {
+      const res = await setDutyDone(id, done);
+      // The server's duties:updated echo does the same; this just skips the wait.
+      setDutiesState(prev => ({ ...prev, duties: prev.duties.map(d => d.id === id ? res.data : d) }));
+    } catch {
+      setStatusError('Could not update that duty — try again');
+    } finally {
+      setDutyBusyId(null);
     }
   };
 
@@ -1104,6 +1127,16 @@ export default function CrewMobile() {
         />
 
         <CrewBroadcasts broadcasts={broadcasts} onAck={handleAckBroadcast} />
+
+        {dutiesState.enabled && (
+          <CrewDuties
+            // "Every unit" duties skip carts, matching the server.
+            duties={dutiesState.duties.filter(d => d.unit_ids.length ? d.unit_ids.includes(myUnit.id) : myUnit.unit_type !== 'Cart')}
+            myUnitId={myUnit.id}
+            onToggle={handleToggleDuty}
+            busyId={dutyBusyId}
+          />
+        )}
 
         {statusError && (
           <div className="px-3 py-2 rounded-xl bg-red-900/60 border border-red-700 text-red-200 text-sm flex items-center gap-2">

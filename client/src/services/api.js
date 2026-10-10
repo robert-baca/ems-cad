@@ -40,6 +40,14 @@ export const sendPtNote = (data) => api.post('/pt-notes', data);
 export const viewPtNote = (id) => api.post(`/pt-notes/${id}/view`);
 export const getBroadcastHistory = () => api.get('/broadcasts/history');
 export const markBroadcastRead = (id) => api.post(`/broadcasts/${id}/read`);
+
+// Cleaning duties
+export const getDuties = () => api.get('/duties');
+export const setDutiesEnabled = (enabled) => api.put('/duties/settings', { enabled });
+export const addDuty = (text, unit_ids) => api.post('/duties', { text, unit_ids });
+export const deleteDuty = (id) => api.delete(`/duties/${id}`);
+export const resetDuties = () => api.post('/duties/reset');
+export const setDutyDone = (id, done) => api.post(`/duties/${id}/done`, { done });
 export const setCrewGpsSharing = (enabled) => api.patch('/crew/gps-sharing', { enabled });
 export const registerPushToken = (pushToken, platform) => api.post('/crew/push-token', { pushToken, platform });
 export const unregisterPushToken = (pushToken) => api.delete('/crew/push-token', { data: { pushToken } });

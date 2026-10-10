@@ -343,6 +343,10 @@ let directMessages = [];
 let broadcasts = [];
 // Open (unresolved) panic-button emergencies. Resolved ones live only in the DB.
 let emergencies = [];
+// Cleaning duties dispatch hands out (see the Duties section below). The list
+// carries over between shifts; only the checkmarks reset at shift start.
+let duties = [];
+let dutiesEnabled = false;
 let nextCallNum  = 100;
 const gpsDiscardLastLog  = new Map(); // unit_id → last discard log timestamp
 
@@ -558,6 +562,18 @@ async function initDb() {
     )
   `);
 
+  // unit_ids empty = every unit. done maps unit_id -> { at, by }.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS duties (
+      id TEXT PRIMARY KEY,
+      text TEXT NOT NULL,
+      unit_ids JSONB DEFAULT '[]',
+      done JSONB DEFAULT '{}',
+      created_at TEXT,
+      created_by TEXT
+    )
+  `);
+
   // Patient handoff notes (PT NOTES) -- protected health information.
   // Only ever readable by the sending and receiving unit, never logged or
   // put in a push notification, and purged PT_NOTE_RETENTION_MS after
@@ -668,6 +684,11 @@ async function initDb() {
         [new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString()]);
   broadcasts = bcRes.rows.map(b => ({ ...b, target_unit_ids: b.target_unit_ids || [], reads: b.reads || {} }));
 
+  const dutiesRes = await pool.query('SELECT * FROM duties ORDER BY created_at');
+  duties = dutiesRes.rows.map(d => ({ ...d, unit_ids: d.unit_ids || [], done: d.done || {} }));
+  const dutiesFlag = await pool.query("SELECT value FROM app_settings WHERE key = 'duties_enabled'");
+  dutiesEnabled = dutiesFlag.rows[0]?.value === 'true';
+
   const locsRes = await pool.query("SELECT * FROM locations ORDER BY name");
   locations = locsRes.rows;
 
@@ -777,6 +798,15 @@ async function saveBroadcast(b) {
      VALUES ($1, $2, $3, $4, $5, $6, $7)
      ON CONFLICT (id) DO UPDATE SET reads = EXCLUDED.reads`,
     [b.id, b.shift_id, b.from_name, b.message, b.sent_at, JSON.stringify(b.target_unit_ids), JSON.stringify(b.reads)]
+  );
+}
+
+async function saveDuty(d) {
+  await pool.query(
+    `INSERT INTO duties (id, text, unit_ids, done, created_at, created_by)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (id) DO UPDATE SET text = EXCLUDED.text, unit_ids = EXCLUDED.unit_ids, done = EXCLUDED.done`,
+    [d.id, d.text, JSON.stringify(d.unit_ids), JSON.stringify(d.done), d.created_at, d.created_by]
   );
 }
 
@@ -1957,6 +1987,105 @@ app.post('/api/broadcasts/:id/read', verifyToken, async (req, res) => {
   res.json({ ok: true });
 });
 
+// ── Cleaning duties ──────────────────────────────────────────────────
+// Dispatch turns the feature on, writes the duties (for every unit or
+// specific ones), and each crew sees and checks off their own. A duty for
+// every unit is checked off per unit, so dispatch sees who has done it.
+// "Every unit" leaves out carts, same as broadcasts; a cart can still be picked by name.
+const dutyAppliesTo = (d, unitId) =>
+  d.unit_ids.length ? d.unit_ids.includes(unitId) : !isCartUnit(units.find(u => u.id === unitId));
+
+function emitDuties() {
+  const state = { enabled: dutiesEnabled, duties };
+  io.to('dispatchers').emit('duties:updated', state);
+  io.to('crew_all').emit('duties:updated', state);
+}
+
+app.get('/api/duties', verifyToken, (req, res) => {
+  if (req.user.role === 'crew') {
+    return res.json({ enabled: dutiesEnabled, duties: dutiesEnabled ? duties.filter(d => dutyAppliesTo(d, req.user.unit_id)) : [] });
+  }
+  if (!['dispatcher', 'overwatch'].includes(req.user.role)) return res.status(403).json({ error: 'Forbidden' });
+  res.json({ enabled: dutiesEnabled, duties });
+});
+
+app.put('/api/duties/settings', verifyToken, async (req, res) => {
+  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
+  const enabled = !!req.body.enabled;
+  try {
+    await pool.query(`
+      INSERT INTO app_settings (key, value, updated_at) VALUES ('duties_enabled', $1, $2)
+      ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=EXCLUDED.updated_at
+    `, [String(enabled), new Date().toISOString()]);
+  } catch (err) {
+    console.error('[duties] settings save failed:', err.message);
+    return res.status(500).json({ error: 'Could not save — try again' });
+  }
+  dutiesEnabled = enabled;
+  emitDuties();
+  res.json({ enabled });
+});
+
+app.post('/api/duties', verifyToken, async (req, res) => {
+  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
+  const text = typeof req.body.text === 'string' ? req.body.text.trim().slice(0, 300) : '';
+  if (!text) return res.status(400).json({ error: 'Duty text required' });
+  const unitIds = Array.isArray(req.body.unit_ids)
+    ? [...new Set(req.body.unit_ids)].filter(id => units.some(u => u.id === id))
+    : [];
+  const duty = {
+    id: `duty-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    text, unit_ids: unitIds, done: {},
+    created_at: new Date().toISOString(), created_by: auditActor(req.user)
+  };
+  try {
+    await saveDuty(duty);
+  } catch (err) {
+    console.error('[duties] save failed:', err.message);
+    return res.status(500).json({ error: 'Could not save — try again' });
+  }
+  duties.push(duty);
+  emitDuties();
+  res.status(201).json(duty);
+});
+
+app.delete('/api/duties/:id', verifyToken, async (req, res) => {
+  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
+  const idx = duties.findIndex(d => d.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'Not found' });
+  duties.splice(idx, 1);
+  persist(pool.query('DELETE FROM duties WHERE id = $1', [req.params.id]), 'duty ' + req.params.id);
+  emitDuties();
+  res.json({ ok: true });
+});
+
+// Uncheck everything without retyping the list (also happens at shift start).
+app.post('/api/duties/reset', verifyToken, async (req, res) => {
+  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
+  duties.forEach(d => { if (Object.keys(d.done).length) { d.done = {}; persist(saveDuty(d), 'duty ' + d.id); } });
+  emitDuties();
+  res.json({ ok: true });
+});
+
+// Crew checks (done: true) or unchecks one of their own unit's duties.
+app.post('/api/duties/:id/done', verifyToken, async (req, res) => {
+  if (req.user.role !== 'crew') return res.status(403).json({ error: 'Forbidden' });
+  const d = duties.find(x => x.id === req.params.id);
+  if (!d || !dutiesEnabled || !dutyAppliesTo(d, req.user.unit_id)) return res.status(404).json({ error: 'Not found' });
+  const unitId = req.user.unit_id;
+  if (req.body.done === false) {
+    if (!d.done[unitId]) return res.json(d);
+    const { [unitId]: _, ...rest } = d.done;
+    d.done = rest;
+  } else {
+    if (d.done[unitId]) return res.json(d);
+    d.done = { ...d.done, [unitId]: { at: new Date().toISOString(), by: req.user.name || req.user.unit_number || null } };
+  }
+  persist(saveDuty(d), 'duty ' + d.id);
+  emitDuties();
+  res.json(d);
+});
+
 app.delete('/api/units/:id', verifyToken, async (req, res) => {
   if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
   const idx = units.findIndex(u => u.id === req.params.id);
@@ -2586,6 +2715,11 @@ app.post('/api/shift/start', verifyToken, async (req, res) => {
   // A weather warning still in effect gets broadcast again to the new shift.
   if (weatherBroadcastEvents?.size) { weatherBroadcastEvents.clear(); saveWeatherState(); }
   setTimeout(pollWeather, 5000);
+  // Same duty list every day; each shift starts with nothing checked off.
+  if (duties.some(d => Object.keys(d.done).length)) {
+    duties.forEach(d => { if (Object.keys(d.done).length) { d.done = {}; persist(saveDuty(d), 'duty ' + d.id); } });
+    emitDuties();
+  }
 
   unit_staffing.forEach(({ unit_id, crew, unit_type, in_service, station }) => {
     const unit = units.find(u => u.id === unit_id);

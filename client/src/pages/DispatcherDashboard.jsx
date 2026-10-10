@@ -21,7 +21,8 @@ import OptionsModal from '../components/settings/OptionsModal';
 import CallSummaryModal from '../components/calls/CallSummaryModal';
 import BroadcastModal, { receiptStats } from '../components/calls/BroadcastModal';
 import SpinWheel from '../components/calls/SpinWheel';
-import { sendBroadcast, getBroadcasts } from '../services/api';
+import { sendBroadcast, getBroadcasts, getDuties } from '../services/api';
+import DutiesModal from '../components/duties/DutiesModal';
 import { playAlert } from '../lib/alertSound';
 import EmergencyBanner from '../components/units/EmergencyBanner';
 import ReportsModal from '../components/reports/ReportsModal';
@@ -153,6 +154,14 @@ export default function DispatcherDashboard() {
     getBroadcasts().then(res => { if (Array.isArray(res.data)) setBroadcasts(res.data); }).catch(() => {});
   }, [isOverwatch]);
 
+  // Cleaning duties (DutiesModal); checkmarks arrive live via 'duties:updated'.
+  const [dutiesState, setDutiesState] = useState({ enabled: false, duties: [] });
+  const [showDuties,  setShowDuties]  = useState(false);
+  useEffect(() => {
+    if (isOverwatch) return;
+    getDuties().then(res => { if (Array.isArray(res.data?.duties)) setDutiesState(res.data); }).catch(() => {});
+  }, [isOverwatch]);
+
   // Load current shift on mount
   useEffect(() => {
     if (!user?.token) { setCurrentShift(null); return; }
@@ -224,6 +233,7 @@ export default function DispatcherDashboard() {
     'broadcast:created':   (b) => setBroadcasts(prev => prev.some(x => x.id === b.id) ? prev : [...prev, b]),
     'broadcast:read':      ({ id, unit_id, at, unit_number }) =>
       setBroadcasts(prev => prev.map(b => b.id === id ? { ...b, reads: { ...b.reads, [unit_id]: { at, unit_number } } } : b)),
+    'duties:updated':      (s) => { if (Array.isArray(s?.duties)) setDutiesState(s); },
     'unit:unacknowledged': (a) => { setUnackAlerts(prev => ({ ...prev, [a.unit_id]: a })); playAlert('warning'); },
     'unit:removed':        handleUnitRemoved,
     'location:added':      addRemoteLocation,
@@ -573,6 +583,15 @@ export default function DispatcherDashboard() {
               >
                 📜 Broadcast History
               </button>
+              <button
+                onClick={() => setShowDuties(true)}
+                className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium transition-colors border ${
+                  dutiesState.enabled ? 'bg-teal-900/60 border-teal-700 text-teal-200 hover:bg-teal-800' : 'bg-gray-800 border-gray-600 text-gray-400 hover:bg-gray-700'}`}
+                title="Cleaning duties shown in the crew app"
+              >
+                🧽 Duties
+                {!dutiesState.enabled && <span className="text-[10px] text-gray-500">(off)</span>}
+              </button>
               {currentShift && (
                 <button
                   onClick={handleEndShift}
@@ -821,6 +840,15 @@ export default function DispatcherDashboard() {
           units={units}
           initialTab={showBroadcast}
           onClose={() => setShowBroadcast(false)}
+        />
+      )}
+
+      {!isOverwatch && showDuties && (
+        <DutiesModal
+          enabled={dutiesState.enabled}
+          duties={dutiesState.duties}
+          units={units}
+          onClose={() => setShowDuties(false)}
         />
       )}
 
