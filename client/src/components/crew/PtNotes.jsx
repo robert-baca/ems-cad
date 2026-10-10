@@ -90,7 +90,7 @@ function Header({ title, onBack, backLabel = '← Back' }) {
 
 // Units someone could actually receive a note on: not carts, not this unit.
 // Units on this same call first, then ones with a crew logged in.
-function UnitPicker({ myUnit, units, myActiveCall, toId, onPick }) {
+export function UnitPicker({ myUnit, units, myActiveCall, toId, onPick }) {
   const onThisCall = (u) => myActiveCall && (myActiveCall.assigned_unit_id === u.id || (myActiveCall.additional_unit_ids || []).includes(u.id));
   const recipients = units
     .filter(u => u.id !== myUnit.id && u.unit_type !== 'Cart' && u.status !== 'out_of_service')

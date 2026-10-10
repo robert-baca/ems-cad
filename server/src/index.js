@@ -1948,7 +1948,7 @@ Rules:
 5. vitals: one entry per set the medic stated aloud, with the clock time (HH:MM) of the transcript line. Values as normally charted: bp "128/84", hr "92", rr "18", spo2 "97", bgl "104", gcs "15", pain "6", temp "99.1". Null for anything not stated in that set.
 6. interventions: treatments, medications (name, dose, route) and procedures the medic said they did or were doing, with clock time (HH:MM). Leave out anything only discussed or considered.
 7. allergies: "NKDA" if the patient said they have no allergies. medications / medical_hx: "None" if the patient said they have none.
-8. age: number only, e.g. "34". sex: "M", "F" or "Other", only if said in the conversation. dob as said, formatted MM/DD/YYYY when it is complete.
+8. age: number only, e.g. "34". sex: "M", "F" or "Other", only if said in the conversation. dob as said, formatted MM/DD/YYYY when it is complete. name as "Last, First". If a name is spelled out letter by letter (e.g. "N-G-U-Y-E-N"), use that spelling over how the word was transcribed.
 9. location: where in the park the patient was, only if said.
 10. pertinent_negatives: findings the patient denied or the medic found absent, e.g. "Denies chest pain".
 11. timeline: the key moments of the encounter in time order, one short factual entry each, with clock time (HH:MM): what the patient reported, what the medic found, vitals taken, treatments given, the patient's response, and the outcome (released, refused, transported). Terse EMS shorthand, e.g. "Pt states dizzy while in line at Titan", "Oral glucose 1 tube PO". Never write narrative prose or a chart format (no DCHART, SOAP, CHART).

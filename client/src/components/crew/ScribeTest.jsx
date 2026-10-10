@@ -1,22 +1,31 @@
 import { useState, useEffect, useRef } from 'react';
 import { processScribe, sendScribeFeedback, sendPtNote } from '../../services/api';
 import { startWavRecorder } from '../../lib/wavRecorder';
+import LicenseScanner from './LicenseScanner';
+import { UnitPicker } from './PtNotes';
 
-// Ambient listening beta. Only starts once the medic records that the patient
-// (or a parent/guardian) agreed. Records the encounter in
-// the phone's browser, sends it to the server for transcription, and shows a
-// reference summary (not a written chart) where every item carries the quote
-// it came from -- the medic reads it while writing their own chart. Like
-// PT Notes, the recording, transcript and draft are only held in memory
-// here -- leaving this screen throws them away.
+// Start Incident (ambient listening beta). One flow: the medic enters or
+// scans the patient's demographics, gets consent, records the encounter, and
+// gets one combined report -- their demographics plus what the recording
+// picked up (history, vitals, treatments, timeline), each AI item with the
+// quote it came from. It's a reference for writing the chart, not the chart.
+//
+// The typed/scanned demographics never go to the server or Azure; they're
+// merged with the AI's results here on the phone. The recording, transcript
+// and draft live only in memory -- leaving this screen throws them away
+// unless the medic saves or sends the report as a PT note (8-hour purge).
 
 const MAX_MS = 30 * 60 * 1000;
 
-const PATIENT_FIELDS = [
-  ['name', 'Name'], ['dob', 'DOB'], ['age', 'Age'], ['sex', 'Sex'], ['location', 'Location'],
-  ['address', 'Address'], ['phone', 'Phone'], ['medical_hx', 'Medical history'],
-  ['allergies', 'Allergies'], ['medications', 'Medications'],
+const DEMO_FIELDS = [
+  ['name', 'Name', 'Last, First'], ['dob', 'DOB', 'MM/DD/YYYY'], ['age', 'Age', 'e.g. 34'], ['sex', 'Sex'],
+  ['location', 'Location', 'Where in the park'], ['phone', 'Phone', '(555) 555-5555'], ['address', 'Address', 'Street, city, state, zip'],
 ];
+const PATIENT_FIELDS = [
+  ...DEMO_FIELDS.map(([k, l]) => [k, l]),
+  ['medical_hx', 'Medical history'], ['allergies', 'Allergies'], ['medications', 'Medications'],
+];
+const SEXES = ['M', 'F', 'Other'];
 const HISTORY_FIELDS = [
   ['onset', 'Onset'], ['provocation', 'Provocation'], ['quality', 'Quality'], ['radiation', 'Radiation'],
   ['severity', 'Severity'], ['time_course', 'Time'], ['last_oral_intake', 'Last oral intake'],
@@ -30,6 +39,19 @@ const fmtClock = (ms) => {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 };
 
+function ageFromDob(dob) {
+  const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(dob.trim());
+  if (!m) return '';
+  const d = new Date(+m[3], +m[1] - 1, +m[2]);
+  if (isNaN(d) || d > new Date()) return '';
+  const now = new Date();
+  let age = now.getFullYear() - d.getFullYear();
+  if (now < new Date(now.getFullYear(), d.getMonth(), d.getDate())) age--;
+  return age >= 0 && age < 130 ? String(age) : '';
+}
+
+const inputCls = 'w-full bg-gray-700 text-white rounded-lg px-2.5 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500';
+
 function Quote({ item }) {
   if (!item?.evidence) return <div className="text-amber-400 text-[11px] mt-1">⚠ No quote — check this against what was said</div>;
   return (
@@ -40,17 +62,16 @@ function Quote({ item }) {
   );
 }
 
-function EditableRow({ label, item, value, onChange }) {
+// source: 'you' (typed/edited by the medic), 'id' (license scan), or
+// undefined (from the recording -- show its quote).
+function EditableRow({ label, item, value, source, onChange }) {
   return (
     <div className="bg-gray-800 rounded-xl px-3 py-2.5 border border-gray-700">
       <div className="text-gray-400 text-[11px] uppercase tracking-wider mb-1">{label}</div>
-      <input
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        autoComplete="off"
-        className="w-full bg-gray-700 text-white rounded-lg px-2.5 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
-      />
-      <Quote item={item} />
+      <input value={value} onChange={e => onChange(e.target.value)} autoComplete="off" className={inputCls} />
+      {source === 'id' && value && <div className="text-green-400 text-[11px] mt-1">From ID scan</div>}
+      {source === 'you' && value && <div className="text-gray-500 text-[11px] mt-1">Entered by you</div>}
+      {!source && item?.value && <Quote item={item} />}
     </div>
   );
 }
@@ -64,8 +85,12 @@ function Section({ title, children }) {
   );
 }
 
-export default function ScribeTest({ myUnit, onNoteSent, onClose, backRef }) {
-  const [view, setView] = useState('intro'); // intro | recording | processing | review | error
+export default function ScribeTest({ myUnit, units, myActiveCall, onNoteSent, onClose, backRef }) {
+  const [view, setView] = useState('demos'); // demos | consent | recording | processing | review | error
+  const [title, setTitle] = useState('');
+  const [demos, setDemos] = useState({});
+  const [demoSource, setDemoSource] = useState({}); // key -> 'you' | 'id'
+  const [scanning, setScanning] = useState(false);
   const [consent, setConsent] = useState(''); // 'patient' | 'guardian' -- required to start
   const [elapsed, setElapsed] = useState(0);
   const [level, setLevel] = useState(0);
@@ -75,19 +100,26 @@ export default function ScribeTest({ myUnit, onNoteSent, onClose, backRef }) {
   const [result, setResult] = useState(null); // { session_id, phrases, draft, error }
   const [tab, setTab] = useState('draft');
   const [edits, setEdits] = useState({});
+  const [sources, setSources] = useState({}); // review field -> 'you' | 'id'
   const [vitalsIdx, setVitalsIdx] = useState(-1);
   const [rating, setRating] = useState('');
   const [criticalErrors, setCriticalErrors] = useState(0);
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
+  const [delivering, setDelivering] = useState(false);
+  const [savedToMe, setSavedToMe] = useState(false);
+  const [sentTo, setSentTo] = useState([]);
+  const [picking, setPicking] = useState(false);
+  const [toId, setToId] = useState('');
 
   const recRef = useRef(null);
   const segmentsRef = useRef([]);
   const wavRef = useRef(null);
   const wakeRef = useRef(null);
 
-  const busy = view === 'recording' || view === 'processing' || (view === 'review' && !saved);
-  const confirmClose = () => !busy || window.confirm('Throw away this recording and draft?');
+  const delivered = savedToMe || sentTo.length > 0;
+  const hasDemos = !!title.trim() || Object.values(demos).some(v => v?.trim());
+  const busy = (view === 'demos' || view === 'consent') ? hasDemos
+    : view === 'review' ? !delivered : true;
+  const confirmClose = () => !busy || window.confirm('Throw away this incident? Nothing has been saved.');
 
   useEffect(() => {
     if (!backRef) return;
@@ -120,6 +152,29 @@ export default function ScribeTest({ myUnit, onNoteSent, onClose, backRef }) {
   // Release the mic and wake lock if the screen is closed mid-recording.
   useEffect(() => () => { recRef.current?.stop().catch(() => {}); wakeRef.current?.release?.().catch(() => {}); }, []);
 
+  // ── Demographics (before recording) ──
+  const setDemo = (k, v) => {
+    setDemos(prev => {
+      const next = { ...prev, [k]: v };
+      if (k === 'dob' && !prev.age?.trim()) next.age = ageFromDob(v);
+      return next;
+    });
+    setDemoSource(prev => ({ ...prev, [k]: 'you' }));
+  };
+
+  // A scan fills just the fields it found and replaces what's there for those.
+  const applyScan = (fields) => {
+    setScanning(false);
+    if (view === 'review') {
+      setEdits(prev => ({ ...prev, ...Object.fromEntries(Object.entries(fields).map(([k, v]) => [`patient.${k}`, v])) }));
+      setSources(prev => ({ ...prev, ...Object.fromEntries(Object.keys(fields).map(k => [`patient.${k}`, 'id'])) }));
+    } else {
+      setDemos(prev => ({ ...prev, ...fields }));
+      setDemoSource(prev => ({ ...prev, ...Object.fromEntries(Object.keys(fields).map(k => [k, 'id'])) }));
+    }
+  };
+
+  // ── Recording ──
   const requestWakeLock = async () => {
     try { wakeRef.current = await navigator.wakeLock?.request('screen'); } catch { /* unsupported -- the tip covers it */ }
   };
@@ -162,11 +217,16 @@ export default function ScribeTest({ myUnit, onNoteSent, onClose, backRef }) {
       const res = await processScribe(wavRef.current.blob, segmentsRef.current, wavRef.current.seconds, consent);
       const data = res.data;
       setResult(data);
+      // What the medic entered or scanned wins over what the recording heard.
+      const ai = (k) => data.draft?.patient?.[k]?.value || '';
       setEdits(Object.fromEntries([
-        ...PATIENT_FIELDS.map(([k]) => [`patient.${k}`, data.draft?.patient?.[k]?.value || '']),
+        ...PATIENT_FIELDS.map(([k]) => [`patient.${k}`, demos[k]?.trim() || ai(k)]),
         ['chief_complaint', data.draft?.chief_complaint?.value || ''],
         ...HISTORY_FIELDS.map(([k]) => [`history.${k}`, data.draft?.history?.[k]?.value || '']),
       ]));
+      setSources(Object.fromEntries(PATIENT_FIELDS
+        .filter(([k]) => demos[k]?.trim())
+        .map(([k]) => [`patient.${k}`, demoSource[k] || 'you'])));
       setVitalsIdx((data.draft?.vitals?.length || 0) - 1);
       setTab(data.draft ? 'draft' : 'transcript');
       setView('review');
@@ -174,6 +234,19 @@ export default function ScribeTest({ myUnit, onNoteSent, onClose, backRef }) {
       setError(err?.response?.data?.error || 'Could not reach the server — check your signal and try again');
       setView('error');
     }
+  };
+
+  // No recording at all (medic's choice, no consent, critical call): the
+  // report is just what they entered, saved/sent like any PT note.
+  const skipRecording = () => {
+    setResult({ session_id: null, phrases: [], draft: null });
+    setEdits(Object.fromEntries(PATIENT_FIELDS.map(([k]) => [`patient.${k}`, demos[k]?.trim() || ''])));
+    setSources(Object.fromEntries(PATIENT_FIELDS
+      .filter(([k]) => demos[k]?.trim())
+      .map(([k]) => [`patient.${k}`, demoSource[k] || 'you'])));
+    setTab('draft');
+    setError('');
+    setView('review');
   };
 
   // Patient changed their mind (or the call turned critical): the audio never
@@ -194,21 +267,27 @@ export default function ScribeTest({ myUnit, onNoteSent, onClose, backRef }) {
     const seconds = rec.durationMs() / 1000;
     const blob = await rec.stop();
     wakeRef.current?.release?.().catch(() => {});
-    if (seconds < 3) { setError('That recording was too short.'); setView('intro'); return; }
+    if (seconds < 3) { setError('That recording was too short.'); setView('consent'); return; }
     wavRef.current = { blob, seconds };
     upload();
   };
 
+  // ── Report ──
   const draft = result?.draft;
+  const setEdit = (k, v) => {
+    setEdits(e => ({ ...e, [k]: v }));
+    setSources(s => ({ ...s, [k]: 'you' }));
+  };
   const original = (path) => {
     const [a, b] = path.split('.');
     return (b ? draft?.[a]?.[b]?.value : draft?.[a]?.value) || '';
   };
-  const fieldsEdited = () => Object.keys(edits).filter(k => edits[k] !== original(k)).length;
+  // Only counts changes to what the recording produced -- demographics typed
+  // before recording aren't corrections of the AI.
+  const fieldsEdited = () => Object.keys(edits)
+    .filter(k => original(k) && edits[k] !== original(k)).length;
 
-  const timelineText = () => (draft?.timeline || []).map(e => `${e.time || '--:--'} ${e.event}`).join('\n');
-
-  // The whole summary as plain text, saved with the PT note for reference.
+  // The whole report as plain text, saved with the PT note for reference.
   const reportText = () => {
     const out = [];
     const rows = (pairs, prefix) => pairs
@@ -225,44 +304,58 @@ export default function ScribeTest({ myUnit, onNoteSent, onClose, backRef }) {
       `${v.time || '--:--'} ${Object.entries(VITAL_LABELS).filter(([k]) => v[k]).map(([k, l]) => `${l} ${v[k]}`).join(', ')}`), '');
     if (draft?.interventions?.length) out.push('TREATMENTS', ...draft.interventions.map(t => `${t.time || '--:--'} ${t.description}`), '');
     if (draft?.pertinent_negatives?.length) out.push('PERTINENT NEGATIVES', ...draft.pertinent_negatives.map(n => n.finding), '');
-    if (draft?.timeline?.length) out.push('TIMELINE', timelineText(), '');
+    if (draft?.timeline?.length) out.push('TIMELINE', ...draft.timeline.map(e => `${e.time || '--:--'} ${e.event}`), '');
     if (draft?.missing?.length) out.push('NOT COVERED', ...draft.missing.map(m => `- ${m}`));
     return out.join('\n').trim();
   };
 
-  const sendFeedback = (savedToPtNotes) =>
-    sendScribeFeedback(result.session_id, {
-      rating, critical_errors: criticalErrors, fields_edited: fieldsEdited(), saved_to_pt_notes: savedToPtNotes,
-    }).catch(() => {});
-
-  const saveToPtNotes = async () => {
+  const buildFields = () => {
     const fields = {};
+    if (title.trim()) fields.title = title.trim().slice(0, 80);
     for (const [k] of PATIENT_FIELDS) if (edits[`patient.${k}`]?.trim()) fields[k] = edits[`patient.${k}`].trim();
     const v = draft?.vitals?.[vitalsIdx];
     if (v) {
       if (v.time) fields.vitals_time = v.time;
       for (const k of Object.keys(VITAL_LABELS)) if (v[k]) fields[k] = v[k];
     }
-    // The whole summary rides along so the saved note has everything; it's
-    // purged with the rest of the note after 8 hours.
-    const report = reportText();
+    // The whole report rides along so the note has everything; it's purged
+    // with the rest of the note after 8 hours.
+    // (Without a recording the fields already say everything.)
+    const report = recorded ? reportText() : '';
     if (report) fields.report = report.slice(0, 10000);
+    return fields;
+  };
+
+  // Only reports built from a recording get rated -- that's what the beta measures.
+  const recorded = !!result?.session_id;
+  const canDeliver = !recorded || !!rating;
+
+  const sendFeedback = async (wasDelivered) => recorded &&
+    sendScribeFeedback(result.session_id, {
+      rating, critical_errors: criticalErrors, fields_edited: fieldsEdited(), saved_to_pt_notes: wasDelivered,
+    }).catch(() => {});
+
+  // Save to this unit (PT Notes → Saved) or send to another unit (their
+  // Received) -- same PT note either way.
+  const deliver = async (unitId) => {
+    const fields = buildFields();
     if (!Object.keys(fields).length) { setError('Nothing to save yet'); return; }
-    setSaving(true);
+    setDelivering(true);
     setError('');
     try {
-      const res = await sendPtNote({ to_unit_id: myUnit.id, fields });
+      const res = await sendPtNote({ to_unit_id: unitId, fields });
       onNoteSent(res.data);
+      if (unitId === myUnit.id) setSavedToMe(true);
+      else { setSentTo(prev => [...prev, res.data.to_unit_number]); setPicking(false); setToId(''); }
       await sendFeedback(true);
-      setSaved(true);
     } catch (err) {
-      setError(err?.response?.data?.error || 'Could not save — try again');
+      setError(err?.response?.data?.error || 'Could not send — try again');
     }
-    setSaving(false);
+    setDelivering(false);
   };
 
   const finish = async () => {
-    if (!saved) await sendFeedback(false);
+    if (!delivered) await sendFeedback(false);
     onClose();
   };
 
@@ -273,21 +366,77 @@ export default function ScribeTest({ myUnit, onNoteSent, onClose, backRef }) {
 
   const header = (
     <div className="flex items-center justify-between px-4 pt-[calc(0.75rem+env(safe-area-inset-top))] pb-3 border-b border-gray-700 flex-shrink-0">
-      <span className="text-white font-bold text-base">🎙 Listen <span className="text-amber-400 text-xs font-semibold">BETA</span></span>
+      <span className="text-white font-bold text-base">🚑 Incident <span className="text-amber-400 text-xs font-semibold">BETA</span></span>
       <button onClick={() => { if (confirmClose()) onClose(); }}
         className="text-gray-400 hover:text-white w-11 h-11 flex items-center justify-center rounded hover:bg-gray-700 text-xl">×</button>
     </div>
   );
 
+  const scanButton = (
+    <button onClick={() => setScanning(true)}
+      className="w-full py-3 rounded-xl bg-gray-700 active:bg-gray-600 text-white text-sm font-semibold flex items-center justify-center gap-2">
+      📷 Scan Driver License / ID
+    </button>
+  );
+
   return (
     <div className="fixed inset-0 z-40 bg-gray-900 flex flex-col max-w-md mx-auto">
       {header}
+      {scanning && <LicenseScanner onClose={() => setScanning(false)} onResult={applyScan} />}
 
-      {view === 'intro' && (
+      {view === 'demos' && (
+        <>
+          <div className="flex-1 overflow-y-auto p-4 space-y-3">
+            <div className="text-white text-sm font-semibold">Patient info <span className="text-gray-500 font-normal">— optional, you can add it later</span></div>
+            <div>
+              <label className="block text-gray-400 text-xs mb-1">Incident title</label>
+              <input value={title} onChange={e => setTitle(e.target.value.slice(0, 80))} placeholder="e.g. Titan — dizzy guest"
+                autoComplete="off" className={inputCls} />
+            </div>
+            {scanButton}
+            {Object.values(demoSource).includes('id') && (
+              <p className="text-green-400 text-xs">✓ Filled from the ID — check it matches the patient.</p>
+            )}
+            {DEMO_FIELDS.map(([k, label, placeholder]) => (
+              <div key={k}>
+                <label className="block text-gray-400 text-xs mb-1">{label}</label>
+                {k === 'sex' ? (
+                  <div className="flex gap-2">
+                    {SEXES.map(o => (
+                      <button key={o} onClick={() => setDemo('sex', demos.sex === o ? '' : o)}
+                        className={`flex-1 py-2.5 rounded-lg text-sm font-semibold ${demos.sex === o ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-300'}`}>
+                        {o}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <input value={demos[k] || ''} onChange={e => setDemo(k, e.target.value)} placeholder={placeholder}
+                    inputMode={k === 'age' || k === 'dob' ? 'numeric' : k === 'phone' ? 'tel' : undefined}
+                    autoComplete="off" className={inputCls} />
+                )}
+              </div>
+            ))}
+            <p className="text-gray-500 text-[11px]">What you enter here stays on your phone — only the recording is sent to be transcribed.</p>
+          </div>
+          <div className="p-4 border-t border-gray-700 flex-shrink-0 space-y-2">
+            <button onClick={() => setView('consent')}
+              className="w-full py-3.5 rounded-xl bg-blue-600 active:bg-blue-700 text-white font-bold text-sm">
+              Next: consent & record →
+            </button>
+            <button onClick={skipRecording}
+              className="w-full py-3 rounded-xl bg-gray-700 active:bg-gray-600 text-gray-200 font-semibold text-sm">
+              Skip recording — just save/send this info
+            </button>
+          </div>
+        </>
+      )}
+
+      {view === 'consent' && (
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          <button onClick={() => setView('demos')} className="text-gray-400 text-sm">← Patient info</button>
           <div className="bg-amber-900/40 border border-amber-600 rounded-xl p-3 text-amber-200 text-sm">
-            <b>Beta.</b> You'll get a report to reference while you write your chart — patient info, vitals,
-            treatments and a timeline, each with the words it came from. It doesn't write the chart, and it can be
+            <b>Beta.</b> You'll get one report to reference while you write your chart — your patient info plus what the
+            recording picked up, each AI item with the words it came from. It doesn't write the chart, and it can be
             wrong: check everything against the patient.
           </div>
 
@@ -318,22 +467,27 @@ export default function ScribeTest({ myUnit, onNoteSent, onClose, backRef }) {
 
           <ul className="list-disc pl-5 space-y-1 text-gray-400 text-xs">
             <li>Keep the screen on and the phone face-up near the patient. If the screen turns off, recording pauses.</li>
-            <li>Say findings, vitals and treatments out loud — it only knows what it hears.</li>
-            <li>Nothing is kept unless you save it to your PT Notes (deleted after 8 hours).</li>
+            <li>Say findings, vitals and treatments out loud — it only knows what it hears. Spell names if they're unusual.</li>
+            <li>Nothing is kept unless you save or send the report (deleted after 8 hours).</li>
           </ul>
           {error && <p className="text-red-400 text-sm">{error}</p>}
           <button onClick={start} disabled={!consent}
             className="w-full py-4 rounded-xl bg-red-600 active:bg-red-700 disabled:opacity-40 text-white font-bold">
-            {consent ? '● Start listening' : 'Get consent to start'}
+            {consent ? '● Start recording' : 'Get consent to start'}
+          </button>
+          <button onClick={skipRecording}
+            className="w-full py-3 rounded-xl bg-gray-700 active:bg-gray-600 text-gray-200 font-semibold text-sm">
+            Don't record — continue without it
           </button>
         </div>
       )}
 
       {view === 'recording' && (
         <div className="flex-1 flex flex-col items-center justify-center p-6 gap-6">
+          {title.trim() && <div className="text-gray-300 text-sm font-semibold text-center">{title}</div>}
           <div className={`flex items-center gap-2 text-sm font-semibold ${paused ? 'text-gray-400' : 'text-red-400'}`}>
             <span className={`w-3 h-3 rounded-full ${paused ? 'bg-gray-500' : 'bg-red-500 animate-pulse'}`} />
-            {paused ? 'Paused' : 'Listening'}
+            {paused ? 'Paused' : 'Recording'}
           </div>
           <div className="text-white text-6xl font-mono tabular-nums">{fmtClock(elapsed)}</div>
           <div className="w-full h-2 bg-gray-800 rounded-full overflow-hidden">
@@ -360,7 +514,7 @@ export default function ScribeTest({ myUnit, onNoteSent, onClose, backRef }) {
       {view === 'processing' && (
         <div className="flex-1 flex flex-col items-center justify-center p-6 gap-3 text-center">
           <div className="w-10 h-10 border-4 border-gray-600 border-t-blue-500 rounded-full animate-spin" />
-          <div className="text-white font-semibold">Transcribing and drafting…</div>
+          <div className="text-white font-semibold">Building the report…</div>
           <div className="text-gray-400 text-sm">Usually under a minute. Keep this screen open.</div>
         </div>
       )}
@@ -375,14 +529,14 @@ export default function ScribeTest({ myUnit, onNoteSent, onClose, backRef }) {
 
       {view === 'review' && result && (
         <>
-          <div className="flex px-4 border-b border-gray-700 flex-shrink-0">
-            {[['draft', 'Draft'], ['transcript', 'Transcript']].map(([id, label]) => (
+          {recorded && <div className="flex px-4 border-b border-gray-700 flex-shrink-0">
+            {[['draft', 'Report'], ['transcript', 'Transcript']].map(([id, label]) => (
               <button key={id} onClick={() => setTab(id)}
                 className={`flex-1 py-2 text-sm font-semibold border-b-2 ${tab === id ? 'border-blue-500 text-white' : 'border-transparent text-gray-400'}`}>
                 {label}
               </button>
             ))}
-          </div>
+          </div>}
 
           <div className="flex-1 overflow-y-auto p-4 space-y-3">
             {result.error && <p className="text-amber-400 text-sm">{result.error}</p>}
@@ -395,13 +549,23 @@ export default function ScribeTest({ myUnit, onNoteSent, onClose, backRef }) {
               </div>
             ))}
 
-            {tab === 'draft' && draft && (
+            {tab === 'draft' && (
               <>
-                <p className="text-gray-400 text-xs">
-                  Check every item against the quote under it. ⚠ means the quote isn't in the transcript word for word — check that one by ear.
-                </p>
+                {recorded ? (
+                  <p className="text-gray-400 text-xs">
+                    Check every item against the quote under it. ⚠ means the quote isn't in the transcript word for word — check that one by ear.
+                  </p>
+                ) : (
+                  <p className="text-gray-400 text-xs">No recording — fill in what you need, then save or send it. Any field can be left blank.</p>
+                )}
 
-                {draft.missing?.length > 0 && (
+                <div>
+                  <label className="block text-gray-400 text-xs mb-1">Incident title</label>
+                  <input value={title} onChange={e => setTitle(e.target.value.slice(0, 80))} placeholder="e.g. Titan — dizzy guest"
+                    autoComplete="off" className={inputCls} />
+                </div>
+
+                {draft?.missing?.length > 0 && (
                   <div className="bg-amber-900/30 border border-amber-700 rounded-xl p-3">
                     <div className="text-amber-300 text-xs font-bold uppercase tracking-wider mb-1">Not covered</div>
                     <ul className="list-disc pl-5 text-amber-100 text-sm space-y-0.5">
@@ -411,77 +575,81 @@ export default function ScribeTest({ myUnit, onNoteSent, onClose, backRef }) {
                 )}
 
                 <Section title="Patient">
-                  {PATIENT_FIELDS.filter(([k]) => draft.patient?.[k]?.value).map(([k, label]) => (
-                    <EditableRow key={k} label={label} item={draft.patient[k]} value={edits[`patient.${k}`]}
-                      onChange={v => setEdits(e => ({ ...e, [`patient.${k}`]: v }))} />
-                  ))}
-                  {!PATIENT_FIELDS.some(([k]) => draft.patient?.[k]?.value) && <p className="text-gray-500 text-sm">Nothing picked up.</p>}
-                </Section>
-
-                <Section title="Complaint & history">
-                  {draft.chief_complaint?.value && (
-                    <EditableRow label="Chief complaint" item={draft.chief_complaint} value={edits.chief_complaint}
-                      onChange={v => setEdits(e => ({ ...e, chief_complaint: v }))} />
-                  )}
-                  {HISTORY_FIELDS.filter(([k]) => draft.history?.[k]?.value).map(([k, label]) => (
-                    <EditableRow key={k} label={label} item={draft.history[k]} value={edits[`history.${k}`]}
-                      onChange={v => setEdits(e => ({ ...e, [`history.${k}`]: v }))} />
+                  {scanButton}
+                  {PATIENT_FIELDS.map(([k, label]) => (
+                    <EditableRow key={k} label={label} item={draft?.patient?.[k]} value={edits[`patient.${k}`] || ''}
+                      source={sources[`patient.${k}`]} onChange={v => setEdit(`patient.${k}`, v)} />
                   ))}
                 </Section>
 
-                <Section title="Vitals">
-                  {!draft.vitals?.length && <p className="text-gray-500 text-sm">No vitals were said out loud.</p>}
-                  {draft.vitals?.map((v, i) => (
-                    <button key={i} onClick={() => setVitalsIdx(i)}
-                      className={`w-full text-left rounded-xl px-3 py-2.5 border ${vitalsIdx === i ? 'bg-blue-900/40 border-blue-600' : 'bg-gray-800 border-gray-700'}`}>
-                      <div className="text-white text-sm">
-                        <span className="text-gray-400">{v.time || '—'} · </span>
-                        {Object.entries(VITAL_LABELS).filter(([k]) => v[k]).map(([k, l]) => `${l} ${v[k]}`).join(' · ')}
-                      </div>
-                      <Quote item={v} />
-                      {vitalsIdx === i && <div className="text-blue-300 text-[11px] mt-1">This set goes into PT Notes</div>}
-                    </button>
-                  ))}
-                </Section>
+                {draft && (
+                  <>
+                    <Section title="Complaint & history">
+                      {draft.chief_complaint?.value && (
+                        <EditableRow label="Chief complaint" item={draft.chief_complaint} value={edits.chief_complaint}
+                          source={sources.chief_complaint} onChange={v => setEdit('chief_complaint', v)} />
+                      )}
+                      {HISTORY_FIELDS.filter(([k]) => draft.history?.[k]?.value).map(([k, label]) => (
+                        <EditableRow key={k} label={label} item={draft.history[k]} value={edits[`history.${k}`]}
+                          source={sources[`history.${k}`]} onChange={v => setEdit(`history.${k}`, v)} />
+                      ))}
+                    </Section>
 
-                {draft.interventions?.length > 0 && (
-                  <Section title="Treatments">
-                    {draft.interventions.map((t, i) => (
-                      <div key={i} className="bg-gray-800 rounded-xl px-3 py-2.5 border border-gray-700">
-                        <div className="text-white text-sm"><span className="text-gray-400">{t.time || '—'} · </span>{t.description}</div>
-                        <Quote item={t} />
-                      </div>
-                    ))}
-                  </Section>
-                )}
+                    <Section title="Vitals">
+                      {!draft.vitals?.length && <p className="text-gray-500 text-sm">No vitals were said out loud.</p>}
+                      {draft.vitals?.map((v, i) => (
+                        <button key={i} onClick={() => setVitalsIdx(i)}
+                          className={`w-full text-left rounded-xl px-3 py-2.5 border ${vitalsIdx === i ? 'bg-blue-900/40 border-blue-600' : 'bg-gray-800 border-gray-700'}`}>
+                          <div className="text-white text-sm">
+                            <span className="text-gray-400">{v.time || '—'} · </span>
+                            {Object.entries(VITAL_LABELS).filter(([k]) => v[k]).map(([k, l]) => `${l} ${v[k]}`).join(' · ')}
+                          </div>
+                          <Quote item={v} />
+                          {vitalsIdx === i && <div className="text-blue-300 text-[11px] mt-1">This set goes in the PT note's vitals (all sets are in the report)</div>}
+                        </button>
+                      ))}
+                    </Section>
 
-                {draft.pertinent_negatives?.length > 0 && (
-                  <Section title="Pertinent negatives">
-                    {draft.pertinent_negatives.map((n, i) => (
-                      <div key={i} className="bg-gray-800 rounded-xl px-3 py-2.5 border border-gray-700">
-                        <div className="text-white text-sm">{n.finding}</div>
-                        <Quote item={n} />
-                      </div>
-                    ))}
-                  </Section>
-                )}
+                    {draft.interventions?.length > 0 && (
+                      <Section title="Treatments">
+                        {draft.interventions.map((t, i) => (
+                          <div key={i} className="bg-gray-800 rounded-xl px-3 py-2.5 border border-gray-700">
+                            <div className="text-white text-sm"><span className="text-gray-400">{t.time || '—'} · </span>{t.description}</div>
+                            <Quote item={t} />
+                          </div>
+                        ))}
+                      </Section>
+                    )}
 
-                {draft.timeline?.length > 0 && (
-                  <Section title="Timeline">
-                    {draft.timeline.map((e, i) => (
-                      <div key={i} className="bg-gray-800 rounded-xl px-3 py-2.5 border border-gray-700">
-                        <div className="text-white text-sm"><span className="text-gray-400">{e.time || '—'} · </span>{e.event}</div>
-                        <Quote item={e} />
-                      </div>
-                    ))}
-                  </Section>
+                    {draft.pertinent_negatives?.length > 0 && (
+                      <Section title="Pertinent negatives">
+                        {draft.pertinent_negatives.map((n, i) => (
+                          <div key={i} className="bg-gray-800 rounded-xl px-3 py-2.5 border border-gray-700">
+                            <div className="text-white text-sm">{n.finding}</div>
+                            <Quote item={n} />
+                          </div>
+                        ))}
+                      </Section>
+                    )}
+
+                    {draft.timeline?.length > 0 && (
+                      <Section title="Timeline">
+                        {draft.timeline.map((e, i) => (
+                          <div key={i} className="bg-gray-800 rounded-xl px-3 py-2.5 border border-gray-700">
+                            <div className="text-white text-sm"><span className="text-gray-400">{e.time || '—'} · </span>{e.event}</div>
+                            <Quote item={e} />
+                          </div>
+                        ))}
+                      </Section>
+                    )}
+                  </>
                 )}
               </>
             )}
 
-            {/* Pilot rating -- required before finishing, it's the point of the test */}
-            <div className="bg-gray-800 rounded-xl p-3 border border-gray-700 space-y-3 mt-4">
-              <div className="text-white text-sm font-semibold">How good was this draft?</div>
+            {/* Pilot rating -- required before saving/sending a recorded report, it's the point of the beta */}
+            {recorded && <div className="bg-gray-800 rounded-xl p-3 border border-gray-700 space-y-3 mt-4">
+              <div className="text-white text-sm font-semibold">How good was this report?</div>
               <div className="grid grid-cols-3 gap-2">
                 {[['good', 'Good'], ['minor', 'Minor fixes'], ['major', 'Major errors']].map(([id, label]) => (
                   <button key={id} onClick={() => setRating(id)}
@@ -498,21 +666,46 @@ export default function ScribeTest({ myUnit, onNoteSent, onClose, backRef }) {
                   <button onClick={() => setCriticalErrors(n => n + 1)} className="w-9 h-9 rounded-lg bg-gray-700 text-white font-bold">+</button>
                 </div>
               </div>
-            </div>
+            </div>}
+
+            {picking && (
+              <div className="space-y-1.5">
+                <label className="block text-gray-400 text-xs mb-1">Send to</label>
+                <UnitPicker myUnit={myUnit} units={units} myActiveCall={myActiveCall} toId={toId}
+                  onPick={(id) => { setToId(id); setError(''); }} />
+              </div>
+            )}
             {error && <p className="text-red-400 text-sm">{error}</p>}
           </div>
 
           <div className="p-4 border-t border-gray-700 flex-shrink-0 space-y-2">
-            {draft && !saved && (
-              <button onClick={saveToPtNotes} disabled={!rating || saving}
-                className="w-full py-3.5 rounded-xl bg-blue-600 active:bg-blue-700 disabled:opacity-40 text-white font-bold text-sm">
-                {saving ? 'Saving…' : '💾 Save to my PT Notes'}
-              </button>
+            {savedToMe && <p className="text-green-400 text-sm text-center">✓ Saved to PT Notes → Saved</p>}
+            {sentTo.length > 0 && <p className="text-green-400 text-sm text-center">✓ Sent to {sentTo.join(', ')}</p>}
+            {!canDeliver && <p className="text-gray-400 text-xs text-center">Rate the report to save or send it</p>}
+            {picking ? (
+              <div className="grid grid-cols-2 gap-2">
+                <button onClick={() => { setPicking(false); setToId(''); }}
+                  className="py-3 rounded-xl bg-gray-700 text-gray-200 font-semibold text-sm">Cancel</button>
+                <button onClick={() => deliver(toId)} disabled={!toId || delivering}
+                  className="py-3 rounded-xl bg-blue-600 active:bg-blue-700 disabled:opacity-40 text-white font-bold text-sm">
+                  {delivering ? 'Sending…' : '📤 Send'}
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-2">
+                <button onClick={() => deliver(myUnit.id)} disabled={!canDeliver || delivering || savedToMe}
+                  className="py-3 rounded-xl bg-blue-600 active:bg-blue-700 disabled:opacity-40 text-white font-bold text-sm">
+                  {savedToMe ? '✓ Saved' : '💾 Save to me'}
+                </button>
+                <button onClick={() => setPicking(true)} disabled={!canDeliver || delivering}
+                  className="py-3 rounded-xl bg-blue-600 active:bg-blue-700 disabled:opacity-40 text-white font-bold text-sm">
+                  📤 Send to medic
+                </button>
+              </div>
             )}
-            {saved && <p className="text-green-400 text-sm text-center">✓ Saved to PT Notes → Saved</p>}
-            <button onClick={finish} disabled={!rating}
+            <button onClick={finish} disabled={!canDeliver}
               className="w-full py-3 rounded-xl bg-gray-700 disabled:opacity-40 text-gray-200 font-semibold text-sm">
-              {rating ? 'Done' : 'Rate the draft to finish'}
+              {delivered ? 'Done' : canDeliver ? 'Done without saving' : 'Rate the report to finish'}
             </button>
           </div>
         </>
