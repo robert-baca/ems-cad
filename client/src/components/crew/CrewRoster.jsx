@@ -79,6 +79,11 @@ function DmThread({ myUnit, target, messages, onLoad, onSend, onBack }) {
 
   useEffect(() => { onLoad(target.id); }, [target.id]);
 
+  // A message arriving while this thread is open is read on sight -- without
+  // this it would light up the unread bubble once they backed out.
+  const hasUnread = messages.some(m => m.from_unit_id === target.id && !m.read_at);
+  useEffect(() => { if (hasUnread) onLoad(target.id); }, [hasUnread, target.id]);
+
   useEffect(() => {
     if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
   }, [messages.length]);

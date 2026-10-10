@@ -125,6 +125,11 @@ function sanitizeForDisplay(event, payload) {
 // chat comments — those stay dispatcher/crew-only regardless of sanitization.
 function emitDispatch(event, payload) {
   io.to('dispatchers').emit(event, payload);
+  // Crews see every unit's status too (Find Medic, Today's Crew). They only
+  // ever got their own unit's changes, so a colleague's status sat at
+  // whatever it was when the app was opened -- e.g. "En Route" long after
+  // that unit was available again.
+  if (event === 'unit:status_change') io.to('crew_all').emit(event, payload);
   if (event === 'call:comment_added') return;
   io.to('display').emit(event, sanitizeForDisplay(event, payload));
 }
@@ -3586,13 +3591,23 @@ app.delete('/api/locations/:id', verifyToken, async (req, res) => {
 // Private, shift-scoped, crew-to-crew only — deliberately never routed
 // through emitDispatch, so dispatchers/display never see these (unlike the
 // per-call comment thread, which is the accountable dispatch record).
+// Every DM to or from this unit this shift -- lets the app show an unread
+// count for messages that arrived while it was closed.
+app.get('/api/crew/messages', verifyToken, (req, res) => {
+  if (req.user.role !== 'crew') return res.status(403).json({ error: 'Forbidden' });
+  res.json(directMessages.filter(m => m.from_unit_id === req.user.unit_id || m.to_unit_id === req.user.unit_id));
+});
+
+// Opening a thread is reading it: incoming messages in it get read_at.
 app.get('/api/crew/messages/:unitId', verifyToken, (req, res) => {
   if (req.user.role !== 'crew') return res.status(403).json({ error: 'Forbidden' });
   const otherId = req.params.unitId;
+  const now = new Date().toISOString();
   const thread = directMessages.filter(m =>
     (m.from_unit_id === req.user.unit_id && m.to_unit_id === otherId) ||
     (m.from_unit_id === otherId && m.to_unit_id === req.user.unit_id)
   );
+  thread.forEach(m => { if (m.to_unit_id === req.user.unit_id && !m.read_at) m.read_at = now; });
   res.json(thread);
 });
 

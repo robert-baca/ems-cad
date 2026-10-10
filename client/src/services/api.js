@@ -54,6 +54,7 @@ export const testPushUnit = (unitId) => api.post(`/units/${unitId}/test-push`);
 
 // ── Crew direct messages ──────────────────────────────────────────
 export const getCrewMessages  = (unitId) => api.get(`/crew/messages/${unitId}`);
+export const getAllCrewMessages = () => api.get('/crew/messages');
 export const sendCrewMessage  = (toUnitId, text) => api.post('/crew/messages', { to_unit_id: toUnitId, text });
 
 // ── Calls ──────────────────────────────────────────────────────────
