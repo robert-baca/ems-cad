@@ -86,12 +86,12 @@ function Section({ title, children }) {
 }
 
 export default function ScribeTest({ myUnit, units, myActiveCall, onNoteSent, onClose, backRef }) {
-  const [view, setView] = useState('demos'); // demos | consent | recording | processing | review | error
+  const [view, setView] = useState('demos'); // demos | recording | processing | review | error
   const [title, setTitle] = useState('');
   const [demos, setDemos] = useState({});
   const [demoSource, setDemoSource] = useState({}); // key -> 'you' | 'id'
   const [scanning, setScanning] = useState(false);
-  const [consent, setConsent] = useState(''); // 'patient' | 'guardian' -- required to start
+  const [consent, setConsent] = useState(''); // 'patient' | 'guardian' -- set by the Start button tapped
   const [elapsed, setElapsed] = useState(0);
   const [level, setLevel] = useState(0);
   const [paused, setPaused] = useState(false);
@@ -117,7 +117,7 @@ export default function ScribeTest({ myUnit, units, myActiveCall, onNoteSent, on
 
   const delivered = savedToMe || sentTo.length > 0;
   const hasDemos = !!title.trim() || Object.values(demos).some(v => v?.trim());
-  const busy = (view === 'demos' || view === 'consent') ? hasDemos
+  const busy = view === 'demos' ? hasDemos
     : view === 'review' ? !delivered : true;
   const confirmClose = () => !busy || window.confirm('Throw away this incident? Nothing has been saved.');
 
@@ -198,6 +198,8 @@ export default function ScribeTest({ myUnit, units, myActiveCall, onNoteSent, on
     requestWakeLock();
   };
 
+  const startWith = (who) => { setConsent(who); start(); };
+
   const togglePause = async () => {
     if (paused) {
       segmentsRef.current.push({ a: recRef.current.durationMs(), t: Date.now() });
@@ -267,7 +269,7 @@ export default function ScribeTest({ myUnit, units, myActiveCall, onNoteSent, on
     const seconds = rec.durationMs() / 1000;
     const blob = await rec.stop();
     wakeRef.current?.release?.().catch(() => {});
-    if (seconds < 3) { setError('That recording was too short.'); setView('consent'); return; }
+    if (seconds < 3) { setError('That recording was too short.'); setView('demos'); return; }
     wavRef.current = { blob, seconds };
     upload();
   };
@@ -425,69 +427,30 @@ export default function ScribeTest({ myUnit, units, myActiveCall, onNoteSent, on
             <div className="text-white text-sm font-semibold">Patient info <span className="text-gray-500 font-normal">— optional, you can also fill it in while recording</span></div>
             {demoForm}
           </div>
+          {/* One tap records who agreed and starts recording -- consent is
+              still required for every recording, just without its own screen. */}
           <div className="p-4 border-t border-gray-700 flex-shrink-0 space-y-2">
-            <button onClick={() => setView('consent')}
-              className="w-full py-3.5 rounded-xl bg-blue-600 active:bg-blue-700 text-white font-bold text-sm">
-              Next: consent & record →
-            </button>
+            <p className="text-gray-300 text-xs">
+              Ask: <i>"I use a voice tool to help with my notes — it doesn't keep the recording. Okay?"</i>
+              <span className="text-gray-500"> Don't record if they say no, a minor has no guardian there, they're altered, or it's critical.</span>
+            </p>
+            {error && <p className="text-red-400 text-sm">{error}</p>}
+            <div className="grid grid-cols-2 gap-2">
+              <button onClick={() => startWith('patient')}
+                className="py-3.5 rounded-xl bg-red-600 active:bg-red-700 text-white font-bold text-sm">
+                ● Start — patient agreed
+              </button>
+              <button onClick={() => startWith('guardian')}
+                className="py-3.5 rounded-xl bg-red-600 active:bg-red-700 text-white font-bold text-sm">
+                ● Start — guardian agreed
+              </button>
+            </div>
             <button onClick={skipRecording}
-              className="w-full py-3 rounded-xl bg-gray-700 active:bg-gray-600 text-gray-200 font-semibold text-sm">
-              Skip recording — just save/send this info
+              className="w-full py-2.5 rounded-xl bg-gray-700 active:bg-gray-600 text-gray-200 font-semibold text-sm">
+              Don't record — just save/send this info
             </button>
           </div>
         </>
-      )}
-
-      {view === 'consent' && (
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          <button onClick={() => setView('demos')} className="text-gray-400 text-sm">← Patient info</button>
-          <div className="bg-amber-900/40 border border-amber-600 rounded-xl p-3 text-amber-200 text-sm">
-            <b>Beta.</b> You'll get one report to reference while you write your chart — your patient info plus what the
-            recording picked up, each AI item with the words it came from. It doesn't write the chart, and it can be
-            wrong: check everything against the patient.
-          </div>
-
-          <div className="bg-gray-800 rounded-xl p-3 border border-gray-700 space-y-2">
-            <div className="text-white text-sm font-semibold">1. Ask first</div>
-            <p className="text-gray-200 text-sm italic">"I use a voice tool to help me with my notes. It doesn't keep the recording. Is that okay with you?"</p>
-            <div className="text-red-300 text-xs font-semibold pt-1">Don't record if:</div>
-            <ul className="list-disc pl-5 space-y-0.5 text-gray-300 text-xs">
-              <li>they say no, or seem unsure</li>
-              <li>the patient is under 18 and no parent/guardian is there to agree</li>
-              <li>the patient is confused, altered, unresponsive, or can't understand the question</li>
-              <li>it's a critical patient — care comes first</li>
-            </ul>
-            <p className="text-gray-400 text-xs">If they change their mind, tap <b>Stop & throw away</b>.</p>
-          </div>
-
-          <div className="space-y-2">
-            <div className="text-white text-sm font-semibold">2. Who agreed?</div>
-            <div className="grid grid-cols-2 gap-2">
-              {[['patient', 'Patient agreed'], ['guardian', 'Parent/guardian agreed']].map(([id, label]) => (
-                <button key={id} onClick={() => setConsent(consent === id ? '' : id)}
-                  className={`py-3 rounded-xl text-sm font-semibold ${consent === id ? 'bg-green-700 text-white' : 'bg-gray-700 text-gray-300'}`}>
-                  {consent === id ? '✓ ' : ''}{label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <ul className="list-disc pl-5 space-y-1 text-gray-400 text-xs">
-            <li>Keep the screen on and the phone face-up near the patient. If the screen turns off, recording pauses.</li>
-            <li>You can fill in or scan patient info while it's recording.</li>
-            <li>Say findings, vitals and treatments out loud — it only knows what it hears. Spell names if they're unusual.</li>
-            <li>Nothing is kept unless you save or send the report (deleted after 8 hours).</li>
-          </ul>
-          {error && <p className="text-red-400 text-sm">{error}</p>}
-          <button onClick={start} disabled={!consent}
-            className="w-full py-4 rounded-xl bg-red-600 active:bg-red-700 disabled:opacity-40 text-white font-bold">
-            {consent ? '● Start recording' : 'Get consent to start'}
-          </button>
-          <button onClick={skipRecording}
-            className="w-full py-3 rounded-xl bg-gray-700 active:bg-gray-600 text-gray-200 font-semibold text-sm">
-            Don't record — continue without it
-          </button>
-        </div>
       )}
 
       {/* Recording: a compact control bar on top, the patient-info form
