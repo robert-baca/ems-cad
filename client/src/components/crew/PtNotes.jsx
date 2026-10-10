@@ -67,6 +67,7 @@ function VitalsGrid({ values, set }) {
 
 // One-line summary for the notes list, e.g. "38F at Bugs Bunny Boomtown".
 export function noteSummary(fields = {}) {
+  if (fields.title) return fields.title;
   const sex = fields.sex === 'M' || fields.sex === 'F' ? fields.sex : '';
   const who = `${fields.age || ''}${sex}`;
   if (who && fields.location) return `${who} at ${fields.location}`;
@@ -238,6 +239,7 @@ function NoteView({ note, myUnit, units, myActiveCall, onBack, onViewed, onDelet
   const [deleting, setDeleting] = useState(false);
   const [picking, setPicking] = useState(false);
   const [toId, setToId] = useState('');
+  const [title, setTitle] = useState(note.fields?.title || '');
   const [sending, setSending] = useState(false);
   const [sentTo, setSentTo] = useState([]); // unit numbers this was sent to from here
 
@@ -250,7 +252,9 @@ function NoteView({ note, myUnit, units, myActiveCall, onBack, onViewed, onDelet
     setSending(true);
     setViewError('');
     try {
-      const res = await sendPtNote({ to_unit_id: toId, fields: note.fields });
+      const { title: _old, ...fields } = note.fields || {};
+      if (title.trim()) fields.title = title.trim();
+      const res = await sendPtNote({ to_unit_id: toId, fields });
       onSent(res.data);
       setSentTo(prev => [...prev, res.data.to_unit_number]);
       setPicking(false);
@@ -293,6 +297,7 @@ function NoteView({ note, myUnit, units, myActiveCall, onBack, onViewed, onDelet
           {' · '}{fmtTime(note.created_at)}
           {!incoming && !saved && (note.read_at ? ` · ✓ Read ${fmtTime(note.read_at)}` : ' · Not opened yet')}
         </div>
+        {note.fields?.title && <div className="text-white text-lg font-bold break-words">{note.fields.title}</div>}
         {viewError && <p className="text-amber-400 text-sm">{viewError}</p>}
         {FIELDS.filter(f => note.fields?.[f.key] && (!f.vital || f.key === firstFilledVital)).map(f => f.vital ? (
           <div key="vitals" className="bg-gray-800 rounded-xl px-3 py-2.5 border border-gray-700">
@@ -325,6 +330,14 @@ function NoteView({ note, myUnit, units, myActiveCall, onBack, onViewed, onDelet
         <p className="text-gray-500 text-[11px] pt-2">Deleted automatically 8 hours after it was sent.</p>
         {picking && (
           <div className="pt-2 space-y-1.5">
+            <label className="block text-gray-400 text-xs mb-1">Title <span className="text-gray-500">— so they know which patient this is</span></label>
+            <input
+              value={title}
+              onChange={e => setTitle(e.target.value.slice(0, 80))}
+              placeholder="e.g. Titan — dizzy guest"
+              autoComplete="off"
+              className="w-full bg-gray-700 text-white rounded-lg px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500 mb-2"
+            />
             <label className="block text-gray-400 text-xs mb-1">Send to</label>
             <UnitPicker myUnit={myUnit} units={units} myActiveCall={myActiveCall} toId={toId}
               onPick={(id) => { setToId(id); setViewError(''); }} />

@@ -1715,8 +1715,10 @@ const PT_NOTE_FIELDS = ['name', 'dob', 'age', 'sex', 'location', 'address', 'pho
   // one optional set of vitals
   'vitals_time', 'bp', 'hr', 'rr', 'spo2', 'bgl', 'gcs', 'pain', 'temp',
   // the full plain-text summary from a Listen recording (see SCRIBE)
-  'report'];
-const PT_NOTE_FIELD_MAX = { report: 10000 };
+  'report',
+  // optional name the sender gives a note so the recipient can tell them apart
+  'title'];
+const PT_NOTE_FIELD_MAX = { report: 10000, title: 80 };
 
 function logPtNoteAccess(noteId, action, user) {
   pool.query(
