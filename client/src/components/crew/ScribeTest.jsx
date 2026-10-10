@@ -430,24 +430,20 @@ export default function ScribeTest({ myUnit, units, myActiveCall, onNoteSent, on
           {/* One tap records who agreed and starts recording -- consent is
               still required for every recording, just without its own screen. */}
           <div className="p-4 border-t border-gray-700 flex-shrink-0 space-y-2">
-            <p className="text-gray-300 text-xs">
-              Ask: <i>"I use a voice tool to help with my notes — it doesn't keep the recording. Okay?"</i>
-              <span className="text-gray-500"> Don't record if they say no, a minor has no guardian there, they're altered, or it's critical.</span>
-            </p>
             {error && <p className="text-red-400 text-sm">{error}</p>}
             <div className="grid grid-cols-2 gap-2">
               <button onClick={() => startWith('patient')}
-                className="py-3.5 rounded-xl bg-red-600 active:bg-red-700 text-white font-bold text-sm">
-                ● Start — patient agreed
+                className="py-2 rounded-lg bg-red-600 active:bg-red-700 text-white font-semibold text-xs">
+                ● Start — patient OK'd
               </button>
               <button onClick={() => startWith('guardian')}
-                className="py-3.5 rounded-xl bg-red-600 active:bg-red-700 text-white font-bold text-sm">
-                ● Start — guardian agreed
+                className="py-2 rounded-lg bg-red-600 active:bg-red-700 text-white font-semibold text-xs">
+                ● Start — guardian OK'd
               </button>
             </div>
             <button onClick={skipRecording}
-              className="w-full py-2.5 rounded-xl bg-gray-700 active:bg-gray-600 text-gray-200 font-semibold text-sm">
-              Don't record — just save/send this info
+              className="w-full py-2 rounded-lg bg-gray-700 active:bg-gray-600 text-gray-200 font-semibold text-xs">
+              Don't record — just save/send
             </button>
           </div>
         </>
