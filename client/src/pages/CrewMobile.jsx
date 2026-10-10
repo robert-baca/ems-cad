@@ -24,7 +24,7 @@ import { isNative as isNativePlatform, nativeCall } from '../lib/native';
 import { enqueueOfflineAction, subscribeOfflineQueue, getOfflineQueue } from '../lib/offlineActionQueue';
 import EmergencyPanel from '../components/crew/EmergencyPanel';
 import { startEmergency, cancelEmergency, getActiveEmergencies } from '../services/api';
-import { getDuties, setDutyDone } from '../services/api';
+import { getDuties } from '../services/api';
 import CrewDuties from '../components/crew/CrewDuties';
 
 const offlineQueueHasEmergency = () => getOfflineQueue().some(a => a.type === 'emergency');
@@ -231,7 +231,6 @@ export default function CrewMobile() {
   // Cleaning duties from dispatch. The socket event carries every unit's
   // duties; the card below shows only this unit's.
   const [dutiesState,      setDutiesState]      = useState({ enabled: false, duties: [] });
-  const [dutyBusyId,       setDutyBusyId]       = useState(null);
   const [backupSubmitting, setBackupSubmitting] = useState(false);
   const [backupError,      setBackupError]      = useState('');
   const [lastActiveCallId, setLastActiveCallId] = useState(null);
@@ -738,19 +737,6 @@ export default function CrewMobile() {
     }
   };
 
-  const handleToggleDuty = async (id, done) => {
-    setDutyBusyId(id);
-    try {
-      const res = await setDutyDone(id, done);
-      // The server's duties:updated echo does the same; this just skips the wait.
-      setDutiesState(prev => ({ ...prev, duties: prev.duties.map(d => d.id === id ? res.data : d) }));
-    } catch {
-      setStatusError('Could not update that duty — try again');
-    } finally {
-      setDutyBusyId(null);
-    }
-  };
-
   const handleReleaseFromCall = async () => {
     if (!myActiveCall || !myUnit) return;
     setStatusLoading(true);
@@ -1132,9 +1118,6 @@ export default function CrewMobile() {
           <CrewDuties
             // "Every unit" duties skip carts, matching the server.
             duties={dutiesState.duties.filter(d => d.unit_ids.length ? d.unit_ids.includes(myUnit.id) : myUnit.unit_type !== 'Cart')}
-            myUnitId={myUnit.id}
-            onToggle={handleToggleDuty}
-            busyId={dutyBusyId}
           />
         )}
 

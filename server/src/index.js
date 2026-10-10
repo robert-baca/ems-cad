@@ -343,8 +343,7 @@ let directMessages = [];
 let broadcasts = [];
 // Open (unresolved) panic-button emergencies. Resolved ones live only in the DB.
 let emergencies = [];
-// Cleaning duties dispatch hands out (see the Duties section below). The list
-// carries over between shifts; only the checkmarks reset at shift start.
+// Cleaning duties dispatch posts to crews (see the Duties section below).
 let duties = [];
 let dutiesEnabled = false;
 let nextCallNum  = 100;
@@ -562,13 +561,12 @@ async function initDb() {
     )
   `);
 
-  // unit_ids empty = every unit. done maps unit_id -> { at, by }.
+  // unit_ids empty = every unit.
   await pool.query(`
     CREATE TABLE IF NOT EXISTS duties (
       id TEXT PRIMARY KEY,
       text TEXT NOT NULL,
       unit_ids JSONB DEFAULT '[]',
-      done JSONB DEFAULT '{}',
       created_at TEXT,
       created_by TEXT
     )
@@ -685,7 +683,7 @@ async function initDb() {
   broadcasts = bcRes.rows.map(b => ({ ...b, target_unit_ids: b.target_unit_ids || [], reads: b.reads || {} }));
 
   const dutiesRes = await pool.query('SELECT * FROM duties ORDER BY created_at');
-  duties = dutiesRes.rows.map(d => ({ ...d, unit_ids: d.unit_ids || [], done: d.done || {} }));
+  duties = dutiesRes.rows.map(d => ({ ...d, unit_ids: d.unit_ids || [] }));
   const dutiesFlag = await pool.query("SELECT value FROM app_settings WHERE key = 'duties_enabled'");
   dutiesEnabled = dutiesFlag.rows[0]?.value === 'true';
 
@@ -803,10 +801,10 @@ async function saveBroadcast(b) {
 
 async function saveDuty(d) {
   await pool.query(
-    `INSERT INTO duties (id, text, unit_ids, done, created_at, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6)
-     ON CONFLICT (id) DO UPDATE SET text = EXCLUDED.text, unit_ids = EXCLUDED.unit_ids, done = EXCLUDED.done`,
-    [d.id, d.text, JSON.stringify(d.unit_ids), JSON.stringify(d.done), d.created_at, d.created_by]
+    `INSERT INTO duties (id, text, unit_ids, created_at, created_by)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (id) DO UPDATE SET text = EXCLUDED.text, unit_ids = EXCLUDED.unit_ids`,
+    [d.id, d.text, JSON.stringify(d.unit_ids), d.created_at, d.created_by]
   );
 }
 
@@ -1988,9 +1986,8 @@ app.post('/api/broadcasts/:id/read', verifyToken, async (req, res) => {
 });
 
 // ── Cleaning duties ──────────────────────────────────────────────────
-// Dispatch turns the feature on, writes the duties (for every unit or
-// specific ones), and each crew sees and checks off their own. A duty for
-// every unit is checked off per unit, so dispatch sees who has done it.
+// Dispatch turns the feature on and writes the duties (for every unit or
+// specific ones); each crew sees a read-only list of their own.
 // "Every unit" leaves out carts, same as broadcasts; a cart can still be picked by name.
 const dutyAppliesTo = (d, unitId) =>
   d.unit_ids.length ? d.unit_ids.includes(unitId) : !isCartUnit(units.find(u => u.id === unitId));
@@ -2035,7 +2032,7 @@ app.post('/api/duties', verifyToken, async (req, res) => {
     : [];
   const duty = {
     id: `duty-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-    text, unit_ids: unitIds, done: {},
+    text, unit_ids: unitIds,
     created_at: new Date().toISOString(), created_by: auditActor(req.user)
   };
   try {
@@ -2057,33 +2054,6 @@ app.delete('/api/duties/:id', verifyToken, async (req, res) => {
   persist(pool.query('DELETE FROM duties WHERE id = $1', [req.params.id]), 'duty ' + req.params.id);
   emitDuties();
   res.json({ ok: true });
-});
-
-// Uncheck everything without retyping the list (also happens at shift start).
-app.post('/api/duties/reset', verifyToken, async (req, res) => {
-  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
-  duties.forEach(d => { if (Object.keys(d.done).length) { d.done = {}; persist(saveDuty(d), 'duty ' + d.id); } });
-  emitDuties();
-  res.json({ ok: true });
-});
-
-// Crew checks (done: true) or unchecks one of their own unit's duties.
-app.post('/api/duties/:id/done', verifyToken, async (req, res) => {
-  if (req.user.role !== 'crew') return res.status(403).json({ error: 'Forbidden' });
-  const d = duties.find(x => x.id === req.params.id);
-  if (!d || !dutiesEnabled || !dutyAppliesTo(d, req.user.unit_id)) return res.status(404).json({ error: 'Not found' });
-  const unitId = req.user.unit_id;
-  if (req.body.done === false) {
-    if (!d.done[unitId]) return res.json(d);
-    const { [unitId]: _, ...rest } = d.done;
-    d.done = rest;
-  } else {
-    if (d.done[unitId]) return res.json(d);
-    d.done = { ...d.done, [unitId]: { at: new Date().toISOString(), by: req.user.name || req.user.unit_number || null } };
-  }
-  persist(saveDuty(d), 'duty ' + d.id);
-  emitDuties();
-  res.json(d);
 });
 
 app.delete('/api/units/:id', verifyToken, async (req, res) => {
@@ -2715,11 +2685,6 @@ app.post('/api/shift/start', verifyToken, async (req, res) => {
   // A weather warning still in effect gets broadcast again to the new shift.
   if (weatherBroadcastEvents?.size) { weatherBroadcastEvents.clear(); saveWeatherState(); }
   setTimeout(pollWeather, 5000);
-  // Same duty list every day; each shift starts with nothing checked off.
-  if (duties.some(d => Object.keys(d.done).length)) {
-    duties.forEach(d => { if (Object.keys(d.done).length) { d.done = {}; persist(saveDuty(d), 'duty ' + d.id); } });
-    emitDuties();
-  }
 
   unit_staffing.forEach(({ unit_id, crew, unit_type, in_service, station }) => {
     const unit = units.find(u => u.id === unit_id);

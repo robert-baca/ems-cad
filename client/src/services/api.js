@@ -46,8 +46,6 @@ export const getDuties = () => api.get('/duties');
 export const setDutiesEnabled = (enabled) => api.put('/duties/settings', { enabled });
 export const addDuty = (text, unit_ids) => api.post('/duties', { text, unit_ids });
 export const deleteDuty = (id) => api.delete(`/duties/${id}`);
-export const resetDuties = () => api.post('/duties/reset');
-export const setDutyDone = (id, done) => api.post(`/duties/${id}/done`, { done });
 export const setCrewGpsSharing = (enabled) => api.patch('/crew/gps-sharing', { enabled });
 export const registerPushToken = (pushToken, platform) => api.post('/crew/push-token', { pushToken, platform });
 export const unregisterPushToken = (pushToken) => api.delete('/crew/push-token', { data: { pushToken } });

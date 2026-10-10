@@ -1,60 +1,7 @@
 import { useState } from 'react';
-import { setDutiesEnabled, addDuty, deleteDuty, resetDuties } from '../../services/api';
-
-function fmtTime(iso) {
-  return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-}
+import { setDutiesEnabled, addDuty, deleteDuty } from '../../services/api';
 
 const byNumber = (a, b) => a.unit_number.localeCompare(b.unit_number, undefined, { numeric: true });
-
-// Units a duty is expected from: the ones picked, or (for "All units")
-// every non-cart unit in service right now -- plus anyone who already
-// checked it off, so a unit going out of service doesn't hide its checkmark.
-function expectedUnits(d, units) {
-  const picked = d.unit_ids.length
-    ? units.filter(u => d.unit_ids.includes(u.id))
-    : units.filter(u => u.unit_type !== 'Cart' && (u.status !== 'out_of_service' || d.done[u.id]));
-  return picked.slice().sort(byNumber);
-}
-
-function DutyRow({ d, units, onDelete }) {
-  const [open, setOpen] = useState(false);
-  const expected = expectedUnits(d, units);
-  const doneCount = expected.filter(u => d.done[u.id]).length;
-  const allDone = expected.length > 0 && doneCount === expected.length;
-  const target = d.unit_ids.length ? expected.map(u => u.unit_number).join(', ') || 'Removed unit' : 'All units';
-  return (
-    <div className="rounded-lg bg-gray-700/60 px-3 py-2">
-      <div className="flex items-start gap-2">
-        <button onClick={() => setOpen(v => !v)} className="flex-1 min-w-0 text-left">
-          <div className="text-gray-100 text-sm break-words">{d.text}</div>
-          <div className="flex items-center justify-between gap-2 mt-0.5">
-            <span className="text-gray-400 text-[11px] truncate">{target}</span>
-            <span className={`text-[11px] font-bold flex-shrink-0 ${allDone ? 'text-green-400' : 'text-amber-400'}`}>
-              Done {doneCount}/{expected.length}
-            </span>
-          </div>
-        </button>
-        <button onClick={() => onDelete(d)} title="Remove this duty"
-          className="text-gray-500 hover:text-red-400 w-7 h-7 flex items-center justify-center rounded hover:bg-gray-600 flex-shrink-0">
-          🗑
-        </button>
-      </div>
-      {open && (
-        <div className="mt-1.5 pt-1.5 border-t border-gray-600 space-y-0.5">
-          {expected.map(u => d.done[u.id] ? (
-            <div key={u.id} className="text-green-400/90 text-[11px]">
-              ✓ {u.unit_number} · {fmtTime(d.done[u.id].at)}{d.done[u.id].by ? ` · ${d.done[u.id].by}` : ''}
-            </div>
-          ) : (
-            <div key={u.id} className="text-amber-400/90 text-[11px]">… {u.unit_number} — not done</div>
-          ))}
-          {!expected.length && <div className="text-gray-500 text-[11px]">No units in service for this duty</div>}
-        </div>
-      )}
-    </div>
-  );
-}
 
 export default function DutiesModal({ enabled, duties, units, onClose }) {
   const [text,     setText]     = useState('');
@@ -83,13 +30,10 @@ export default function DutiesModal({ enabled, duties, units, onClose }) {
     run(() => deleteDuty(d.id), 'Could not remove duty — try again');
   };
 
-  const handleReset = () => {
-    if (!window.confirm('Uncheck every duty for every unit? (This also happens automatically when a shift starts.)')) return;
-    run(() => resetDuties(), 'Could not reset — try again');
-  };
-
   const togglePick = (id) => setPicked(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
-  const anyDone = duties.some(d => Object.keys(d.done).length);
+  const targetLabel = (d) => d.unit_ids.length
+    ? units.filter(u => d.unit_ids.includes(u.id)).sort(byNumber).map(u => u.unit_number).join(', ') || 'Removed unit'
+    : 'All units';
 
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
@@ -97,7 +41,7 @@ export default function DutiesModal({ enabled, duties, units, onClose }) {
         <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-gray-700">
           <div>
             <div className="text-white font-bold">🧽 Cleaning Duties</div>
-            <div className="text-gray-400 text-xs">Crews see and check off their own in the app</div>
+            <div className="text-gray-400 text-xs">Shown in the crew app while turned on</div>
           </div>
           <button onClick={onClose}
             className="text-gray-400 hover:text-white w-8 h-8 flex items-center justify-center rounded hover:bg-gray-700 text-xl">
@@ -160,17 +104,19 @@ export default function DutiesModal({ enabled, duties, units, onClose }) {
           </div>
 
           <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <div className="text-gray-400 text-xs uppercase tracking-wider">Duties · tap for who's done</div>
-              {anyDone && (
-                <button onClick={handleReset} disabled={busy} className="text-xs text-gray-400 hover:text-white underline">
-                  Uncheck all
+            <div className="text-gray-400 text-xs uppercase tracking-wider">Duties</div>
+            {duties.length ? duties.map(d => (
+              <div key={d.id} className="flex items-start gap-2 rounded-lg bg-gray-700/60 px-3 py-2">
+                <div className="flex-1 min-w-0">
+                  <div className="text-gray-100 text-sm break-words">{d.text}</div>
+                  <div className="text-gray-400 text-[11px] truncate mt-0.5">{targetLabel(d)}</div>
+                </div>
+                <button onClick={() => handleDelete(d)} disabled={busy} title="Remove this duty"
+                  className="text-gray-500 hover:text-red-400 w-7 h-7 flex items-center justify-center rounded hover:bg-gray-600 flex-shrink-0">
+                  🗑
                 </button>
-              )}
-            </div>
-            {duties.length
-              ? duties.map(d => <DutyRow key={d.id} d={d} units={units} onDelete={handleDelete} />)
-              : <p className="text-gray-500 text-sm">No duties yet.</p>}
+              </div>
+            )) : <p className="text-gray-500 text-sm">No duties yet.</p>}
           </div>
         </div>
 
