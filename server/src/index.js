@@ -3510,7 +3510,7 @@ function gpsPostDevice(req) {
   if (platform && version) return { platform, version };
   const ua = req.get('User-Agent') || '';
   const ios = /\/(\d+) CFNetwork\//.exec(ua);
-  if (ios) return { platform: 'ios', version: `old build ${ios[1]}` };
+  if (ios) return { platform: 'ios', version: `build ${ios[1]}` };
   if (/Dalvik\//.test(ua)) return { platform: 'android', version: 'older than 1.7.1' };
   if (/Mozilla\//.test(ua)) return { platform: 'web', version: 'browser' };
   return { platform: null, version: null };

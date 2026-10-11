@@ -131,7 +131,7 @@ function UnitCard({ unit, activeCall, isSelected, onClick, onHistory, onEdit, on
           )}
           {/* Which phone/build is sending this unit's GPS (from the GPS posts) */}
           {unit.app_platform && (
-            <div className={`text-xs mt-0.5 truncate ${/^(old|older)/.test(unit.app_version || '') ? 'text-orange-400' : 'text-gray-500'}`}
+            <div className={`text-xs mt-0.5 truncate ${/^older/.test(unit.app_version || '') ? 'text-orange-400' : 'text-gray-500'}`}
               title="App version reported by this unit's phone">
               {{ ios: '📱 iPhone', android: '📱 Android', web: '🌐 Browser' }[unit.app_platform]}
               {unit.app_version && unit.app_platform !== 'web' ? ` · ${unit.app_version}` : ''}
