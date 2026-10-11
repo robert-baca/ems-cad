@@ -8,6 +8,27 @@ import { isOnCall } from '../lib/callUnits';
 // Same convention as UnitPanel.jsx's dispatcher-side unit list
 const TYPE_BADGE = { ALS: 'bg-red-900/50 text-red-300', BLS: 'bg-blue-900/50 text-blue-300', Cart: 'bg-green-900/50 text-green-300' };
 
+// A wall board whose screen goes to sleep gets its tab frozen by the browser:
+// it wakes about once a minute, reconnects, and is dropped 45s later for not
+// answering pings (seen 2026-10-10 as a steady 60s connect/drop cycle). Hold
+// a screen wake lock while the board is visible; the browser releases it
+// whenever the tab is hidden, so take it again on return.
+function useScreenWakeLock() {
+  useEffect(() => {
+    let lock = null;
+    const acquire = async () => {
+      if (document.visibilityState !== 'visible' || !navigator.wakeLock) return;
+      try { lock = await navigator.wakeLock.request('screen'); } catch { /* not allowed/supported */ }
+    };
+    acquire();
+    document.addEventListener('visibilitychange', acquire);
+    return () => {
+      document.removeEventListener('visibilitychange', acquire);
+      lock?.release?.().catch(() => {});
+    };
+  }, []);
+}
+
 function Clock() {
   const [time, setTime] = useState(new Date());
   useEffect(() => {
@@ -22,6 +43,7 @@ function Clock() {
 }
 
 export default function DisplayBoard() {
+  useScreenWakeLock();
   const navigate = useNavigate();
   const [units, setUnits] = useState([]);
   const [calls, setCalls] = useState([]);

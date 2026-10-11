@@ -446,6 +446,22 @@ public class GpsTrackerService extends Service {
         }
     }
 
+    // "1.7.1 (43)" -- sent with every GPS post so dispatch can see which build
+    // each phone runs. Read from PackageManager (the installed package's own
+    // version), cached after the first post.
+    private String cachedAppVersion;
+    private String appVersion() {
+        if (cachedAppVersion != null) return cachedAppVersion;
+        try {
+            android.content.pm.PackageInfo info = getPackageManager().getPackageInfo(getPackageName(), 0);
+            long code = android.os.Build.VERSION.SDK_INT >= 28 ? info.getLongVersionCode() : info.versionCode;
+            cachedAppVersion = info.versionName + " (" + code + ")";
+        } catch (Exception e) {
+            cachedAppVersion = "unknown";
+        }
+        return cachedAppVersion;
+    }
+
     private boolean sendPoint(double[] pt) {
         if (token == null || serverUrl == null) return false;
         final double lat = pt[0], lng = pt[1];
@@ -454,7 +470,8 @@ public class GpsTrackerService extends Service {
         final String gpsPermission = GpsPermissionStatus.get(getApplicationContext());
         final String body     = "{\"lat\":" + lat + ",\"lng\":" + lng + ",\"accuracy\":" + accuracy
                 + ",\"ts\":" + fixTime + ",\"sentAt\":" + System.currentTimeMillis()
-                + ",\"gpsPermission\":\"" + gpsPermission + "\"}";
+                + ",\"gpsPermission\":\"" + gpsPermission + "\""
+                + ",\"platform\":\"android\",\"appVersion\":\"" + appVersion() + "\"}";
         final String endpoint = serverUrl + "/api/crew/gps";
         try {
             HttpURLConnection conn = (HttpURLConnection) new URL(endpoint).openConnection();

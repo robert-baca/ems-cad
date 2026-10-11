@@ -512,6 +512,13 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
 
     // Returns whether the post actually succeeded (2xx) -- callers use this
     // to decide whether to queue the point for later instead of dropping it.
+    static let appVersion: String = {
+        let info = Bundle.main.infoDictionary
+        let short = info?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info?["CFBundleVersion"] as? String ?? "?"
+        return "\(short) (\(build))"
+    }()
+
     private func sendPoint(_ point: QueuedPoint) async -> Bool {
         let lat = point.lat, lng = point.lng, accuracy = point.accuracy
         guard let token = token, let serverUrl = serverUrl,
@@ -533,6 +540,9 @@ public class GpsTrackerPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDel
             "ts": point.fixTime,
             "sentAt": Date().timeIntervalSince1970 * 1000,
             "gpsPermission": GpsTrackerPlugin.authStatusString(locationManager.authorizationStatus),
+            // So dispatch can see which build each phone runs, e.g. "1.7.1 (52)".
+            "platform": "ios",
+            "appVersion": GpsTrackerPlugin.appVersion,
         ]
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 

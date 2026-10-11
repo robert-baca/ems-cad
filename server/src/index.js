@@ -1499,6 +1499,7 @@ app.delete('/api/units/:id/gps', verifyToken, async (req, res) => {
   unit.last_lng        = null;
   unit.last_gps_at     = null;
   unit.last_gps_fix_ts = null; // reset dedup so next ping always lands
+  unit._last_gps_device_ts = null;
   persist(saveUnit(unit), 'unit ' + unit.id);
   const sanitized = sanitizeUnit(unit);
   emitDispatch('unit:updated', sanitized);
@@ -3498,7 +3499,31 @@ function haversineMeters(lat1, lng1, lat2, lng2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+// Which phone/build a GPS post came from, for the dispatcher's unit panel.
+// App 1.7.1+ sends platform + appVersion. Older builds don't, but their
+// native trackers' HTTP clients identify themselves: iOS URLSession sends
+// "<app name>/<build number> CFNetwork/...", Android HttpURLConnection
+// "Dalvik/...". A browser session posts from the page itself.
+function gpsPostDevice(req) {
+  const platform = ['ios', 'android'].includes(req.body.platform) ? req.body.platform : null;
+  const version = typeof req.body.appVersion === 'string' ? req.body.appVersion.slice(0, 40) : null;
+  if (platform && version) return { platform, version };
+  const ua = req.get('User-Agent') || '';
+  const ios = /\/(\d+) CFNetwork\//.exec(ua);
+  if (ios) return { platform: 'ios', version: `old build ${ios[1]}` };
+  if (/Dalvik\//.test(ua)) return { platform: 'android', version: 'older than 1.7.1' };
+  if (/Mozilla\//.test(ua)) return { platform: 'web', version: 'browser' };
+  return { platform: null, version: null };
+}
+
 // Returns true if the ping was accepted, false if discarded.
+//
+// deviceTs (ms, the phone's own clock) is used for the time *between* two
+// fixes when both have it. `timestamp` is receipt time minus the fix's age,
+// so cell-network jitter leaked into it: a phone posting every second while
+// walking had fixes land 0.1s "apart" and get rejected as impossible speed
+// (seen on Medic 7, 2026-10-10). The phone's clock may be off in absolute
+// terms, but it's consistent with itself, which is all a difference needs.
 //
 // GPS is on by default for every active-shift unit regardless of call status —
 // the phone already transmits continuously the whole shift either way (nothing
@@ -3508,7 +3533,7 @@ function haversineMeters(lat1, lng1, lat2, lng2) {
 // ping is the crew member explicitly opting out themselves (see
 // PATCH /api/crew/gps-sharing) — a dispatcher can't force a unit to be
 // tracked against that.
-function applyGpsUpdate(unit, lat, lng, timestamp, accuracy) {
+function applyGpsUpdate(unit, lat, lng, timestamp, accuracy, deviceTs = null) {
   // The crew GPS endpoint never validated coordinate ranges — a garbage/corrupted
   // fix would be accepted as-is and broadcast as the unit's true position with
   // no sanity check.
@@ -3528,13 +3553,19 @@ function applyGpsUpdate(unit, lat, lng, timestamp, accuracy) {
     return false;
   }
 
-  if (unit.last_gps_fix_ts && new Date(timestamp).getTime() <= new Date(unit.last_gps_fix_ts).getTime()) {
-    console.log(`[gps:in] ${unit.unit_number} — rejected by dedup (ts ${timestamp} <= last ${unit.last_gps_fix_ts})`);
+  // Seconds since the last accepted fix -- by the phone's clock when both
+  // fixes carry it (see deviceTs above), else by the derived timestamps.
+  const sinceLastAcceptedS = () => (deviceTs != null && unit._last_gps_device_ts != null)
+    ? (deviceTs - unit._last_gps_device_ts) / 1000
+    : (new Date(timestamp).getTime() - new Date(unit.last_gps_fix_ts).getTime()) / 1000;
+
+  if (unit.last_gps_fix_ts && sinceLastAcceptedS() <= 0) {
+    console.log(`[gps:in] ${unit.unit_number} — rejected by dedup (not newer than the last accepted fix)`);
     return false;
   }
 
   if (accuracy != null && accuracy > DEGRADED_ACCURACY_M && unit.last_gps_fix_ts) {
-    const sinceLastFixS = (new Date(timestamp).getTime() - new Date(unit.last_gps_fix_ts).getTime()) / 1000;
+    const sinceLastFixS = sinceLastAcceptedS();
     if (sinceLastFixS < DEGRADED_ACCURACY_OVERRIDE_S) {
       console.log(`[gps] ${unit.unit_number} — rejected, degraded accuracy (${accuracy}m) with a recent-enough fix already on record`);
       flagSuspectPoint(unit, lat, lng);
@@ -3560,7 +3591,7 @@ function applyGpsUpdate(unit, lat, lng, timestamp, accuracy) {
   // in quickly after a signal drop could read as faster than it really was —
   // same characteristic the dedup check above already has.
   if (unit.last_lat != null && unit.last_lng != null && unit.last_gps_fix_ts) {
-    const dtS = (new Date(timestamp).getTime() - new Date(unit.last_gps_fix_ts).getTime()) / 1000;
+    const dtS = sinceLastAcceptedS();
     if (dtS > 0) {
       const distM = haversineMeters(unit.last_lat, unit.last_lng, lat, lng);
       const speedMps = distM / dtS;
@@ -3600,6 +3631,7 @@ function applyGpsUpdate(unit, lat, lng, timestamp, accuracy) {
   unit.last_gps_at       = timestamp;
   unit.last_gps_fix_ts   = timestamp;
   unit.last_gps_accuracy = accuracy ?? null;
+  unit._last_gps_device_ts = deviceTs; // null resets to derived-time comparisons
   // The live position lives in memory and goes out over the socket; the DB
   // copy only matters for surviving a restart. Writing the whole unit row on
   // every fix (up to ~1/s per unit) was the busiest query in the system.
@@ -3662,8 +3694,12 @@ app.post('/api/crew/gps', verifyToken, gpsRateLimit, (req, res) => {
   unit.last_gps_post_at = new Date().toISOString();
 
   const { gpsPermission } = req.body;
-  if (gpsPermission && gpsPermission !== unit.gps_permission_status) {
-    unit.gps_permission_status = gpsPermission;
+  const device = gpsPostDevice(req);
+  if ((gpsPermission && gpsPermission !== unit.gps_permission_status) ||
+      device.platform !== unit.app_platform || device.version !== unit.app_version) {
+    if (gpsPermission) unit.gps_permission_status = gpsPermission;
+    unit.app_platform = device.platform;
+    unit.app_version = device.version;
     emitDispatch('unit:updated', sanitizeUnit(unit));
   }
 
@@ -3678,7 +3714,8 @@ app.post('/api/crew/gps', verifyToken, gpsRateLimit, (req, res) => {
   // 200 on purpose, same reasoning as the off-shift case above: a queued
   // point that's simply too old should be dropped, not retried forever.
   if (!fixTime) return res.json({ ok: true, ignored: true, reason: 'fix_too_old' });
-  applyGpsUpdate(unit, lat, lng, fixTime, accuracy);
+  const deviceTs = Number(req.body.ts);
+  applyGpsUpdate(unit, lat, lng, fixTime, accuracy, Number.isFinite(deviceTs) ? deviceTs : null);
   res.json({ ok: true });
 });
 
@@ -4384,8 +4421,10 @@ io.on('connection', (socket) => {
     if (myCall) socket.emit('call:assigned_to_me', myCall);
   });
 
-  socket.on('disconnect', () => {
-    console.log('[socket] disconnect', socket.id);
+  // The reason tells a frozen/sleeping client ("ping timeout": it stopped
+  // answering) from a network drop ("transport close") or a deliberate close.
+  socket.on('disconnect', (reason) => {
+    console.log('[socket] disconnect', socket.id, who?.role, who?.unit_number || who?.username, `(${reason})`);
   });
 });
 
