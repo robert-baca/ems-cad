@@ -3,8 +3,9 @@ import { sendPtNote, viewPtNote, deletePtNote } from '../../services/api';
 
 // Patient handoff notes between medics. This is protected health
 // information: it's only ever held in memory here (never localStorage or
-// the offline queue), and the server limits it to the sending and
-// receiving unit and deletes it 8h after sending.
+// the offline queue), and the server limits it to the medic who sent it and
+// the medic it went to -- even after the shift ends -- and deletes it 24h
+// after sending.
 
 const FIELDS = [
   { key: 'name',        label: 'Name',            placeholder: 'Last, First' },
@@ -65,6 +66,16 @@ export function VitalsGrid({ values, set }) {
   );
 }
 
+// 'saved' | 'sent' | 'received' for this medic. The server works it out per
+// person (notes follow the medic, not the unit -- see PT NOTES in the
+// server) and sends it as `direction`; the unit comparison is only a
+// fallback for anything that arrives without it.
+export function noteDirection(n, myUnit) {
+  if (n.direction) return n.direction;
+  const fromMe = n.from_unit_id === myUnit?.id, toMe = n.to_unit_id === myUnit?.id;
+  return fromMe && toMe ? 'saved' : toMe ? 'received' : 'sent';
+}
+
 // One-line summary for the notes list, e.g. "38F at Bugs Bunny Boomtown".
 export function noteSummary(fields = {}) {
   if (fields.title) return fields.title;
@@ -113,9 +124,10 @@ export function UnitPicker({ myUnit, units, myActiveCall, toId, onPick }) {
   );
 }
 
-function NoteView({ note, myUnit, units, myActiveCall, onBack, onViewed, onDeleted, onSent }) {
-  const saved = note.to_unit_id === myUnit.id && note.from_unit_id === myUnit.id;
-  const incoming = note.to_unit_id === myUnit.id && !saved;
+function NoteView({ note, myUnit, units, myActiveCall, onBack, onViewed, onDeleted, onSent, authToken, canSend }) {
+  const dir = noteDirection(note, myUnit);
+  const saved = dir === 'saved';
+  const incoming = dir === 'received';
   const [viewError, setViewError] = useState('');
   const [deleting, setDeleting] = useState(false);
   const [picking, setPicking] = useState(false);
@@ -126,7 +138,7 @@ function NoteView({ note, myUnit, units, myActiveCall, onBack, onViewed, onDelet
 
   // Sending a saved note (e.g. a Listening report) to another medic: a new
   // note with the same fields, so it shows in their Received like any other
-  // and expires 8 hours from now. Only the saved note itself goes -- the
+  // and expires 24 hours from now. Only the saved note itself goes -- the
   // recording's draft screen and transcript never left this phone.
   const sendOn = async () => {
     if (!toId) { setViewError('Pick who to send it to'); return; }
@@ -152,7 +164,7 @@ function NoteView({ note, myUnit, units, myActiveCall, onBack, onViewed, onDelet
     if (!window.confirm(`Delete these patient notes?${who} This can't be undone.`)) return;
     setDeleting(true);
     try {
-      await deletePtNote(note.id);
+      await deletePtNote(note.id, authToken);
       onDeleted(note.id);
     } catch (err) {
       if (err?.response?.status === 404) { onDeleted(note.id); return; } // already gone
@@ -164,7 +176,7 @@ function NoteView({ note, myUnit, units, myActiveCall, onBack, onViewed, onDelet
   const firstFilledVital = VITALS.find(v => note.fields?.[v.key])?.key;
 
   useEffect(() => {
-    viewPtNote(note.id)
+    viewPtNote(note.id, authToken)
       .then(res => onViewed(note.id, res.data?.read_at))
       .catch(err => setViewError(err?.response?.status === 404 ? 'This note has expired or was removed.' : ''));
   }, [note.id]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -208,7 +220,7 @@ function NoteView({ note, myUnit, units, myActiveCall, onBack, onViewed, onDelet
               onCopy={e => e.preventDefault()} onContextMenu={e => e.preventDefault()}>{note.fields.report}</div>
           </div>
         )}
-        <p className="text-gray-500 text-[11px] pt-2">Deleted automatically 8 hours after it was sent.</p>
+        <p className="text-gray-500 text-[11px] pt-2">Deleted automatically 24 hours after it was sent.</p>
         {picking && (
           <div className="pt-2 space-y-1.5">
             <label className="block text-gray-400 text-xs mb-1">Title <span className="text-gray-500">— so they know which patient this is</span></label>
@@ -227,7 +239,7 @@ function NoteView({ note, myUnit, units, myActiveCall, onBack, onViewed, onDelet
       </div>
       <div className="p-4 border-t border-gray-700 flex-shrink-0 space-y-2">
         {sentTo.length > 0 && <p className="text-green-400 text-sm text-center">✓ Sent to {sentTo.join(', ')}</p>}
-        {saved && (picking ? (
+        {saved && canSend && (picking ? (
           <div className="grid grid-cols-2 gap-2">
             <button onClick={() => { setPicking(false); setToId(''); setViewError(''); }}
               className="py-3 rounded-xl bg-gray-700 text-gray-200 font-semibold text-sm">Cancel</button>
@@ -253,7 +265,9 @@ function NoteView({ note, myUnit, units, myActiveCall, onBack, onViewed, onDelet
 
 // backRef lets CrewMobile's native back button step out of a note
 // view before closing PT NOTES entirely (same pattern as BeaconMode).
-export default function PtNotes({ myUnit, units, myActiveCall, notes, onNoteSent, onNoteViewed, onNoteDeleted, onClose, backRef }) {
+// authToken: the sign-in screen's personnel-only token, when opened from there
+// (no unit, so no sending). canSend defaults to true.
+export default function PtNotes({ myUnit, units, myActiveCall, notes, onNoteSent, onNoteViewed, onNoteDeleted, onClose, backRef, authToken, canSend = true }) {
   const [view, setView] = useState('list'); // list | note
   const [tab, setTab] = useState('inbox');
   const [openId, setOpenId] = useState(null);
@@ -267,10 +281,9 @@ export default function PtNotes({ myUnit, units, myActiveCall, notes, onNoteSent
     return () => { backRef.current = null; };
   }, [backRef, view]);
 
-  const mine  = n => n.from_unit_id === myUnit.id && n.to_unit_id === myUnit.id;
-  const inbox = notes.filter(n => n.to_unit_id === myUnit.id && !mine(n));
-  const sent  = notes.filter(n => n.from_unit_id === myUnit.id && !mine(n));
-  const saved = notes.filter(mine);
+  const inbox = notes.filter(n => noteDirection(n, myUnit) === 'received');
+  const sent  = notes.filter(n => noteDirection(n, myUnit) === 'sent');
+  const saved = notes.filter(n => noteDirection(n, myUnit) === 'saved');
   const lists = { inbox, sent, saved };
   const EMPTY = {
     inbox: 'No patient notes received this shift.',
@@ -283,7 +296,7 @@ export default function PtNotes({ myUnit, units, myActiveCall, notes, onNoteSent
   return (
     <div className="fixed inset-0 z-40 bg-gray-900 flex flex-col max-w-md mx-auto">
       {view === 'note' && openNote ? (
-        <NoteView note={openNote} myUnit={myUnit} units={units} myActiveCall={myActiveCall}
+        <NoteView note={openNote} myUnit={myUnit} units={units} myActiveCall={myActiveCall} authToken={authToken} canSend={canSend}
           onBack={() => setView('list')} onViewed={onNoteViewed} onSent={onNoteSent}
           onDeleted={(id) => { onNoteDeleted(id); setView('list'); }} />
       ) : (

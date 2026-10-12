@@ -19,7 +19,7 @@ import BeaconMode from '../components/crew/BeaconMode';
 import CrewRoster from '../components/crew/CrewRoster';
 import { setCrewGpsSharing, getCrewMessages, sendCrewMessage, getBroadcasts, markBroadcastRead, releaseFromCall, getPtNotes, getCurrentShift } from '../services/api';
 import CrewBroadcasts from '../components/crew/CrewBroadcasts';
-import PtNotes from '../components/crew/PtNotes';
+import PtNotes, { noteDirection } from '../components/crew/PtNotes';
 import ScribeTest from '../components/crew/ScribeTest';
 import { getScribeConfig } from '../services/api';
 import { isNative as isNativePlatform, nativeCall, nativeCanRecord } from '../lib/native';
@@ -691,7 +691,7 @@ export default function CrewMobile() {
         );
       }
     },
-    'shift:ended':         () => { stopCrewGpsTracking(); setShiftActive(false); setUnits([]); setCalls([]); setBroadcasts([]); setPtNotes([]); setShiftEnded(true); },
+    'shift:ended':         () => { stopCrewGpsTracking(); setShiftActive(false); setUnits([]); setCalls([]); setBroadcasts([]); setShiftEnded(true); },
     // Full note arrives only on this unit's own socket room. The local
     // notification says who it's from, never any patient details.
     'pt_note:received':    (note) => {
@@ -722,6 +722,15 @@ export default function CrewMobile() {
   // back to the foreground -- the live socket event is missed entirely while
   // the app is closed, which is exactly when a broadcast is most likely to
   // have been missed.
+  // After the shift ends (no unit list anymore) PT notes are still this
+  // medic's for 24h -- load them for the Shift Ended screen.
+  useEffect(() => {
+    if (shiftActive !== false || !user?.unit_id) return;
+    getPtNotes()
+      .then(res => { if (Array.isArray(res.data)) setPtNotes(res.data); })
+      .catch(() => {});
+  }, [shiftActive, user?.unit_id]);
+
   useEffect(() => {
     if (!myUnit?.id) return;
     const load = () => {
@@ -940,6 +949,8 @@ export default function CrewMobile() {
   );
 
   if (!myUnit || shiftActive === false) {
+    // No unit list once the shift is over -- PT Notes only needs the id.
+    const noteUnit = myUnit || (user?.unit_id ? { id: user.unit_id, unit_number: user.unit_number } : null);
     if (showNativeSetup && showHelpSetupRerun) {
       return <NativeSetupModal onDone={() => { setShowNativeSetup(false); setShowHelpSetupRerun(false); }} />;
     }
@@ -956,6 +967,33 @@ export default function CrewMobile() {
             : 'Waiting for dispatch to start the shift. Check back soon.'}
         </div>
         <div className="text-green-400 text-sm mb-6">📍 Location sharing is off — you're not being tracked.</div>
+        {/* Charting often runs past close -- PT notes stay reachable (24h) */}
+        {noteUnit && (
+          <button
+            onClick={() => setShowPtNotes(true)}
+            className="w-full max-w-xs py-3 rounded-2xl bg-gray-800 border border-gray-700 text-gray-200 text-sm font-semibold mb-6 flex items-center justify-center gap-2"
+          >
+            📝 PT NOTES
+            {ptNotes.length > 0 && <span className="text-gray-400 text-xs font-normal">({ptNotes.length})</span>}
+          </button>
+        )}
+        {showPtNotes && noteUnit && (
+          <ErrorBoundary onClose={() => setShowPtNotes(false)}>
+            <PtNotes
+              myUnit={noteUnit}
+              units={[]}
+              myActiveCall={null}
+              notes={ptNotes}
+              canSend={false}
+              onNoteSent={() => {}}
+              onNoteViewed={(id, readAt) => setPtNotes(prev => prev.map(n =>
+                n.id === id && !n.read_at && noteDirection(n, noteUnit) === 'received' ? { ...n, read_at: readAt || new Date().toISOString() } : n))}
+              onNoteDeleted={(id) => setPtNotes(prev => prev.filter(n => n.id !== id))}
+              onClose={() => setShowPtNotes(false)}
+              backRef={ptNotesBackRef}
+            />
+          </ErrorBoundary>
+        )}
         <div className="text-gray-600 text-xs mb-8">Logged in as {user?.unit_number}</div>
         <div className="flex items-center gap-2">
           <button
@@ -1256,9 +1294,9 @@ export default function CrewMobile() {
           className="relative w-full py-3 rounded-2xl bg-gray-800 border border-gray-700 text-gray-200 hover:border-gray-500 text-sm font-semibold transition-colors flex items-center justify-center gap-2"
         >
           📝 PT NOTES
-          {ptNotes.some(n => n.to_unit_id === myUnit?.id && !n.read_at) && (
+          {ptNotes.some(n => noteDirection(n, myUnit) === 'received' && !n.read_at) && (
             <span className="px-2 py-0.5 rounded-full bg-blue-600 text-white text-xs font-bold">
-              {ptNotes.filter(n => n.to_unit_id === myUnit?.id && !n.read_at).length} new
+              {ptNotes.filter(n => noteDirection(n, myUnit) === 'received' && !n.read_at).length} new
             </span>
           )}
         </button>
@@ -1331,7 +1369,7 @@ export default function CrewMobile() {
             notes={ptNotes}
             onNoteSent={(note) => setPtNotes(prev => [note, ...prev.filter(n => n.id !== note.id)])}
             onNoteViewed={(id, readAt) => setPtNotes(prev => prev.map(n =>
-              n.id === id && !n.read_at && n.to_unit_id === myUnit.id ? { ...n, read_at: readAt || new Date().toISOString() } : n))}
+              n.id === id && !n.read_at && noteDirection(n, myUnit) === 'received' ? { ...n, read_at: readAt || new Date().toISOString() } : n))}
             onNoteDeleted={(id) => setPtNotes(prev => prev.filter(n => n.id !== id))}
             onClose={() => setShowPtNotes(false)}
             backRef={ptNotesBackRef}

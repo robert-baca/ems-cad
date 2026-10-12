@@ -3,6 +3,8 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { apiBase } from '../lib/native';
 import { fetchWithTimeout } from '../lib/fetchWithTimeout';
+import PtNotes from '../components/crew/PtNotes';
+import { getPtNotes } from '../services/api';
 
 const ROLES = [
   { key: 'dispatcher', label: 'Dispatcher',    icon: '🎛️', description: 'Command & dispatch' },
@@ -32,6 +34,17 @@ function CrewLogin({ onBack, onSuccess }) {
   const [newType,      setNewType]     = useState('ALS');
   const [error,        setError]       = useState('');
   const [loading,      setLoading]     = useState(false);
+  // "My PT Notes" from the unit picker: after the shift ends there's no unit
+  // to pick, but a medic's notes are theirs for 24h (read/delete only).
+  const [notesOpen,    setNotesOpen]   = useState(false);
+  const [myNotes,      setMyNotes]     = useState([]);
+
+  const openMyNotes = () => {
+    setNotesOpen(true);
+    getPtNotes(preAuthToken)
+      .then(res => { if (Array.isArray(res.data)) setMyNotes(res.data); })
+      .catch(() => setError('Could not load your PT notes — try again'));
+  };
 
   const loadShiftUnits = (token) => {
     fetchWithTimeout(`${apiBase()}/shift/units`, {
@@ -190,7 +203,27 @@ function CrewLogin({ onBack, onSuccess }) {
           )}
         </div>
 
+        {notesOpen && (
+          <PtNotes
+            myUnit={{ id: null }}
+            units={[]}
+            myActiveCall={null}
+            notes={myNotes}
+            authToken={preAuthToken}
+            canSend={false}
+            onNoteSent={() => {}}
+            onNoteViewed={(id, readAt) => setMyNotes(prev => prev.map(n =>
+              n.id === id && !n.read_at && n.direction === 'received' ? { ...n, read_at: readAt || new Date().toISOString() } : n))}
+            onNoteDeleted={(id) => setMyNotes(prev => prev.filter(n => n.id !== id))}
+            onClose={() => setNotesOpen(false)}
+          />
+        )}
+
         <div className="px-3 pb-3 border-t border-gray-700 pt-3 space-y-2">
+          <button onClick={openMyNotes}
+            className="w-full py-2.5 rounded-xl bg-gray-700 hover:bg-gray-600 border border-gray-600 text-gray-200 text-sm font-semibold transition-colors">
+            📝 My PT Notes
+          </button>
           <button onClick={() => { setStep('add'); setError(''); setNewNumber(''); }}
             className="w-full py-2.5 rounded-xl bg-gray-700 hover:bg-gray-600 border border-gray-600 text-gray-300 hover:text-white text-sm font-medium transition-colors">
             + My unit isn't listed

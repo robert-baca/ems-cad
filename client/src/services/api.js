@@ -35,10 +35,13 @@ export const clearUnitGps = (unitId) => api.delete(`/units/${unitId}/gps`);
 export const pingUnit = (unitId) => api.post(`/units/${unitId}/ping`);
 export const sendBroadcast = (message) => api.post('/broadcast', { message });
 export const getBroadcasts = () => api.get('/broadcasts');
-export const getPtNotes = () => api.get('/pt-notes');
+// PT notes can also be read/deleted with the sign-in screen's personnel-only
+// token (no unit), passed as `token` -- see verifyPtNotePerson on the server.
+const asToken = (token) => (token ? { headers: { Authorization: `Bearer ${token}` } } : undefined);
+export const getPtNotes = (token) => api.get('/pt-notes', asToken(token));
 export const sendPtNote = (data) => api.post('/pt-notes', data);
-export const viewPtNote = (id) => api.post(`/pt-notes/${id}/view`);
-export const deletePtNote = (id) => api.delete(`/pt-notes/${id}`);
+export const viewPtNote = (id, token) => api.post(`/pt-notes/${id}/view`, undefined, asToken(token));
+export const deletePtNote = (id, token) => api.delete(`/pt-notes/${id}`, asToken(token));
 
 // Ambient listening pilot. The recording goes up as raw WAV; transcription
 // plus drafting can take a minute or two, so it gets a much longer timeout.

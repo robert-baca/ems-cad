@@ -351,7 +351,7 @@ export default function ScribeTest({ myUnit, units, myActiveCall, canRecord, onN
       for (const k of Object.keys(VITAL_LABELS)) if (v[k]) fields[k] = v[k];
     }
     // The whole report rides along so the note has everything; it's purged
-    // with the rest of the note after 8 hours.
+    // with the rest of the note after 24 hours.
     // (Without a recording the fields already say everything.)
     const report = recorded ? reportText() : '';
     if (report) fields.report = report.slice(0, 10000);

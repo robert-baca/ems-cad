@@ -612,6 +612,10 @@ async function initDb() {
       read_at TEXT
     )
   `);
+  // Who the note belongs to, as people (see PT NOTES) -- null on notes from
+  // before this was recorded.
+  await pool.query(`ALTER TABLE pt_notes ADD COLUMN IF NOT EXISTS from_personnel_id TEXT`);
+  await pool.query(`ALTER TABLE pt_notes ADD COLUMN IF NOT EXISTS to_personnel_id TEXT`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS pt_note_access_log (
       id SERIAL PRIMARY KEY,
@@ -945,6 +949,13 @@ function verifyToken(req, res, next) {
     return res.status(401).json({ error: reason === 'revoked' ? 'Token has been revoked — please sign in again' : 'Invalid token' });
   }
   req.user = user;
+  // Who's signed in on each unit right now, so a PT note sent to that unit
+  // can be addressed to the person (to_personnel_id). In-memory; every crew
+  // request refreshes it.
+  if (user.role === 'crew' && user.unit_id && user.personnel_id != null) {
+    const u = units.find(x => x.id === user.unit_id);
+    if (u) u._crew_personnel_id = String(user.personnel_id);
+  }
   next();
 }
 
@@ -1703,15 +1714,20 @@ app.get('/api/broadcasts', verifyToken, (req, res) => {
 
 // ── PT NOTES: patient handoff between medics ─────────────────────────
 // Protected health information. Rules this section keeps:
-//  - readable only by the sending and receiving unit (not dispatch, not the
-//    display board, not other crews) -- and only notes sent during the
-//    current shift, so the next crew on that unit can't read yesterday's
+//  - a note belongs to the *people* on it -- the medic who sent/saved it and
+//    the medic it was sent to (from/to_personnel_id) -- not to a unit or a
+//    shift. They can still open it after the shift ends, after signing out
+//    and back in, or from another unit, so charting can be finished after
+//    the park closes (2026-10-11: ending the shift locked a medic out of a
+//    saved note until it was purged). The next crew on the same unit can't
+//    see it. Notes from before this change have no personnel ids and keep
+//    the old rule: same unit, current shift.
 //  - never logged to the console, never emitted to dispatcher/display
 //    rooms, never put in push text (that goes via Apple/Google and shows on
 //    the lock screen) -- the push only says who it's from
 //  - deleted PT_NOTE_RETENTION_MS after sending; the access log (who
 //    created/viewed which note id, when) is kept and holds no patient data
-const PT_NOTE_RETENTION_MS = 8 * 60 * 60 * 1000;
+const PT_NOTE_RETENTION_MS = 24 * 60 * 60 * 1000;
 const PT_NOTE_FIELDS = ['name', 'dob', 'age', 'sex', 'location', 'address', 'phone', 'medical_hx', 'allergies', 'medications', 'notes',
   // one optional set of vitals
   'vitals_time', 'bp', 'hr', 'rr', 'spo2', 'bgl', 'gcs', 'pain', 'temp',
@@ -1721,17 +1737,11 @@ const PT_NOTE_FIELDS = ['name', 'dob', 'age', 'sex', 'location', 'address', 'pho
   'title'];
 const PT_NOTE_FIELD_MAX = { report: 10000, title: 80 };
 
-function logPtNoteAccess(noteId, action, user) {
+function logPtNoteAccess(noteId, action, person) {
   pool.query(
     'INSERT INTO pt_note_access_log (note_id, action, unit_id, unit_number, personnel) VALUES ($1, $2, $3, $4, $5)',
-    [noteId, action, user.unit_id || null, user.unit_number || null, user.name || user.full_name || user.username || null]
+    [noteId, action, person.unit_id || null, person.unit_number || null, person.name || person.full_name || person.username || null]
   ).catch(err => console.error('[pt-notes] access log write failed:', err.message));
-}
-
-function ptNoteVisibleSince() {
-  const retentionStart = Date.now() - PT_NOTE_RETENTION_MS;
-  const shiftStart = currentShift && !currentShift.ended_at ? new Date(currentShift.started_at).getTime() : 0;
-  return new Date(Math.max(retentionStart, shiftStart)).toISOString();
 }
 
 async function purgeOldPtNotes() {
@@ -1744,6 +1754,56 @@ async function purgeOldPtNotes() {
   }
 }
 
+// Reading your notes works with a unit sign-in *or* the personnel-only
+// sign-in from step 1 of crew login -- after the shift ends there are no
+// units to pick, and a medic who signed out still needs their notes.
+// Sending still needs a unit (verifyToken on POST).
+function verifyPtNotePerson(req, res, next) {
+  const auth = req.headers.authorization;
+  if (!auth?.startsWith('Bearer ')) return res.status(401).json({ error: 'No token' });
+  const raw = auth.slice(7);
+  const { user } = checkSessionToken(raw);
+  if (user) {
+    if (user.role !== 'crew' || user.personnel_id == null) return res.status(403).json({ error: 'Forbidden' });
+    req.person = { personnel_id: String(user.personnel_id), name: user.name, unit_id: user.unit_id, unit_number: user.unit_number };
+    return next();
+  }
+  let decoded;
+  try { decoded = jwt.verify(raw, JWT_SECRET); } catch { return res.status(401).json({ error: 'Invalid token' }); }
+  if (isRevoked(decoded) || decoded.unit_id || decoded.personnel_id == null)
+    return res.status(401).json({ error: 'Invalid token' });
+  req.person = { personnel_id: String(decoded.personnel_id), name: decoded.name, unit_id: null, unit_number: null };
+  next();
+}
+
+// Who is on a note, relative to `person`. Notes from before personnel ids
+// were recorded fall back to the unit, limited to the current shift.
+function ptNoteParty(n, person) {
+  const legacyOk = !!person.unit_id && (!currentShift || !!currentShift.ended_at || n.created_at >= currentShift.started_at);
+  const fromMe = n.from_personnel_id ? n.from_personnel_id === person.personnel_id : (legacyOk && n.from_unit_id === person.unit_id);
+  const toMe = n.to_personnel_id ? n.to_personnel_id === person.personnel_id : (legacyOk && n.to_unit_id === person.unit_id);
+  return { direction: fromMe && toMe ? 'saved' : toMe ? 'received' : fromMe ? 'sent' : null };
+}
+
+const ptNoteRetentionStart = () => new Date(Date.now() - PT_NOTE_RETENTION_MS).toISOString();
+
+async function loadPtNoteFor(id, person) {
+  const r = await pool.query('SELECT * FROM pt_notes WHERE id = $1 AND created_at >= $2', [id, ptNoteRetentionStart()]);
+  const n = r.rows[0];
+  if (!n) return null;
+  const party = ptNoteParty(n, person);
+  return party.direction ? { n, party } : null;
+}
+
+// Socket rooms for the people on a note (crews join person:<id> in
+// join:crew), falling back to unit rooms for notes without personnel ids.
+function ptNoteRooms(n, which) {
+  const rooms = [];
+  if (which !== 'to') rooms.push(n.from_personnel_id ? `person:${n.from_personnel_id}` : `crew:${n.from_unit_id}`);
+  if (which !== 'from') rooms.push(n.to_personnel_id ? `person:${n.to_personnel_id}` : `crew:${n.to_unit_id}`);
+  return rooms;
+}
+
 app.post('/api/pt-notes', verifyToken, async (req, res) => {
   if (req.user.role !== 'crew') return res.status(403).json({ error: 'Forbidden' });
   const from = units.find(u => u.id === req.user.unit_id);
@@ -1753,6 +1813,7 @@ app.post('/api/pt-notes', verifyToken, async (req, res) => {
   // Sending to your own unit = saving it for yourself: no push, no alert,
   // and it starts out read so it never shows as "new".
   const toSelf = to.id === from.id;
+  const me = req.user.personnel_id != null ? String(req.user.personnel_id) : null;
 
   const fields = {};
   for (const k of PT_NOTE_FIELDS) {
@@ -1762,6 +1823,8 @@ app.post('/api/pt-notes', verifyToken, async (req, res) => {
   if (!Object.keys(fields).length) return res.status(400).json({ error: 'Fill in at least one field' });
 
   // Deliberately not linked to a case (call_id/call_number stay null).
+  // The recipient is whoever is signed in on that unit right now
+  // (_crew_personnel_id, kept current by verifyToken).
   const note = {
     id: `pt-${Date.now()}-${randomUUID().slice(0, 8)}`,
     call_id: null,
@@ -1769,8 +1832,10 @@ app.post('/api/pt-notes', verifyToken, async (req, res) => {
     from_unit_id: from.id,
     from_unit_number: from.unit_number,
     from_crew: req.user.name || from.crew || null,
+    from_personnel_id: me,
     to_unit_id: to.id,
     to_unit_number: to.unit_number,
+    to_personnel_id: toSelf ? me : (to._crew_personnel_id || null),
     fields,
     created_at: new Date().toISOString(),
     read_at: null
@@ -1778,34 +1843,44 @@ app.post('/api/pt-notes', verifyToken, async (req, res) => {
   if (toSelf) note.read_at = note.created_at;
   try {
     await pool.query(
-      `INSERT INTO pt_notes (id, call_id, call_number, from_unit_id, from_unit_number, from_crew, to_unit_id, to_unit_number, fields, created_at, read_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-      [note.id, note.call_id, note.call_number, note.from_unit_id, note.from_unit_number, note.from_crew,
-       note.to_unit_id, note.to_unit_number, JSON.stringify(note.fields), note.created_at, note.read_at]
+      `INSERT INTO pt_notes (id, call_id, call_number, from_unit_id, from_unit_number, from_crew, from_personnel_id,
+                             to_unit_id, to_unit_number, to_personnel_id, fields, created_at, read_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+      [note.id, note.call_id, note.call_number, note.from_unit_id, note.from_unit_number, note.from_crew, note.from_personnel_id,
+       note.to_unit_id, note.to_unit_number, note.to_personnel_id, JSON.stringify(note.fields), note.created_at, note.read_at]
     );
   } catch (err) {
     console.error('[pt-notes] save failed:', err.message);
     return res.status(500).json({ error: 'Could not send — try again' });
   }
   logPtNoteAccess(note.id, 'create', req.user);
-  if (toSelf) return res.status(201).json(note);
+  if (toSelf) return res.status(201).json({ ...note, direction: 'saved' });
   // Only the recipient's own socket room -- the one place the full note goes.
-  io.to(`crew:${to.id}`).emit('pt_note:received', note);
+  io.to(ptNoteRooms(note, 'to')).emit('pt_note:received', { ...note, direction: 'received' });
   sendPushToUnit(to, {
     title: `📋 Patient notes from ${from.unit_number}`,
     body: 'Open the app to view'
   }).catch(() => {});
-  res.status(201).json(note);
+  res.status(201).json({ ...note, direction: 'sent' });
 });
 
-app.get('/api/pt-notes', verifyToken, async (req, res) => {
-  if (req.user.role !== 'crew') return res.status(403).json({ error: 'Forbidden' });
+app.get('/api/pt-notes', verifyPtNotePerson, async (req, res) => {
+  const p = req.person;
   try {
+    // Narrow in SQL (mine by person, or legacy by unit), then apply the
+    // exact rule in ptNoteParty.
     const r = await pool.query(
-      `SELECT * FROM pt_notes WHERE (to_unit_id = $1 OR from_unit_id = $1) AND created_at >= $2 ORDER BY created_at DESC`,
-      [req.user.unit_id, ptNoteVisibleSince()]
+      `SELECT * FROM pt_notes
+        WHERE created_at >= $1
+          AND (from_personnel_id = $2 OR to_personnel_id = $2
+               OR (from_personnel_id IS NULL AND from_unit_id = $3)
+               OR (to_personnel_id IS NULL AND to_unit_id = $3))
+        ORDER BY created_at DESC`,
+      [ptNoteRetentionStart(), p.personnel_id, p.unit_id || '']
     );
-    res.json(r.rows);
+    res.json(r.rows
+      .map(n => ({ ...n, direction: ptNoteParty(n, p).direction }))
+      .filter(n => n.direction));
   } catch (err) {
     console.error('[pt-notes] list failed:', err.message);
     res.status(500).json({ error: 'Could not load patient notes' });
@@ -1814,19 +1889,17 @@ app.get('/api/pt-notes', verifyToken, async (req, res) => {
 
 // Opening a note: logged every time (who viewed it), and the first view by
 // the recipient marks it read.
-app.post('/api/pt-notes/:id/view', verifyToken, async (req, res) => {
-  if (req.user.role !== 'crew') return res.status(403).json({ error: 'Forbidden' });
+app.post('/api/pt-notes/:id/view', verifyPtNotePerson, async (req, res) => {
   try {
-    const r = await pool.query('SELECT to_unit_id, from_unit_id, read_at, created_at FROM pt_notes WHERE id = $1', [req.params.id]);
-    const n = r.rows[0];
-    if (!n || (n.to_unit_id !== req.user.unit_id && n.from_unit_id !== req.user.unit_id) || n.created_at < ptNoteVisibleSince())
-      return res.status(404).json({ error: 'Not found' });
-    logPtNoteAccess(req.params.id, 'view', req.user);
+    const found = await loadPtNoteFor(req.params.id, req.person);
+    if (!found) return res.status(404).json({ error: 'Not found' });
+    const { n, party } = found;
+    logPtNoteAccess(req.params.id, 'view', req.person);
     let readAt = n.read_at;
-    if (!readAt && n.to_unit_id === req.user.unit_id) {
+    if (!readAt && party.direction === 'received') {
       readAt = new Date().toISOString();
       await pool.query('UPDATE pt_notes SET read_at = $1 WHERE id = $2', [readAt, req.params.id]);
-      io.to(`crew:${n.from_unit_id}`).emit('pt_note:read', { id: req.params.id, read_at: readAt });
+      io.to(ptNoteRooms(n, 'from')).emit('pt_note:read', { id: req.params.id, read_at: readAt });
     }
     res.json({ ok: true, read_at: readAt });
   } catch (err) {
@@ -1835,19 +1908,16 @@ app.post('/api/pt-notes/:id/view', verifyToken, async (req, res) => {
   }
 });
 
-// Either unit on a note can delete it, and it's gone for both -- no copy is
+// Either medic on a note can delete it, and it's gone for both -- no copy is
 // left in the other medic's Sent/Received. The access log keeps the
 // 'delete' entry (no patient details).
-app.delete('/api/pt-notes/:id', verifyToken, async (req, res) => {
-  if (req.user.role !== 'crew') return res.status(403).json({ error: 'Forbidden' });
+app.delete('/api/pt-notes/:id', verifyPtNotePerson, async (req, res) => {
   try {
-    const r = await pool.query('SELECT to_unit_id, from_unit_id, created_at FROM pt_notes WHERE id = $1', [req.params.id]);
-    const n = r.rows[0];
-    if (!n || (n.to_unit_id !== req.user.unit_id && n.from_unit_id !== req.user.unit_id) || n.created_at < ptNoteVisibleSince())
-      return res.status(404).json({ error: 'Not found' });
+    const found = await loadPtNoteFor(req.params.id, req.person);
+    if (!found) return res.status(404).json({ error: 'Not found' });
     await pool.query('DELETE FROM pt_notes WHERE id = $1', [req.params.id]);
-    logPtNoteAccess(req.params.id, 'delete', req.user);
-    io.to(`crew:${n.from_unit_id}`).to(`crew:${n.to_unit_id}`).emit('pt_note:deleted', { id: req.params.id });
+    logPtNoteAccess(req.params.id, 'delete', req.person);
+    io.to(ptNoteRooms(found.n)).emit('pt_note:deleted', { id: req.params.id });
     res.json({ ok: true });
   } catch (err) {
     console.error('[pt-notes] delete failed:', err.message);
@@ -3230,6 +3300,7 @@ app.post('/api/shift/end', verifyToken, async (req, res) => {
     u.push_platform = null;
     u.push_status   = null;
     u.push_error    = null;
+    u._crew_personnel_id = null; // next shift's PT notes go to next shift's crew
     persist(saveUnit(u), 'unit ' + u.id);
   });
 
@@ -4417,6 +4488,12 @@ io.on('connection', (socket) => {
     }
     socket.join(`crew:${unit_id}`);
     socket.join('crew_all');
+    // PT notes are addressed to people, not units (see PT NOTES).
+    if (socket.jwtUser.personnel_id != null) {
+      socket.join(`person:${socket.jwtUser.personnel_id}`);
+      const u = units.find(x => x.id === unit_id);
+      if (u) u._crew_personnel_id = String(socket.jwtUser.personnel_id);
+    }
     const myCall = getUnitActiveCall(unit_id);
     if (myCall) socket.emit('call:assigned_to_me', myCall);
   });
