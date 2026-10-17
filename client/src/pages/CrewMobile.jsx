@@ -26,7 +26,7 @@ import { isNative as isNativePlatform, nativeCall, nativeCanRecord } from '../li
 import { enqueueOfflineAction, subscribeOfflineQueue, getOfflineQueue } from '../lib/offlineActionQueue';
 import EmergencyPanel from '../components/crew/EmergencyPanel';
 import { startEmergency, cancelEmergency, getActiveEmergencies } from '../services/api';
-import { getDuties, getUnits, getAllCrewMessages, submitDutyReport } from '../services/api';
+import { getDuties, getUnits, getAllCrewMessages, submitDutyReport, setDutyDone } from '../services/api';
 import CrewDuties from '../components/crew/CrewDuties';
 import CrewDutyCheck from '../components/crew/CrewDutyCheck';
 
@@ -750,7 +750,7 @@ export default function CrewMobile() {
       getDuties()
         .then(res => {
           if (!Array.isArray(res.data?.duties)) return;
-          setDutiesState({ enabled: res.data.enabled, duties: res.data.duties });
+          setDutiesState({ enabled: res.data.enabled, duties: res.data.duties, done: res.data.done || [] });
           setIsDutyAdmin(!!res.data.admin);
         })
         .catch(() => {});
@@ -1186,14 +1186,20 @@ export default function CrewMobile() {
 
         {dutiesState.enabled && (
           <CrewDuties
-            // "Every unit" duties skip carts, matching the server.
-            duties={dutiesState.duties.filter(d => d.unit_ids.length ? d.unit_ids.includes(myUnit.id) : myUnit.unit_type !== 'Cart')}
+            // Only handed-out duties; "every unit" ones skip carts, matching the server.
+            duties={dutiesState.duties.filter(d => d.assigned && (d.unit_ids.length ? d.unit_ids.includes(myUnit.id) : myUnit.unit_type !== 'Cart'))}
+            done={(dutiesState.done || []).filter(c => c.unit_id === myUnit.id)}
+            onToggle={async (dutyId, done) => {
+              try { await setDutyDone(dutyId, done); return null; }
+              catch (err) { return err?.response?.data?.error || 'Could not save — check connection and try again'; }
+            }}
           />
         )}
 
         {isDutyAdmin && (
           <CrewDutyCheck
-            duties={dutiesState.duties}
+            duties={dutiesState.duties.filter(d => d.assigned)}
+            done={dutiesState.done || []}
             units={units}
             onSubmit={async (checkedIds, notes) => {
               try { await submitDutyReport(checkedIds, notes); return null; }

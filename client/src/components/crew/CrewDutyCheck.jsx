@@ -1,12 +1,15 @@
 import { useState } from 'react';
+import { dutyProgress } from '../../lib/dutyProgress';
+import DutyProgressList from '../duties/DutyProgressList';
 
 const byNumber = (a, b) => a.localeCompare(b, undefined, { numeric: true });
 
 // Admin-only: every unit's duties with checkboxes, submitted to dispatch as a
 // report. Checkmarks are local until Submit and clear after a successful one.
 // Stays mounted (collapsed) so a half-done check survives opening other screens.
-export default function CrewDutyCheck({ duties, units, onSubmit }) {
+export default function CrewDutyCheck({ duties, done = [], units, onSubmit }) {
   const [open,      setOpen]      = useState(false);
+  const [view,      setView]      = useState('left'); // 'left' (crews' live checkoffs) | 'check'
   const [checked,   setChecked]   = useState(() => new Set());
   const [notes,     setNotes]     = useState('');
   const [busy,      setBusy]      = useState(false);
@@ -36,6 +39,7 @@ export default function CrewDutyCheck({ duties, units, onSubmit }) {
     return next;
   });
   const doneCount = duties.filter(d => checked.has(d.id)).length;
+  const { left } = dutyProgress(duties, done, units);
 
   const submit = async () => {
     setBusy(true);
@@ -56,12 +60,23 @@ export default function CrewDutyCheck({ duties, units, onSubmit }) {
       >
         <span className="text-indigo-200 text-sm font-semibold">📋 Duty check (all units)</span>
         <span className="flex items-center gap-2">
-          {doneCount > 0 && <span className="text-xs text-indigo-300">{doneCount}/{duties.length}</span>}
+          <span className={`text-xs ${left ? 'text-amber-300' : 'text-green-400'}`}>{left ? `${left} left` : 'all done ✓'}</span>
           <span className="text-gray-500 text-xs">{open ? 'Hide' : 'Show'}</span>
         </span>
       </button>
       {open && (
         <div className="px-3 pb-3 space-y-3">
+          <div className="flex gap-2">
+            {[['left', "What's left"], ['check', `Inspect & report${doneCount ? ` (${doneCount}/${duties.length})` : ''}`]].map(([id, label]) => (
+              <button key={id} onClick={() => setView(id)}
+                className={`flex-1 py-2 rounded-lg text-xs font-semibold ${view === id ? 'bg-indigo-600 text-white' : 'bg-gray-800 text-gray-300 border border-gray-700'}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+          {view === 'left' ? (
+            <DutyProgressList duties={duties} done={done} units={units} />
+          ) : (<>
           {sentAt && !doneCount && (
             <div className="px-3 py-2 rounded-lg bg-green-900/50 border border-green-700 text-green-200 text-xs">
               ✅ Report sent to dispatch at {sentAt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
@@ -106,6 +121,7 @@ export default function CrewDutyCheck({ duties, units, onSubmit }) {
           >
             {busy ? 'Sending…' : `Submit report (${doneCount}/${duties.length} done)`}
           </button>
+          </>)}
         </div>
       )}
     </div>

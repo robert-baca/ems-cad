@@ -62,7 +62,9 @@ export const markBroadcastRead = (id) => api.post(`/broadcasts/${id}/read`);
 // Cleaning duties
 export const getDuties = () => api.get('/duties');
 export const setDutiesEnabled = (enabled) => api.put('/duties/settings', { enabled });
-export const addDuty = (text, unit_ids) => api.post('/duties', { text, unit_ids });
+export const addDuty = (text, unit_ids, assigned = true) => api.post('/duties', { text, unit_ids, assigned });
+export const setDutyAssignment = (id, assigned, unit_ids = []) => api.put(`/duties/${id}/assignment`, { assigned, unit_ids });
+export const setDutyDone = (id, done) => api.put(`/duties/${id}/done`, { done });
 export const deleteDuty = (id) => api.delete(`/duties/${id}`);
 export const submitDutyReport = (checked_ids, notes) => api.post('/duties/reports', { checked_ids, notes });
 export const getDutyReports = () => api.get('/duties/reports');

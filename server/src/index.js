@@ -351,6 +351,7 @@ let emergencies = [];
 // Cleaning duties dispatch posts to crews (see the Duties section below).
 let duties = [];
 let dutiesEnabled = false;
+let dutyDone = []; // [{ duty_id, unit_id, done_at, done_by }] for the current shift
 let nextCallNum  = 100;
 const gpsDiscardLastLog  = new Map(); // unit_id → last discard log timestamp
 
@@ -577,6 +578,22 @@ async function initDb() {
     )
   `);
 
+  // assigned = false: in the "to hand out" pile, not shown to any crew.
+  // Every duty goes back to the pile when a shift starts.
+  await pool.query(`ALTER TABLE duties ADD COLUMN IF NOT EXISTS assigned BOOLEAN DEFAULT true`);
+
+  // Crews' own "done" checkmarks, one row per duty per unit. Cleared when a
+  // shift starts (history lives in duty_reports).
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS duty_completions (
+      duty_id TEXT NOT NULL,
+      unit_id TEXT NOT NULL,
+      done_at TEXT,
+      done_by TEXT,
+      PRIMARY KEY (duty_id, unit_id)
+    )
+  `);
+
   // Duty checks submitted by admins from the crew app. items is a snapshot
   // (duty text, unit, crew name, checked) so a report still reads right
   // after the duty list or roster changes.
@@ -732,7 +749,9 @@ async function initDb() {
   broadcasts = bcRes.rows.map(b => ({ ...b, target_unit_ids: b.target_unit_ids || [], reads: b.reads || {} }));
 
   const dutiesRes = await pool.query('SELECT * FROM duties ORDER BY created_at');
-  duties = dutiesRes.rows.map(d => ({ ...d, unit_ids: d.unit_ids || [] }));
+  duties = dutiesRes.rows.map(d => ({ ...d, unit_ids: d.unit_ids || [], assigned: d.assigned !== false }));
+  const doneRes = await pool.query('SELECT * FROM duty_completions');
+  dutyDone = doneRes.rows;
   const dutiesFlag = await pool.query("SELECT value FROM app_settings WHERE key = 'duties_enabled'");
   dutiesEnabled = dutiesFlag.rows[0]?.value === 'true';
 
@@ -850,10 +869,10 @@ async function saveBroadcast(b) {
 
 async function saveDuty(d) {
   await pool.query(
-    `INSERT INTO duties (id, text, unit_ids, created_at, created_by)
-     VALUES ($1, $2, $3, $4, $5)
-     ON CONFLICT (id) DO UPDATE SET text = EXCLUDED.text, unit_ids = EXCLUDED.unit_ids`,
-    [d.id, d.text, JSON.stringify(d.unit_ids), d.created_at, d.created_by]
+    `INSERT INTO duties (id, text, unit_ids, created_at, created_by, assigned)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (id) DO UPDATE SET text = EXCLUDED.text, unit_ids = EXCLUDED.unit_ids, assigned = EXCLUDED.assigned`,
+    [d.id, d.text, JSON.stringify(d.unit_ids), d.created_at, d.created_by, d.assigned]
   );
 }
 
@@ -2412,17 +2431,47 @@ app.post('/api/broadcasts/:id/read', verifyToken, async (req, res) => {
 });
 
 // ── Cleaning duties ──────────────────────────────────────────────────
-// Dispatch turns the feature on and writes the duties (for every unit or
-// specific ones); each crew sees a read-only list of their own.
+// Dispatch turns the feature on and keeps a list of duties. A new duty sits
+// in the "to hand out" pile (assigned = false) until dispatch assigns it to
+// every unit or specific ones; each crew then sees and checks off their own.
 // "Every unit" leaves out carts, same as broadcasts; a cart can still be picked by name.
+// When a shift starts every duty goes back to the pile and checkmarks clear.
 const dutyAppliesTo = (d, unitId) =>
-  d.unit_ids.length ? d.unit_ids.includes(unitId) : !isCartUnit(units.find(u => u.id === unitId));
+  d.assigned && (d.unit_ids.length ? d.unit_ids.includes(unitId) : !isCartUnit(units.find(u => u.id === unitId)));
 
 function emitDuties() {
-  const state = { enabled: dutiesEnabled, duties };
+  const state = { enabled: dutiesEnabled, duties, done: dutyDone };
   io.to('dispatchers').emit('duties:updated', state);
   io.to('crew_all').emit('duties:updated', state);
 }
+
+// Drop checkmarks that no longer match an assignment (duty removed, moved
+// back to the pile, or taken off that unit).
+function pruneDutyDone() {
+  const keep = dutyDone.filter(c => {
+    const d = duties.find(x => x.id === c.duty_id);
+    return d && dutyAppliesTo(d, c.unit_id);
+  });
+  if (keep.length === dutyDone.length) return;
+  const gone = dutyDone.filter(c => !keep.includes(c));
+  dutyDone = keep;
+  gone.forEach(c => persist(
+    pool.query('DELETE FROM duty_completions WHERE duty_id = $1 AND unit_id = $2', [c.duty_id, c.unit_id]),
+    `duty completion ${c.duty_id}/${c.unit_id}`
+  ));
+}
+
+function resetDutiesForNewShift() {
+  duties.forEach(d => { d.assigned = false; d.unit_ids = []; });
+  dutyDone = [];
+  persist(pool.query(`UPDATE duties SET assigned = false, unit_ids = '[]'`), 'duties reset');
+  persist(pool.query('DELETE FROM duty_completions'), 'duty completions reset');
+  emitDuties();
+}
+
+const pickUnitIds = (raw) => Array.isArray(raw)
+  ? [...new Set(raw)].filter(id => units.some(u => u.id === id))
+  : [];
 
 // Admin = access_role 'admin' on the sfotems.com personnel record (same bar
 // as wayfinding admin). Looked up live rather than baked into the 30-day
@@ -2453,11 +2502,12 @@ app.get('/api/duties', verifyToken, async (req, res) => {
     return res.json({
       enabled: dutiesEnabled,
       duties: admin ? duties : dutiesEnabled ? duties.filter(d => dutyAppliesTo(d, req.user.unit_id)) : [],
+      done: admin ? dutyDone : dutyDone.filter(c => c.unit_id === req.user.unit_id),
       admin
     });
   }
   if (!['dispatcher', 'overwatch'].includes(req.user.role)) return res.status(403).json({ error: 'Forbidden' });
-  res.json({ enabled: dutiesEnabled, duties });
+  res.json({ enabled: dutiesEnabled, duties, done: dutyDone });
 });
 
 app.put('/api/duties/settings', verifyToken, async (req, res) => {
@@ -2481,12 +2531,12 @@ app.post('/api/duties', verifyToken, async (req, res) => {
   if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
   const text = typeof req.body.text === 'string' ? req.body.text.trim().slice(0, 300) : '';
   if (!text) return res.status(400).json({ error: 'Duty text required' });
-  const unitIds = Array.isArray(req.body.unit_ids)
-    ? [...new Set(req.body.unit_ids)].filter(id => units.some(u => u.id === id))
-    : [];
+  // assigned: false puts it in the "to hand out" pile; omitted (older
+  // dispatcher builds) assigns it straight away, as before.
+  const assigned = req.body.assigned !== false;
   const duty = {
     id: `duty-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-    text, unit_ids: unitIds,
+    text, unit_ids: assigned ? pickUnitIds(req.body.unit_ids) : [], assigned,
     created_at: new Date().toISOString(), created_by: auditActor(req.user)
   };
   try {
@@ -2506,6 +2556,60 @@ app.delete('/api/duties/:id', verifyToken, async (req, res) => {
   if (idx === -1) return res.status(404).json({ error: 'Not found' });
   duties.splice(idx, 1);
   persist(pool.query('DELETE FROM duties WHERE id = $1', [req.params.id]), 'duty ' + req.params.id);
+  pruneDutyDone();
+  emitDuties();
+  res.json({ ok: true });
+});
+
+// Hand a duty out ({ assigned: true, unit_ids: [] = every unit }) or put it
+// back in the pile ({ assigned: false }).
+app.put('/api/duties/:id/assignment', verifyToken, async (req, res) => {
+  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
+  const duty = duties.find(d => d.id === req.params.id);
+  if (!duty) return res.status(404).json({ error: 'Not found' });
+  const assigned = !!req.body.assigned;
+  const unitIds = assigned ? pickUnitIds(req.body.unit_ids) : [];
+  if (assigned && Array.isArray(req.body.unit_ids) && req.body.unit_ids.length && !unitIds.length)
+    return res.status(400).json({ error: 'Those units no longer exist' });
+  const next = { ...duty, assigned, unit_ids: unitIds };
+  try {
+    await saveDuty(next);
+  } catch (err) {
+    console.error('[duties] assignment save failed:', err.message);
+    return res.status(500).json({ error: 'Could not save — try again' });
+  }
+  Object.assign(duty, next);
+  pruneDutyDone();
+  emitDuties();
+  res.json(duty);
+});
+
+// A crew checks one of its own duties off (or back on).
+app.put('/api/duties/:id/done', verifyToken, async (req, res) => {
+  if (req.user.role !== 'crew') return res.status(403).json({ error: 'Forbidden' });
+  const duty = duties.find(d => d.id === req.params.id);
+  const unitId = req.user.unit_id;
+  if (!duty || !dutyAppliesTo(duty, unitId))
+    return res.status(404).json({ error: 'That duty is no longer assigned to your unit' });
+  const done = !!req.body.done;
+  const existing = dutyDone.find(c => c.duty_id === duty.id && c.unit_id === unitId);
+  try {
+    if (done && !existing) {
+      const entry = { duty_id: duty.id, unit_id: unitId, done_at: new Date().toISOString(), done_by: req.user.name || null };
+      await pool.query(
+        `INSERT INTO duty_completions (duty_id, unit_id, done_at, done_by) VALUES ($1, $2, $3, $4)
+         ON CONFLICT (duty_id, unit_id) DO NOTHING`,
+        [entry.duty_id, entry.unit_id, entry.done_at, entry.done_by]
+      );
+      dutyDone.push(entry);
+    } else if (!done && existing) {
+      await pool.query('DELETE FROM duty_completions WHERE duty_id = $1 AND unit_id = $2', [duty.id, unitId]);
+      dutyDone = dutyDone.filter(c => c !== existing);
+    }
+  } catch (err) {
+    console.error('[duties] done save failed:', err.message);
+    return res.status(500).json({ error: 'Could not save — try again' });
+  }
   emitDuties();
   res.json({ ok: true });
 });
@@ -2514,10 +2618,11 @@ app.delete('/api/duties/:id', verifyToken, async (req, res) => {
 app.post('/api/duties/reports', verifyToken, async (req, res) => {
   if (req.user.role !== 'crew' || !(await isPersonnelAdmin(req.user.personnel_id)))
     return res.status(403).json({ error: 'Admin access required' });
-  if (!duties.length) return res.status(400).json({ error: 'There are no duties to report on' });
+  const handedOut = duties.filter(d => d.assigned);
+  if (!handedOut.length) return res.status(400).json({ error: 'There are no duties to report on' });
   const checked = new Set(Array.isArray(req.body.checked_ids) ? req.body.checked_ids : []);
   const unitFor = (id) => units.find(u => u.id === id);
-  const items = duties.map(d => {
+  const items = handedOut.map(d => {
     const assigned = d.unit_ids.length ? d.unit_ids.map(unitFor).filter(Boolean) : [];
     return {
       duty_id: d.id,
@@ -3190,6 +3295,7 @@ app.post('/api/shift/start', verifyToken, async (req, res) => {
   currentShift = newShift;
   // Broadcasts sent between shifts belonged to no shift; start clean.
   broadcasts = [];
+  resetDutiesForNewShift();
   // A weather warning still in effect gets broadcast again to the new shift.
   if (weatherBroadcastEvents?.size) { weatherBroadcastEvents.clear(); saveWeatherState(); }
   setTimeout(pollWeather, 5000);

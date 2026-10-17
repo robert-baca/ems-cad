@@ -23,6 +23,7 @@ import BroadcastModal, { receiptStats } from '../components/calls/BroadcastModal
 import SpinWheel from '../components/calls/SpinWheel';
 import { sendBroadcast, getBroadcasts, getDuties } from '../services/api';
 import DutiesModal from '../components/duties/DutiesModal';
+import { dutyProgress } from '../lib/dutyProgress';
 import { playAlert } from '../lib/alertSound';
 import EmergencyBanner from '../components/units/EmergencyBanner';
 import ReportsModal from '../components/reports/ReportsModal';
@@ -165,6 +166,10 @@ export default function DispatcherDashboard() {
     if (isOverwatch) return;
     getDuties().then(res => { if (Array.isArray(res.data?.duties)) setDutiesState(res.data); }).catch(() => {});
   }, [isOverwatch]);
+  const dutySummary = {
+    toHandOut: dutiesState.duties.filter(d => !d.assigned).length,
+    ...dutyProgress(dutiesState.duties, dutiesState.done, units),
+  };
 
   // Load current shift on mount
   useEffect(() => {
@@ -601,6 +606,15 @@ export default function DispatcherDashboard() {
               >
                 🧽 Duties
                 {!dutiesState.enabled && <span className="text-[10px] text-gray-500">(off)</span>}
+                {dutiesState.enabled && dutySummary.toHandOut > 0 && (
+                  <span className="text-[10px] text-amber-300" title="Duties not handed out yet">{dutySummary.toHandOut} to hand out</span>
+                )}
+                {dutiesState.enabled && dutySummary.total > 0 && (
+                  <span className={`text-[10px] ${dutySummary.left ? 'text-teal-300' : 'text-green-400'}`}
+                    title="Handed-out duties crews haven't checked off yet">
+                    {dutySummary.left ? `${dutySummary.left} left` : 'all done ✓'}
+                  </span>
+                )}
                 {unseenDutyReports > 0 && (
                   <span className="ml-0.5 px-1.5 rounded-full bg-amber-500 text-black text-[10px] font-bold"
                     title={`${unseenDutyReports} new duty report${unseenDutyReports === 1 ? '' : 's'}`}>
@@ -863,6 +877,7 @@ export default function DispatcherDashboard() {
         <DutiesModal
           enabled={dutiesState.enabled}
           duties={dutiesState.duties}
+          done={dutiesState.done || []}
           units={units}
           liveReports={liveDutyReports}
           initialTab={showDuties}
