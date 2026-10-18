@@ -41,7 +41,8 @@ const asToken = (token) => (token ? { headers: { Authorization: `Bearer ${token}
 export const getPtNotes = (token) => api.get('/pt-notes', asToken(token));
 export const sendPtNote = (data) => api.post('/pt-notes', data);
 export const viewPtNote = (id, token) => api.post(`/pt-notes/${id}/view`, undefined, asToken(token));
-export const deletePtNote = (id, token) => api.delete(`/pt-notes/${id}`, asToken(token));
+export const updatePtNote = (id, fields, token) => api.patch(`/pt-notes/${id}`, { fields }, asToken(token));
+export const deletePtNote =(id, token) => api.delete(`/pt-notes/${id}`, asToken(token));
 
 // Ambient listening pilot. The recording goes up as raw WAV; transcription
 // plus drafting can take a minute or two, so it gets a much longer timeout.

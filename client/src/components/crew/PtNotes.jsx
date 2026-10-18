@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { sendPtNote, viewPtNote, deletePtNote } from '../../services/api';
+import { sendPtNote, viewPtNote, updatePtNote, deletePtNote } from '../../services/api';
+import LicenseScanner from './LicenseScanner';
 
 // Patient handoff notes between medics. This is protected health
 // information: it's only ever held in memory here (never localStorage or
@@ -124,7 +125,95 @@ export function UnitPicker({ myUnit, units, myActiveCall, toId, onPick }) {
   );
 }
 
-function NoteView({ note, myUnit, units, myActiveCall, onBack, onViewed, onDeleted, onSent, authToken, canSend }) {
+// Fixing a note after it was saved or sent: every field except the
+// Listening report (that stays as the recording produced it). A license
+// scan fills just the fields it found, same as in Start Incident.
+function NoteEdit({ note, authToken, onCancel, onSaved }) {
+  const [values, setValues] = useState(() => {
+    const { report: _r, ...rest } = note.fields || {};
+    return rest;
+  });
+  const [scanning, setScanning] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const set = (k, v) => setValues(prev => ({ ...prev, [k]: v }));
+
+  const save = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      const res = await updatePtNote(note.id, values, authToken);
+      onSaved(res.data.fields, res.data.edited_at);
+    } catch (err) {
+      setError(err?.response?.status === 404 ? 'This note has expired or was removed.'
+        : err?.response?.data?.error || 'Could not save — check your connection and try again');
+      setSaving(false);
+    }
+  };
+
+  const inputCls = 'w-full bg-gray-700 text-white rounded-lg px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500';
+  return (
+    <>
+      <Header title="Edit PT Notes" onBack={onCancel} backLabel="Cancel" />
+      <div className="flex-1 overflow-y-auto p-4 space-y-3">
+        <button onClick={() => setScanning(true)}
+          className="w-full py-3 rounded-xl bg-gray-700 active:bg-gray-600 text-white text-sm font-semibold flex items-center justify-center gap-2">
+          📷 Scan Driver License / ID
+        </button>
+        <div>
+          <label className="block text-gray-400 text-xs mb-1">Title</label>
+          <input value={values.title || ''} onChange={e => set('title', e.target.value.slice(0, 80))}
+            placeholder="e.g. Titan — dizzy guest" autoComplete="off" className={inputCls} />
+        </div>
+        {FIELDS.filter(f => f.key === FIRST_VITAL || !f.vital).map(f => f.vital ? (
+          <VitalsGrid key="vitals" values={values} set={set} />
+        ) : (
+          <div key={f.key}>
+            <label className="block text-gray-400 text-xs mb-1">{f.label}</label>
+            {f.options ? (
+              <div className="flex gap-2">
+                {f.options.map(o => (
+                  <button key={o} onClick={() => set(f.key, values[f.key] === o ? '' : o)}
+                    className={`flex-1 py-2.5 rounded-lg text-sm font-semibold ${values[f.key] === o ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-300'}`}>
+                    {o}
+                  </button>
+                ))}
+              </div>
+            ) : f.multiline ? (
+              <textarea value={values[f.key] || ''} onChange={e => set(f.key, e.target.value)}
+                placeholder={f.placeholder} rows={2} className={`${inputCls} resize-none`} />
+            ) : (
+              <input value={values[f.key] || ''} onChange={e => set(f.key, e.target.value)}
+                placeholder={f.placeholder} inputMode={f.inputMode} autoComplete="off" className={inputCls} />
+            )}
+            {f.quick && !values[f.key] && (
+              <button onClick={() => set(f.key, f.quick)} className="mt-1.5 px-3 py-1 rounded-lg bg-gray-700 text-gray-300 text-xs font-bold">{f.quick}</button>
+            )}
+          </div>
+        ))}
+        {note.fields?.report && (
+          <p className="text-gray-500 text-xs">The 🎙 Listening report can't be edited — it stays as recorded.</p>
+        )}
+      </div>
+      <div className="p-4 border-t border-gray-700 flex-shrink-0 space-y-2">
+        {error && <p className="text-amber-400 text-sm text-center">{error}</p>}
+        <div className="grid grid-cols-2 gap-2">
+          <button onClick={onCancel} className="py-3 rounded-xl bg-gray-700 text-gray-200 font-semibold text-sm">Cancel</button>
+          <button onClick={save} disabled={saving}
+            className="py-3 rounded-xl bg-blue-600 active:bg-blue-700 disabled:opacity-50 text-white font-bold text-sm">
+            {saving ? 'Saving…' : '✓ Save changes'}
+          </button>
+        </div>
+      </div>
+      {scanning && (
+        <LicenseScanner onClose={() => setScanning(false)}
+          onResult={(fields) => { setScanning(false); setValues(prev => ({ ...prev, ...fields })); }} />
+      )}
+    </>
+  );
+}
+
+function NoteView({ note, myUnit, units, myActiveCall, onBack, onViewed, onDeleted, onSent, onUpdated, authToken, canSend }) {
   const dir = noteDirection(note, myUnit);
   const saved = dir === 'saved';
   const incoming = dir === 'received';
@@ -135,6 +224,7 @@ function NoteView({ note, myUnit, units, myActiveCall, onBack, onViewed, onDelet
   const [title, setTitle] = useState(note.fields?.title || '');
   const [sending, setSending] = useState(false);
   const [sentTo, setSentTo] = useState([]); // unit numbers this was sent to from here
+  const [editing, setEditing] = useState(false);
 
   // Sending a saved note (e.g. a Listening report) to another medic: a new
   // note with the same fields, so it shows in their Received like any other
@@ -181,6 +271,14 @@ function NoteView({ note, myUnit, units, myActiveCall, onBack, onViewed, onDelet
       .catch(err => setViewError(err?.response?.status === 404 ? 'This note has expired or was removed.' : ''));
   }, [note.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Keep the send-on title in step with an edited title.
+  useEffect(() => { setTitle(note.fields?.title || ''); }, [note.fields?.title]);
+
+  if (editing) return (
+    <NoteEdit note={note} authToken={authToken} onCancel={() => setEditing(false)}
+      onSaved={(fields, editedAt) => { onUpdated(note.id, fields, editedAt); setEditing(false); }} />
+  );
+
   return (
     <>
       <Header title="PT Notes" onBack={onBack} />
@@ -189,6 +287,7 @@ function NoteView({ note, myUnit, units, myActiveCall, onBack, onViewed, onDelet
           {saved ? 'Saved for yourself' : incoming ? `From ${note.from_unit_number}${note.from_crew ? ` · ${note.from_crew}` : ''}` : `To ${note.to_unit_number}`}
           {' · '}{fmtTime(note.created_at)}
           {!incoming && !saved && (note.read_at ? ` · ✓ Read ${fmtTime(note.read_at)}` : ' · Not opened yet')}
+          {note.edited_at && ` · Edited ${fmtTime(note.edited_at)}`}
         </div>
         {note.fields?.title && <div className="text-white text-lg font-bold break-words">{note.fields.title}</div>}
         {viewError && <p className="text-amber-400 text-sm">{viewError}</p>}
@@ -254,6 +353,12 @@ function NoteView({ note, myUnit, units, myActiveCall, onBack, onViewed, onDelet
             📤 Send to another medic
           </button>
         ))}
+        {!picking && (
+          <button onClick={() => { setEditing(true); setViewError(''); }}
+            className="w-full py-3 rounded-xl bg-gray-700 active:bg-gray-600 text-white font-semibold text-sm">
+            ✏️ Edit / add ID info
+          </button>
+        )}
         <button onClick={remove} disabled={deleting}
           className="w-full py-3 rounded-xl bg-red-900/50 border border-red-700 active:bg-red-900 disabled:opacity-50 text-red-200 font-semibold text-sm">
           {deleting ? 'Deleting…' : '🗑 Delete notes'}
@@ -267,7 +372,7 @@ function NoteView({ note, myUnit, units, myActiveCall, onBack, onViewed, onDelet
 // view before closing PT NOTES entirely (same pattern as BeaconMode).
 // authToken: the sign-in screen's personnel-only token, when opened from there
 // (no unit, so no sending). canSend defaults to true.
-export default function PtNotes({ myUnit, units, myActiveCall, notes, onNoteSent, onNoteViewed, onNoteDeleted, onClose, backRef, authToken, canSend = true }) {
+export default function PtNotes({ myUnit, units, myActiveCall, notes, onNoteSent, onNoteViewed, onNoteUpdated, onNoteDeleted, onClose, backRef, authToken, canSend = true }) {
   const [view, setView] = useState('list'); // list | note
   const [tab, setTab] = useState('inbox');
   const [openId, setOpenId] = useState(null);
@@ -297,7 +402,7 @@ export default function PtNotes({ myUnit, units, myActiveCall, notes, onNoteSent
     <div className="fixed inset-0 z-40 bg-gray-900 flex flex-col max-w-md mx-auto">
       {view === 'note' && openNote ? (
         <NoteView note={openNote} myUnit={myUnit} units={units} myActiveCall={myActiveCall} authToken={authToken} canSend={canSend}
-          onBack={() => setView('list')} onViewed={onNoteViewed} onSent={onNoteSent}
+          onBack={() => setView('list')} onViewed={onNoteViewed} onSent={onNoteSent} onUpdated={onNoteUpdated}
           onDeleted={(id) => { onNoteDeleted(id); setView('list'); }} />
       ) : (
         <>

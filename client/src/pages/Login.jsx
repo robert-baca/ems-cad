@@ -214,6 +214,7 @@ function CrewLogin({ onBack, onSuccess }) {
             onNoteSent={() => {}}
             onNoteViewed={(id, readAt) => setMyNotes(prev => prev.map(n =>
               n.id === id && !n.read_at && n.direction === 'received' ? { ...n, read_at: readAt || new Date().toISOString() } : n))}
+            onNoteUpdated={(id, fields, edited_at) => setMyNotes(prev => prev.map(n => n.id === id ? { ...n, fields, edited_at } : n))}
             onNoteDeleted={(id) => setMyNotes(prev => prev.filter(n => n.id !== id))}
             onClose={() => setNotesOpen(false)}
           />

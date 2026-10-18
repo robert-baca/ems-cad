@@ -633,6 +633,8 @@ async function initDb() {
   // before this was recorded.
   await pool.query(`ALTER TABLE pt_notes ADD COLUMN IF NOT EXISTS from_personnel_id TEXT`);
   await pool.query(`ALTER TABLE pt_notes ADD COLUMN IF NOT EXISTS to_personnel_id TEXT`);
+  // Set when either medic fixes a field after it was saved/sent.
+  await pool.query(`ALTER TABLE pt_notes ADD COLUMN IF NOT EXISTS edited_at TEXT`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS pt_note_access_log (
       id SERIAL PRIMARY KEY,
@@ -1924,6 +1926,34 @@ app.post('/api/pt-notes/:id/view', verifyPtNotePerson, async (req, res) => {
   } catch (err) {
     console.error('[pt-notes] view failed:', err.message);
     res.status(500).json({ error: 'Could not open note' });
+  }
+});
+
+// Either medic on a note can fix its fields (wrong age, typo'd name...).
+// The edit shows for both of them; the 24h clock still runs from when it
+// was first sent. The Listening report isn't editable -- it stays as the
+// AI wrote it -- so it's carried over unchanged.
+app.patch('/api/pt-notes/:id', verifyPtNotePerson, async (req, res) => {
+  try {
+    const found = await loadPtNoteFor(req.params.id, req.person);
+    if (!found) return res.status(404).json({ error: 'Not found' });
+    const fields = {};
+    for (const k of PT_NOTE_FIELDS) {
+      if (k === 'report') continue;
+      const v = req.body.fields?.[k];
+      if (typeof v === 'string' && v.trim()) fields[k] = v.trim().slice(0, PT_NOTE_FIELD_MAX[k] || 2000);
+    }
+    if (found.n.fields?.report) fields.report = found.n.fields.report;
+    if (!Object.keys(fields).length) return res.status(400).json({ error: 'Fill in at least one field' });
+    const editedAt = new Date().toISOString();
+    await pool.query('UPDATE pt_notes SET fields = $1, edited_at = $2 WHERE id = $3',
+      [JSON.stringify(fields), editedAt, req.params.id]);
+    logPtNoteAccess(req.params.id, 'edit', req.person);
+    io.to(ptNoteRooms(found.n)).emit('pt_note:updated', { id: req.params.id, fields, edited_at: editedAt });
+    res.json({ ok: true, fields, edited_at: editedAt });
+  } catch (err) {
+    console.error('[pt-notes] edit failed:', err.message);
+    res.status(500).json({ error: 'Could not save changes — try again' });
   }
 });
 
