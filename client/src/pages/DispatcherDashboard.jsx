@@ -6,7 +6,7 @@ import { useUnits } from '../hooks/useUnits';
 import { useCalls } from '../hooks/useCalls';
 import { useLocations } from '../hooks/useLocations';
 import { useSocket } from '../hooks/useSocket';
-import { getCallHistory } from '../services/api';
+import { getCallHistory, reopenCall } from '../services/api';
 import ParkMap from '../components/map/ParkMap';
 import MapContextMenu from '../components/map/MapContextMenu';
 import UnitPanel from '../components/units/UnitPanel';
@@ -369,6 +369,25 @@ export default function DispatcherDashboard() {
     setNewCallPin(null);
     if (call && !call.error) { setSelectedCallId(call.id); setShowHistory(false); }
     return call;
+  };
+
+  // Undo an accidental close from Call History. Returns an error string for
+  // the summary modal to show, or null once the call is back on the board.
+  const handleReopenCall = async (callId) => {
+    try {
+      const { data: call } = await reopenCall(callId);
+      // Same fallback as dispatchCall: don't depend on the socket echo alone.
+      setCalls(prev => prev.some(c => c.id === call.id)
+        ? prev.map(c => c.id === call.id ? call : c)
+        : [call, ...prev]);
+      setShowHistory(false);
+      setShowHistoryModal(false);
+      setRightOpen(true);
+      setSelectedCallId(call.id);
+      return null;
+    } catch (err) {
+      return err?.response?.data?.error || 'Failed to reopen — check connection and try again.';
+    }
   };
 
   // Still checking for shift
@@ -758,6 +777,7 @@ export default function DispatcherDashboard() {
               onClose={() => setShowHistory(false)}
               loading={historyLoading}
               onRefresh={fetchHistory}
+              onReopen={isOverwatch ? undefined : handleReopenCall}
             />
           </div>
         ) : (
@@ -921,6 +941,7 @@ export default function DispatcherDashboard() {
             onClose={() => setShowHistoryModal(false)}
             loading={historyLoading}
             onRefresh={fetchHistory}
+            onReopen={isOverwatch ? undefined : handleReopenCall}
           />
         </div>
       )}

@@ -46,7 +46,7 @@ function fmtShiftOption(shift) {
   return `${date} · ${shift.shift_label}`;
 }
 
-export default function CallHistory({ calls, units, onClose, loading, onRefresh }) {
+export default function CallHistory({ calls, units, onClose, loading, onRefresh, onReopen }) {
   const [search,        setSearch]        = useState('');
   const [filterDate,    setFilterDate]    = useState('all');
   const [filterType,    setFilterType]    = useState('');
@@ -174,6 +174,7 @@ export default function CallHistory({ calls, units, onClose, loading, onRefresh 
           call={selectedCall}
           units={units}
           onClose={() => setSelectedCall(null)}
+          onReopen={onReopen}
         />
       )}
 

@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { STATUS_COLORS, STATUS_LABELS } from '../../data/mockData';
 import GpsTrackTab from './GpsTrackTab';
 
@@ -88,8 +89,19 @@ function ReadOnlyTimeline({ call }) {
   );
 }
 
-export default function CallSummaryModal({ call, units, onClose }) {
+export default function CallSummaryModal({ call, units, onClose, onReopen }) {
+  const [confirmReopen, setConfirmReopen] = useState(false);
+  const [reopening,     setReopening]     = useState(false);
+  const [reopenError,   setReopenError]   = useState(null);
   if (!call) return null;
+
+  const handleReopen = async () => {
+    setReopening(true);
+    setReopenError(null);
+    const err = await onReopen(call.id);
+    setReopening(false);
+    if (err) setReopenError(err);
+  };
 
   const liveUnit    = units.find(u => u.id === call.assigned_unit_id);
   const unitDisplay = liveUnit?.unit_number || call.assigned_unit_number || '—';
@@ -134,6 +146,35 @@ export default function CallSummaryModal({ call, units, onClose }) {
         </div>
 
         <div className="p-5 space-y-4">
+
+          {/* Reopen — for a call closed by mistake */}
+          {onReopen && call.status === 'closed' && (
+            <div className="bg-gray-700 rounded-xl p-3">
+              {!confirmReopen ? (
+                <button onClick={() => setConfirmReopen(true)}
+                  className="w-full bg-amber-600 hover:bg-amber-500 text-white text-sm font-semibold py-2 rounded-lg">
+                  ↩ Reopen call
+                </button>
+              ) : (
+                <div className="space-y-2">
+                  <p className="text-gray-200 text-sm">
+                    Reopen Case #{call.call_number}? Its units go back on the call, and the disposition and close notes are cleared.
+                  </p>
+                  <div className="flex gap-2">
+                    <button onClick={handleReopen} disabled={reopening}
+                      className="flex-1 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white text-sm font-semibold py-2 rounded-lg">
+                      {reopening ? 'Reopening…' : 'Yes, reopen'}
+                    </button>
+                    <button onClick={() => { setConfirmReopen(false); setReopenError(null); }} disabled={reopening}
+                      className="flex-1 bg-gray-600 hover:bg-gray-500 text-white text-sm py-2 rounded-lg">
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+              {reopenError && <p className="text-red-400 text-xs mt-2">{reopenError}</p>}
+            </div>
+          )}
 
           {/* Quick stats */}
           {hasStats && (

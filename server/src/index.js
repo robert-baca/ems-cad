@@ -3202,6 +3202,81 @@ app.patch('/api/calls/:id/status', verifyToken, async (req, res) => {
   res.json(call);
 });
 
+// Undo an accidental close. Dispatcher-only -- /status above deliberately
+// refuses to move a closed call anywhere, so this is the one way back.
+// Only calls still in memory (closed this shift) can be reopened; End Shift
+// drops closed calls, and reopening last week's call would put its units
+// "on" it right now. The call resumes at whatever status its remaining
+// timestamps say, and its units rejoin at that status.
+app.post('/api/calls/:id/reopen', verifyToken, async (req, res) => {
+  if (req.user.role !== 'dispatcher') return res.status(403).json({ error: 'Forbidden' });
+  const call = calls.find(c => c.id === req.params.id);
+  if (!call) return res.status(404).json({ error: 'Only calls from the current shift can be reopened' });
+  if (call.status !== 'closed') return res.status(409).json({ error: 'Call is not closed' });
+
+  // Reopening makes the call's window open-ended again, so any call a unit
+  // was put on after this one closed now overlaps it. The primary can't
+  // be on two calls -- make the dispatcher sort that out first. A backup
+  // that has moved on is released from this call instead (same as a
+  // backup choosing Back to Available), so it stays on the call's record.
+  const { start } = getCallWindow(call);
+  const primaryConflict = call.assigned_unit_id && getUnitOverlappingCall(call.assigned_unit_id, call.id, start, null);
+  if (primaryConflict) {
+    const unit = units.find(u => u.id === call.assigned_unit_id);
+    return res.status(409).json({
+      error: `${unit ? unit.unit_number : 'The primary unit'} has been on call #${primaryConflict.call_number} since this one closed — can't reopen`
+    });
+  }
+  const newlyReleased = (call.additional_unit_ids || []).filter(uid =>
+    !isReleased(call, uid) && getUnitOverlappingCall(uid, call.id, start, null));
+
+  const before = { status: call.status, closed_at: call.closed_at, disposition: call.disposition, close_notes: call.close_notes };
+  call.closed_at   = null;
+  call.disposition = null;
+  call.close_notes = null;
+  call.status      = recalcCallStatus(call);
+  if (newlyReleased.length) call.released_unit_ids = [...(call.released_unit_ids || []), ...newlyReleased];
+  logCallChanges(call, before,
+    { status: call.status, closed_at: null, disposition: null, close_notes: null }, req.user);
+  persist(saveCall(call), 'call ' + call.id);
+
+  // Closing sent every unit to 'available'; put them back on the call.
+  const unitUpdates = [];
+  if (call.status !== 'pending') {
+    unitIdsForCallSync(call, false).forEach(uid => {
+      const unit = units.find(u => u.id === uid);
+      if (!unit) return;
+      unit.status = call.status;
+      persist(saveUnit(unit), 'unit ' + unit.id);
+      unitUpdates.push({ unit_id: unit.id, status: unit.status });
+      emitDispatch('unit:status_change', { unit_id: unit.id, status: unit.status });
+      io.to(`crew:${uid}`).emit('unit:status_change', { unit_id: uid, status: unit.status });
+    });
+  }
+
+  const changes = {
+    status: call.status, closed_at: null, disposition: null, close_notes: null,
+    released_unit_ids: call.released_unit_ids || []
+  };
+  // call:created for any board that already dropped the closed call (the
+  // display board does, so does a dispatcher who reloaded); call:updated
+  // for the ones still holding the closed copy.
+  emitDispatch('call:created', call);
+  emitDispatch('call:updated', { call_id: call.id, changes });
+  if (unitUpdates.length) emitDispatch('call:status_change', { call_id: call.id, status: call.status, unit_updates: unitUpdates });
+  unitIdsForCallSync(call, false).forEach(uid => {
+    io.to(`crew:${uid}`).emit('call:created', call);
+    io.to(`crew:${uid}`).emit('call:updated', { call_id: call.id, changes });
+    const u = units.find(x => x.id === uid);
+    if (u) sendPushToUnit(u, {
+      title: `↩ Case #${call.call_number} reopened`,
+      body: 'Dispatch reopened this call — you\'re back on it.'
+    }).catch(() => {});
+  });
+
+  res.json(call);
+});
+
 app.post('/api/calls/:id/comments', verifyToken, async (req, res) => {
   if (req.user.role !== 'dispatcher' && req.user.role !== 'crew') return res.status(403).json({ error: 'Forbidden' });
   const call = calls.find(c => c.id === req.params.id);

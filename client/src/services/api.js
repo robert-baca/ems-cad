@@ -95,6 +95,7 @@ export const updateCallStatus = (callId, status, config) =>
 export const releaseFromCall = (callId) => api.post(`/calls/${callId}/release`);
 export const closeCall = (callId, disposition, close_notes, config) =>
   api.patch(`/calls/${callId}/status`, { status: 'closed', disposition, close_notes }, config);
+export const reopenCall = (callId) => api.post(`/calls/${callId}/reopen`);
 export const updateCallTimestamps = (callId, fields) =>
   api.patch(`/calls/${callId}/timestamps`, fields);
 export const updateCallNarrative = (callId, narrative) =>
