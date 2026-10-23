@@ -18,9 +18,16 @@ body {
  * Zero-size anchor: Mapbox anchors to the coordinate at the top-left of
  * a 0×0 element, so overflow (dot + rings) never shifts the anchor point.
  * Dot and rings use top/left = -(size/2) to center themselves on the coordinate.
+ *
+ * Never set `position` or `transform` on a marker's root element (this class,
+ * .loc-marker-anchor, .new-call-pin-marker): this file loads after
+ * mapbox-gl.css, so it would override `.mapboxgl-marker { position: absolute }`.
+ * The marker then sits in normal flow, stacked below its siblings, and Mapbox's
+ * translate() lands it a fixed number of pixels off its coordinate — which
+ * reads as the pin drifting around its spot as you zoom. The absolute
+ * .mapboxgl-marker is already the containing block for the children.
  */
 .call-pin-wrapper {
-  position: relative;
   width: 0;
   height: 0;
   cursor: pointer;
@@ -78,7 +85,6 @@ body {
 
 /* Custom map location markers */
 .loc-marker-anchor {
-  position: relative;
   width: 14px;
   height: 14px;
   cursor: pointer;
