@@ -880,14 +880,18 @@ export default function CrewMobile() {
   // If it fails on native, falling back to window.open() would just trade
   // one silent no-op for another — surface a visible error instead so the
   // medic knows the tap didn't work, rather than nothing happening at all.
+  // Goes through nativeCall, not the @capacitor/browser package: the
+  // package's registerPlugin() proxy is the one lib/native.js documents as
+  // broken in this remote-loaded WebView, and its lazy chunk also 404s on any
+  // app left open across a deploy (the old page asks for a renamed file).
   const openProtocols = async () => {
-    const url = 'https://sfotems.com/protocols';
+    const url = 'https://www.sfotems.com/protocols';
     setProtocolsError('');
     if (isNative) {
       try {
-        await (await import('@capacitor/browser')).Browser.open({ url });
-      } catch {
-        setProtocolsError('Could not open Protocols — try again');
+        await nativeCall('Browser', 'open', { url });
+      } catch (err) {
+        setProtocolsError(`Could not open Protocols — try again${err?.message ? ` (${err.message})` : ''}`);
       }
       return;
     }
