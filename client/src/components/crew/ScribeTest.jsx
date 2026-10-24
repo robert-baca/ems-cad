@@ -129,7 +129,9 @@ export default function ScribeTest({ myUnit, units, myActiveCall, canRecord, onN
   const wakeRef = useRef(null);
 
   const delivered = savedToMe || sentTo.length > 0;
-  const hasDemos = !!title.trim() || Object.values(demos).some(v => v?.trim());
+  // Skips vitals_more (added vitals sets), which is a list, not a string.
+  const hasDemos = !!title.trim() || vitalSets(demos).length > 0
+    || Object.values(demos).some(v => typeof v === 'string' && v.trim());
   const busy = view === 'demos' ? hasDemos
     : view === 'review' ? !delivered : true;
   const confirmClose = () => !busy || window.confirm('Throw away this incident? Nothing has been saved.');
