@@ -3,7 +3,7 @@ import { processScribe, sendScribeFeedback, sendPtNote } from '../../services/ap
 import { startWavRecorder } from '../../lib/wavRecorder';
 import { keepScreenAwake } from '../../lib/native';
 import LicenseScanner from './LicenseScanner';
-import { UnitPicker, VitalsGrid, VITALS } from './PtNotes';
+import { UnitPicker, VitalsGrid, VITALS, vitalSets } from './PtNotes';
 
 // Start Incident (ambient listening beta). One flow: the medic enters or
 // scans the patient's demographics, gets consent, records the encounter, and
@@ -307,9 +307,11 @@ export default function ScribeTest({ myUnit, units, myActiveCall, canRecord, onN
   const fieldsEdited = () => Object.keys(edits)
     .filter(k => original(k) && edits[k] !== original(k)).length;
 
-  const hasManualVitals = VITAL_KEYS.some(k => k !== 'vitals_time' && demos[k]?.trim());
-  const manualVitalsLine = () => `${demos.vitals_time?.trim() || '--:--'} ${VITALS
-    .filter(f => f.key !== 'vitals_time' && demos[f.key]?.trim()).map(f => `${f.label} ${demos[f.key].trim()}`).join(', ')}`;
+  // Typed sets: the grid's first set (flat in demos) plus any added with "+ Add vitals".
+  const typedVitals = vitalSets(demos);
+  const hasManualVitals = typedVitals.length > 0;
+  const manualVitalsLine = (s) => `${s.vitals_time?.trim() || '--:--'} ${VITALS
+    .filter(f => f.key !== 'vitals_time' && s[f.key]?.trim()).map(f => `${f.label} ${s[f.key].trim()}`).join(', ')}`;
 
   // The whole report as plain text, saved with the PT note for reference.
   const reportText = () => {
@@ -325,7 +327,7 @@ export default function ScribeTest({ myUnit, units, myActiveCall, canRecord, onN
     ];
     if (hx.length) out.push('COMPLAINT & HISTORY', ...hx, '');
     const vitalsLines = [
-      ...(hasManualVitals ? [`${manualVitalsLine()} (entered)`] : []),
+      ...typedVitals.map(s => `${manualVitalsLine(s)} (entered)`),
       ...(draft?.vitals || []).map(v =>
         `${v.time || '--:--'} ${Object.entries(VITAL_LABELS).filter(([k]) => v[k]).map(([k, l]) => `${l} ${v[k]}`).join(', ')}`),
     ];
@@ -345,7 +347,12 @@ export default function ScribeTest({ myUnit, units, myActiveCall, canRecord, onN
     if (demos.notes?.trim()) fields.notes = demos.notes.trim();
     // Vitals the medic typed win over a set the recording heard.
     const v = hasManualVitals ? null : draft?.vitals?.[vitalsIdx];
-    if (hasManualVitals) for (const k of VITAL_KEYS) if (demos[k]?.trim()) fields[k] = demos[k].trim();
+    // The first typed set goes in the flat fields, the rest in vitals_more.
+    if (hasManualVitals) {
+      const [first, ...rest] = typedVitals;
+      for (const k of VITAL_KEYS) if (first[k]?.trim()) fields[k] = first[k].trim();
+      if (rest.length) fields.vitals_more = rest;
+    }
     if (v) {
       if (v.time) fields.vitals_time = v.time;
       for (const k of Object.keys(VITAL_LABELS)) if (v[k]) fields[k] = v[k];

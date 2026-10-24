@@ -1749,14 +1749,32 @@ app.get('/api/broadcasts', verifyToken, (req, res) => {
 //  - deleted PT_NOTE_RETENTION_MS after sending; the access log (who
 //    created/viewed which note id, when) is kept and holds no patient data
 const PT_NOTE_RETENTION_MS = 24 * 60 * 60 * 1000;
+const PT_NOTE_VITAL_KEYS = ['vitals_time', 'bp', 'hr', 'rr', 'spo2', 'bgl', 'gcs', 'pain', 'temp'];
+const PT_NOTE_MAX_EXTRA_VITALS = 5;
 const PT_NOTE_FIELDS = ['name', 'dob', 'age', 'sex', 'location', 'address', 'phone', 'medical_hx', 'allergies', 'medications', 'notes',
-  // one optional set of vitals
-  'vitals_time', 'bp', 'hr', 'rr', 'spo2', 'bgl', 'gcs', 'pain', 'temp',
+  // the first set of vitals (more go in vitals_more -- see ptNoteVitalsMore)
+  ...PT_NOTE_VITAL_KEYS,
   // the full plain-text summary from a Listen recording (see SCRIBE)
   'report',
   // optional name the sender gives a note so the recipient can tell them apart
   'title'];
 const PT_NOTE_FIELD_MAX = { report: 10000, title: 80 };
+
+// Vitals sets after the first, as [{ vitals_time, bp, ... }]. The first set
+// stays in the flat fields so older notes and clients read the same. Sets
+// with no reading (just a time) are dropped.
+function ptNoteVitalsMore(raw) {
+  if (!Array.isArray(raw)) return null;
+  const sets = raw.slice(0, PT_NOTE_MAX_EXTRA_VITALS).map(s => {
+    const set = {};
+    for (const k of PT_NOTE_VITAL_KEYS) {
+      const v = s?.[k];
+      if (typeof v === 'string' && v.trim()) set[k] = v.trim().slice(0, 40);
+    }
+    return set;
+  }).filter(s => Object.keys(s).some(k => k !== 'vitals_time'));
+  return sets.length ? sets : null;
+}
 
 function logPtNoteAccess(noteId, action, person) {
   pool.query(
@@ -1841,6 +1859,8 @@ app.post('/api/pt-notes', verifyToken, async (req, res) => {
     const v = req.body.fields?.[k];
     if (typeof v === 'string' && v.trim()) fields[k] = v.trim().slice(0, PT_NOTE_FIELD_MAX[k] || 2000);
   }
+  const moreVitals = ptNoteVitalsMore(req.body.fields?.vitals_more);
+  if (moreVitals) fields.vitals_more = moreVitals;
   if (!Object.keys(fields).length) return res.status(400).json({ error: 'Fill in at least one field' });
 
   // Deliberately not linked to a case (call_id/call_number stay null).
@@ -1943,6 +1963,8 @@ app.patch('/api/pt-notes/:id', verifyPtNotePerson, async (req, res) => {
       const v = req.body.fields?.[k];
       if (typeof v === 'string' && v.trim()) fields[k] = v.trim().slice(0, PT_NOTE_FIELD_MAX[k] || 2000);
     }
+    const moreVitals = ptNoteVitalsMore(req.body.fields?.vitals_more);
+    if (moreVitals) fields.vitals_more = moreVitals;
     if (found.n.fields?.report) fields.report = found.n.fields.report;
     if (!Object.keys(fields).length) return res.status(400).json({ error: 'Fill in at least one field' });
     const editedAt = new Date().toISOString();

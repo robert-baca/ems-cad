@@ -19,8 +19,9 @@ const FIELDS = [
   { key: 'medical_hx',  label: 'Medical history', placeholder: 'e.g. HTN, DM2, asthma', multiline: true },
   { key: 'allergies',   label: 'Allergies',       placeholder: 'e.g. PCN, latex', multiline: true, quick: 'NKDA' },
   { key: 'medications', label: 'Medications',     placeholder: 'e.g. metformin, lisinopril', multiline: true },
-  // One optional set of vitals, shown as a compact grid (see VitalsGrid) --
-  // the keys must match PT_NOTE_FIELDS on the server.
+  // Optional vitals, shown as a compact grid (see VitalsGrid) -- the keys
+  // must match PT_NOTE_VITAL_KEYS on the server. The first set lives in
+  // these flat fields; any added after it go in fields.vitals_more.
   { key: 'vitals_time', label: 'Time taken', placeholder: 'e.g. 14:32', vital: true, now: true },
   { key: 'bp',          label: 'BP',         placeholder: '120/80',     vital: true },
   { key: 'hr',          label: 'Pulse',      placeholder: '88',         vital: true, inputMode: 'numeric' },
@@ -35,13 +36,48 @@ const FIELDS = [
 export const VITALS = FIELDS.filter(f => f.vital);
 const FIRST_VITAL = VITALS[0].key;
 
+// Sets after the first, same cap as PT_NOTE_MAX_EXTRA_VITALS on the server.
+const MAX_EXTRA_VITALS = 5;
+
 const nowHHMM = () => new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
 
-// Used by Start Incident's patient-info form (ScribeTest).
+// A set counts once it has an actual reading -- a time on its own doesn't.
+export const hasVitals = (s) => VITALS.some(v => v.key !== 'vitals_time' && s?.[v.key]?.trim?.());
+
+// Every vitals set on a note, first (flat fields) to last.
+export function vitalSets(fields = {}) {
+  return [fields, ...(Array.isArray(fields.vitals_more) ? fields.vitals_more : [])].filter(hasVitals);
+}
+
+// Used by PT Notes' edit screen and Start Incident's patient-info form
+// (ScribeTest). "+ Add vitals" appends a set to values.vitals_more.
 export function VitalsGrid({ values, set }) {
+  const more = Array.isArray(values.vitals_more) ? values.vitals_more : [];
+  const setMore = (i, k, v) => set('vitals_more', more.map((s, j) => (j === i ? { ...s, [k]: v } : s)));
+  return (
+    <div className="space-y-2">
+      <VitalsSet title="Vitals" optional values={values} set={set} />
+      {more.map((s, i) => (
+        <VitalsSet key={i} title={`Vitals #${i + 2}`} values={s} set={(k, v) => setMore(i, k, v)}
+          onRemove={() => set('vitals_more', more.filter((_, j) => j !== i))} />
+      ))}
+      {more.length < MAX_EXTRA_VITALS && (
+        <button onClick={() => set('vitals_more', [...more, { vitals_time: nowHHMM() }])}
+          className="w-full py-2.5 rounded-xl border border-dashed border-gray-600 text-gray-300 active:bg-gray-800 text-sm font-semibold">
+          + Add vitals
+        </button>
+      )}
+    </div>
+  );
+}
+
+function VitalsSet({ title, optional, values, set, onRemove }) {
   return (
     <div className="bg-gray-800/60 border border-gray-700 rounded-xl p-3">
-      <div className="text-gray-300 text-xs font-semibold mb-2">Vitals <span className="text-gray-500 font-normal">— optional</span></div>
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-gray-300 text-xs font-semibold">{title}{optional && <span className="text-gray-500 font-normal"> — optional</span>}</div>
+        {onRemove && <button onClick={onRemove} className="text-gray-400 hover:text-white text-xs px-2 -mr-2">✕ Remove</button>}
+      </div>
       <div className="grid grid-cols-3 gap-2">
         {VITALS.map(f => (
           <div key={f.key} className={f.now ? 'col-span-3' : ''}>
@@ -262,8 +298,8 @@ function NoteView({ note, myUnit, units, myActiveCall, onBack, onViewed, onDelet
       setDeleting(false);
     }
   };
-  // Vitals render as one card, placed where the first filled-in vital is.
-  const firstFilledVital = VITALS.find(v => note.fields?.[v.key])?.key;
+  // Vitals render as one card per set, together where the vitals fields sit.
+  const sets = vitalSets(note.fields);
 
   useEffect(() => {
     viewPtNote(note.id, authToken)
@@ -291,20 +327,22 @@ function NoteView({ note, myUnit, units, myActiveCall, onBack, onViewed, onDelet
         </div>
         {note.fields?.title && <div className="text-white text-lg font-bold break-words">{note.fields.title}</div>}
         {viewError && <p className="text-amber-400 text-sm">{viewError}</p>}
-        {FIELDS.filter(f => note.fields?.[f.key] && (!f.vital || f.key === firstFilledVital)).map(f => f.vital ? (
-          <div key="vitals" className="bg-gray-800 rounded-xl px-3 py-2.5 border border-gray-700">
-            <div className="text-gray-400 text-[11px] uppercase tracking-wider">
-              Vitals{note.fields.vitals_time ? ` · ${note.fields.vitals_time}` : ''}
+        {FIELDS.filter(f => (f.key === FIRST_VITAL ? sets.length : !f.vital && note.fields?.[f.key])).map(f => f.vital ? (
+          sets.map((s, i) => (
+            <div key={`vitals-${i}`} className="bg-gray-800 rounded-xl px-3 py-2.5 border border-gray-700">
+              <div className="text-gray-400 text-[11px] uppercase tracking-wider">
+                Vitals{sets.length > 1 ? ` #${i + 1}` : ''}{s.vitals_time ? ` · ${s.vitals_time}` : ''}
+              </div>
+              <div className="grid grid-cols-3 gap-x-3 gap-y-1.5 mt-1">
+                {VITALS.filter(v => v.key !== 'vitals_time' && s[v.key]).map(v => (
+                  <div key={v.key}>
+                    <div className="text-gray-500 text-[11px]">{v.label}</div>
+                    <div className="text-white text-base font-semibold break-words select-text">{s[v.key]}</div>
+                  </div>
+                ))}
+              </div>
             </div>
-            <div className="grid grid-cols-3 gap-x-3 gap-y-1.5 mt-1">
-              {VITALS.filter(v => v.key !== 'vitals_time' && note.fields[v.key]).map(v => (
-                <div key={v.key}>
-                  <div className="text-gray-500 text-[11px]">{v.label}</div>
-                  <div className="text-white text-base font-semibold break-words select-text">{note.fields[v.key]}</div>
-                </div>
-              ))}
-            </div>
-          </div>
+          ))
         ) : (
           <div key={f.key} className="bg-gray-800 rounded-xl px-3 py-2.5 border border-gray-700">
             <div className="text-gray-400 text-[11px] uppercase tracking-wider">{f.label}</div>
