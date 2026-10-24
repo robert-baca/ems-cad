@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { sendPtNote, viewPtNote, updatePtNote, deletePtNote } from '../../services/api';
+import { sendPtNote, viewPtNote, updatePtNote, deletePtNote, mergePtNote } from '../../services/api';
 import LicenseScanner from './LicenseScanner';
 
 // Patient handoff notes between medics. This is protected health
@@ -36,7 +36,8 @@ const FIELDS = [
 export const VITALS = FIELDS.filter(f => f.vital);
 const FIRST_VITAL = VITALS[0].key;
 
-// Sets after the first, same cap as PT_NOTE_MAX_EXTRA_VITALS on the server.
+// Sets after the first you can add by hand. The server allows more
+// (PT_NOTE_MAX_EXTRA_VITALS) so two merged notes keep all theirs.
 const MAX_EXTRA_VITALS = 5;
 
 const nowHHMM = () => new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
@@ -249,7 +250,7 @@ function NoteEdit({ note, authToken, onCancel, onSaved }) {
   );
 }
 
-function NoteView({ note, myUnit, units, myActiveCall, onBack, onViewed, onDeleted, onSent, onUpdated, authToken, canSend }) {
+function NoteView({ note, others, myUnit, units, myActiveCall, onBack, onViewed, onDeleted, onSent, onUpdated, onMerged, authToken, canSend }) {
   const dir = noteDirection(note, myUnit);
   const saved = dir === 'saved';
   const incoming = dir === 'received';
@@ -261,6 +262,30 @@ function NoteView({ note, myUnit, units, myActiveCall, onBack, onViewed, onDelet
   const [sending, setSending] = useState(false);
   const [sentTo, setSentTo] = useState([]); // unit numbers this was sent to from here
   const [editing, setEditing] = useState(false);
+  const [merging, setMerging] = useState(false);
+  const [intoId, setIntoId] = useState('');
+  const [removeAfter, setRemoveAfter] = useState(true);
+  const [mergeBusy, setMergeBusy] = useState(false);
+
+  // Folding this note into another of yours (e.g. one sent to you into the
+  // one you started) so the patient is one report. The server does the
+  // combining (see mergePtNoteFields); then the merged note is opened.
+  const merge = async () => {
+    const into = others.find(n => n.id === intoId);
+    if (!into) { setViewError('Pick the note to merge into'); return; }
+    const gone = removeAfter && !saved ? ` It will also disappear from ${incoming ? `${note.from_unit_number}'s Sent` : `${note.to_unit_number}'s Received`}.` : '';
+    if (removeAfter && !window.confirm(`Merge into "${noteSummary(into.fields)}" and remove this note?${gone}`)) return;
+    setMergeBusy(true);
+    setViewError('');
+    try {
+      const res = await mergePtNote(into.id, note.id, removeAfter, authToken);
+      onMerged(into.id, res.data.fields, res.data.edited_at, res.data.removed ? note.id : null);
+    } catch (err) {
+      setViewError(err?.response?.status === 404 ? 'One of these notes has expired or was removed.'
+        : err?.response?.data?.error || 'Could not merge — check your connection and try again');
+      setMergeBusy(false);
+    }
+  };
 
   // Sending a saved note (e.g. a Listening report) to another medic: a new
   // note with the same fields, so it shows in their Received like any other
@@ -373,9 +398,42 @@ function NoteView({ note, myUnit, units, myActiveCall, onBack, onViewed, onDelet
               onPick={(id) => { setToId(id); setViewError(''); }} />
           </div>
         )}
+        {merging && (
+          <div className="pt-2 space-y-1.5">
+            <label className="block text-gray-400 text-xs mb-1">Merge this into</label>
+            {others.map(n => {
+              const d = noteDirection(n, myUnit);
+              return (
+                <button key={n.id} onClick={() => { setIntoId(n.id); setViewError(''); }}
+                  className={`w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-lg text-left text-sm ${
+                    intoId === n.id ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-200'}`}>
+                  <span className="font-semibold truncate">{noteSummary(n.fields)}</span>
+                  <span className="text-xs opacity-80 flex-shrink-0">
+                    {d === 'saved' ? 'Saved' : d === 'received' ? `From ${n.from_unit_number}` : `To ${n.to_unit_number}`} · {fmtTime(n.created_at)}
+                  </span>
+                </button>
+              );
+            })}
+            <label className="flex items-center gap-2 pt-2 text-gray-300 text-sm">
+              <input type="checkbox" checked={removeAfter} onChange={e => setRemoveAfter(e.target.checked)} className="w-4 h-4" />
+              Remove this note after merging
+            </label>
+            <p className="text-gray-500 text-[11px]">That note stays as it is — this one only fills in what it's missing (empty fields, vitals it doesn't have). It expires when that note does.</p>
+          </div>
+        )}
       </div>
       <div className="p-4 border-t border-gray-700 flex-shrink-0 space-y-2">
         {sentTo.length > 0 && <p className="text-green-400 text-sm text-center">✓ Sent to {sentTo.join(', ')}</p>}
+        {merging ? (
+          <div className="grid grid-cols-2 gap-2">
+            <button onClick={() => { setMerging(false); setIntoId(''); setViewError(''); }}
+              className="py-3 rounded-xl bg-gray-700 text-gray-200 font-semibold text-sm">Cancel</button>
+            <button onClick={merge} disabled={mergeBusy || !intoId}
+              className="py-3 rounded-xl bg-blue-600 active:bg-blue-700 disabled:opacity-50 text-white font-bold text-sm">
+              {mergeBusy ? 'Merging…' : '🔗 Merge'}
+            </button>
+          </div>
+        ) : <>
         {saved && canSend && (picking ? (
           <div className="grid grid-cols-2 gap-2">
             <button onClick={() => { setPicking(false); setToId(''); setViewError(''); }}
@@ -397,10 +455,17 @@ function NoteView({ note, myUnit, units, myActiveCall, onBack, onViewed, onDelet
             ✏️ Edit / add ID info
           </button>
         )}
+        {!picking && others.length > 0 && (
+          <button onClick={() => { setMerging(true); setViewError(''); }}
+            className="w-full py-3 rounded-xl bg-gray-700 active:bg-gray-600 text-white font-semibold text-sm">
+            🔗 Merge into another note
+          </button>
+        )}
         <button onClick={remove} disabled={deleting}
           className="w-full py-3 rounded-xl bg-red-900/50 border border-red-700 active:bg-red-900 disabled:opacity-50 text-red-200 font-semibold text-sm">
           {deleting ? 'Deleting…' : '🗑 Delete notes'}
         </button>
+        </>}
       </div>
     </>
   );
@@ -439,9 +504,15 @@ export default function PtNotes({ myUnit, units, myActiveCall, notes, onNoteSent
   return (
     <div className="fixed inset-0 z-40 bg-gray-900 flex flex-col max-w-md mx-auto">
       {view === 'note' && openNote ? (
-        <NoteView note={openNote} myUnit={myUnit} units={units} myActiveCall={myActiveCall} authToken={authToken} canSend={canSend}
+        <NoteView key={openNote.id} note={openNote} others={notes.filter(n => n.id !== openNote.id)}
+          myUnit={myUnit} units={units} myActiveCall={myActiveCall} authToken={authToken} canSend={canSend}
           onBack={() => setView('list')} onViewed={onNoteViewed} onSent={onNoteSent} onUpdated={onNoteUpdated}
-          onDeleted={(id) => { onNoteDeleted(id); setView('list'); }} />
+          onDeleted={(id) => { onNoteDeleted(id); setView('list'); }}
+          onMerged={(intoId, fields, editedAt, removedId) => {
+            onNoteUpdated(intoId, fields, editedAt);
+            if (removedId) onNoteDeleted(removedId);
+            setOpenId(intoId);
+          }} />
       ) : (
         <>
           <div className="flex items-center justify-between px-4 pt-[calc(0.75rem+env(safe-area-inset-top))] pb-3 border-b border-gray-700 flex-shrink-0">

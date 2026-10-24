@@ -1750,7 +1750,9 @@ app.get('/api/broadcasts', verifyToken, (req, res) => {
 //    created/viewed which note id, when) is kept and holds no patient data
 const PT_NOTE_RETENTION_MS = 24 * 60 * 60 * 1000;
 const PT_NOTE_VITAL_KEYS = ['vitals_time', 'bp', 'hr', 'rr', 'spo2', 'bgl', 'gcs', 'pain', 'temp'];
-const PT_NOTE_MAX_EXTRA_VITALS = 5;
+// Room for two full notes' worth when they're merged (the client's
+// "+ Add vitals" stops at 6 sets).
+const PT_NOTE_MAX_EXTRA_VITALS = 11;
 const PT_NOTE_FIELDS = ['name', 'dob', 'age', 'sex', 'location', 'address', 'phone', 'medical_hx', 'allergies', 'medications', 'notes',
   // the first set of vitals (more go in vitals_more -- see ptNoteVitalsMore)
   ...PT_NOTE_VITAL_KEYS,
@@ -1774,6 +1776,40 @@ function ptNoteVitalsMore(raw) {
     return set;
   }).filter(s => Object.keys(s).some(k => k !== 'vitals_time'));
   return sets.length ? sets : null;
+}
+
+// Merging one note into another (see POST /api/pt-notes/:id/merge). The
+// note merged into is the main one and stays as it is; the other note only
+// fills in what it's missing -- empty fields, vitals sets it doesn't have
+// (in time order), and the Listening report if it has none.
+function ptNoteVitalSets(f) {
+  const first = {};
+  for (const k of PT_NOTE_VITAL_KEYS) if (f[k]) first[k] = f[k];
+  return [first, ...(Array.isArray(f.vitals_more) ? f.vitals_more : [])]
+    .filter(s => Object.keys(s).some(k => k !== 'vitals_time'));
+}
+
+function mergePtNoteFields(into, from) {
+  const out = {};
+  for (const k of PT_NOTE_FIELDS) {
+    if (PT_NOTE_VITAL_KEYS.includes(k)) continue;
+    if (into[k] || from[k]) out[k] = into[k] || from[k];
+  }
+
+  // The other note's sets are added unless the main note already has one
+  // at that time (or the identical reading). Sorted by time only when every
+  // set has a plain HH:MM one; otherwise the main note's come first.
+  const mine = ptNoteVitalSets(into);
+  const haveTimes = new Set(mine.map(s => s.vitals_time).filter(Boolean));
+  const haveSets = new Set(mine.map(s => JSON.stringify(s)));
+  let sets = [...mine, ...ptNoteVitalSets(from)
+    .filter(s => !(s.vitals_time && haveTimes.has(s.vitals_time)) && !haveSets.has(JSON.stringify(s)))];
+  if (sets.every(s => /^\d{1,2}:\d{2}$/.test(s.vitals_time || '')))
+    sets = sets.sort((x, y) => x.vitals_time.padStart(5, '0').localeCompare(y.vitals_time.padStart(5, '0')));
+  const [first, ...rest] = sets.slice(0, PT_NOTE_MAX_EXTRA_VITALS + 1);
+  if (first) Object.assign(out, first);
+  if (rest.length) out.vitals_more = rest;
+  return out;
 }
 
 function logPtNoteAccess(noteId, action, person) {
@@ -1976,6 +2012,36 @@ app.patch('/api/pt-notes/:id', verifyPtNotePerson, async (req, res) => {
   } catch (err) {
     console.error('[pt-notes] edit failed:', err.message);
     res.status(500).json({ error: 'Could not save changes — try again' });
+  }
+});
+
+// Folding one of your notes (`from_id`, e.g. one sent to you) into another
+// (`:id`, e.g. one you saved) so the patient is one report. The merged note
+// keeps :id's people and 24h clock. With remove_source the other note is
+// deleted -- for both medics on it, same as DELETE.
+app.post('/api/pt-notes/:id/merge', verifyPtNotePerson, async (req, res) => {
+  if (!req.body?.from_id || req.body.from_id === req.params.id)
+    return res.status(400).json({ error: 'Pick a different note to merge' });
+  try {
+    const into = await loadPtNoteFor(req.params.id, req.person);
+    const from = await loadPtNoteFor(req.body.from_id, req.person);
+    if (!into || !from) return res.status(404).json({ error: 'Not found' });
+    const fields = mergePtNoteFields(into.n.fields || {}, from.n.fields || {});
+    const editedAt = new Date().toISOString();
+    await pool.query('UPDATE pt_notes SET fields = $1, edited_at = $2 WHERE id = $3',
+      [JSON.stringify(fields), editedAt, req.params.id]);
+    logPtNoteAccess(req.params.id, 'merge', req.person);
+    io.to(ptNoteRooms(into.n)).emit('pt_note:updated', { id: req.params.id, fields, edited_at: editedAt });
+    const removed = !!req.body.remove_source;
+    if (removed) {
+      await pool.query('DELETE FROM pt_notes WHERE id = $1', [req.body.from_id]);
+      logPtNoteAccess(req.body.from_id, 'delete', req.person);
+      io.to(ptNoteRooms(from.n)).emit('pt_note:deleted', { id: req.body.from_id });
+    }
+    res.json({ ok: true, fields, edited_at: editedAt, removed });
+  } catch (err) {
+    console.error('[pt-notes] merge failed:', err.message);
+    res.status(500).json({ error: 'Could not merge — try again' });
   }
 });
 
